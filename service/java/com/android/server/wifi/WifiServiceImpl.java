@@ -103,6 +103,7 @@ import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.SupplicantState;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Build;
@@ -144,7 +145,6 @@ import com.android.server.wifi.util.ApConfigUtil;
 import com.android.server.wifi.util.GeneralUtil.Mutable;
 import com.android.server.wifi.util.LastCallerInfoManager;
 import com.android.server.wifi.util.RssiUtil;
-import com.android.server.wifi.util.ScanResultUtil;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.wifi.resources.R;
 

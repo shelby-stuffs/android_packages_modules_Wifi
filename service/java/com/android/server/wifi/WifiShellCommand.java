@@ -54,6 +54,7 @@ import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiSsid;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.Binder;
 import android.os.Process;
 import android.os.RemoteException;
@@ -77,7 +78,6 @@ import com.android.server.wifi.coex.CoexUtils;
 import com.android.server.wifi.hotspot2.NetworkDetail;
 import com.android.server.wifi.util.ApConfigUtil;
 import com.android.server.wifi.util.ArrayUtils;
-import com.android.server.wifi.util.ScanResultUtil;
 
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
