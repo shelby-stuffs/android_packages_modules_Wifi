@@ -135,7 +135,7 @@ public class NetworkDetail {
     public NetworkDetail(String bssid, ScanResult.InformationElement[] infoElements,
             List<String> anqpLines, int freq) {
         if (infoElements == null) {
-            throw new IllegalArgumentException("Null information elements");
+            infoElements = new ScanResult.InformationElement[0];
         }
 
         mBSSID = Utils.parseMac(bssid);
@@ -404,6 +404,13 @@ public class NetworkDetail {
                     + ", SupportedRates: " + supportedRates.toString()
                     + " ExtendedSupportedRates: " + extendedSupportedRates.toString());
         }
+    }
+
+    /**
+     * Copy constructor
+     */
+    public NetworkDetail(NetworkDetail networkDetail) {
+        this(networkDetail, networkDetail.mANQPElements);
     }
 
     private static ByteBuffer getAndAdvancePayload(ByteBuffer data, int plLength) {
