@@ -681,4 +681,7 @@
 
     <!-- Wifi driver supports WPA3 Simultaneous Authentication of Equals (WPA3-OWE) for softap -->
     <bool translatable="false" name="config_vendor_wifi_softap_owe_supported">false</bool>
+
+    <!-- Indicate IP Reachability lost to be ignored after 10 sec of connection/roam -->
+    <bool translatable="false" name="config_disconnectOnlyOnInitialIpReachability">true</bool>
 </resources>

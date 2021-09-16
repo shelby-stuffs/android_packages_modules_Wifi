@@ -205,6 +205,7 @@
           <item type="integer" name="config_wifiConnectivityLocalLogMaxLinesHighRam" />
           <item type="integer" name="config_wifiClientModeImplNumLogRecs" />
           <item type="bool" name="config_vendor_wifi_softap_owe_supported" />
+          <item type="bool" name="config_disconnectOnlyOnInitialIpReachability" />
           <!-- Params from config.xml that can be overlayed -->
 
           <!-- Params from strings.xml that can be overlayed -->
