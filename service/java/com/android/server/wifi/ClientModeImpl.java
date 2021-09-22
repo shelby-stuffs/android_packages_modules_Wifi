@@ -477,7 +477,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     private static final int NETWORK_STATUS_UNWANTED_DISCONNECT         = 0;
     private static final int NETWORK_STATUS_UNWANTED_VALIDATION_FAILED  = 1;
-    private static final int NETWORK_STATUS_UNWANTED_DISABLE_AUTOJOIN   = 2;
+    @VisibleForTesting
+    public static final int NETWORK_STATUS_UNWANTED_DISABLE_AUTOJOIN   = 2;
 
     static final int CMD_UNWANTED_NETWORK                               = BASE + 144;
 
@@ -610,6 +611,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private final WifiNetworkSelector mWifiNetworkSelector;
 
     private final WifiInjector mWifiInjector;
+
+    // Permanently disable a network due to no internet if the estimated probability of having
+    // internet is less than this value.
+    @VisibleForTesting
+    public static final int PROBABILITY_WITH_INTERNET_TO_PERMANENTLY_DISABLE_NETWORK = 60;
 
     // Maximum duration to continue to log Wifi usability stats after a data stall is triggered.
     @VisibleForTesting
@@ -1402,8 +1408,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * mark network agent as disconnected and stop the ip client.
      */
     public void handleIfaceDestroyed() {
-        handleNetworkDisconnect(false,
-                WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__IFACE_DESTROYED);
+        mWifiThreadRunner.post(() -> handleNetworkDisconnect(false,
+                WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__IFACE_DESTROYED));
     }
 
     /** Stop this ClientModeImpl. Do not interact with ClientModeImpl after it has been stopped. */
@@ -4532,6 +4538,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                 WifiMetrics.ConnectionEvent.FAILURE_NETWORK_NOT_FOUND,
                                 WifiMetricsProto.ConnectionEvent.HLF_NONE,
                                 WifiMetricsProto.ConnectionEvent.FAILURE_REASON_UNKNOWN);
+                        handleNetworkDisconnect(false,
+                                WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__UNSPECIFIED);
                         transitionTo(mDisconnectedState); // End of connection attempt.
                     }
                     break;
@@ -4583,6 +4591,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                 WifiLastResortWatchdog.FAILURE_CODE_ASSOCIATION,
                                 isConnected());
                     }
+                    handleNetworkDisconnect(false,
+                            WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__UNSPECIFIED);
                     transitionTo(mDisconnectedState); // End of connection attempt.
                     break;
                 }
@@ -4662,6 +4672,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                 WifiLastResortWatchdog.FAILURE_CODE_AUTHENTICATION,
                                 isConnected());
                     }
+                    handleNetworkDisconnect(false,
+                            WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__UNSPECIFIED);
                     transitionTo(mDisconnectedState); // End of connection attempt.
                     break;
                 }
@@ -5569,8 +5581,23 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             if (message.arg1 == NETWORK_STATUS_UNWANTED_DISABLE_AUTOJOIN) {
                                 mWifiConfigManager.setNetworkValidatedInternetAccess(
                                         config.networkId, false);
+                                WifiScoreCard.PerBssid perBssid = mWifiScoreCard.lookupBssid(
+                                        mWifiInfo.getSSID(), mWifiInfo.getBSSID());
+                                int probInternet = perBssid.estimatePercentInternetAvailability();
+                                if (mVerboseLoggingEnabled) {
+                                    Log.d(TAG, "Potentially disabling network due to no "
+                                            + "internet. Probability of having internet = "
+                                            + probInternet);
+                                }
+                                // Only permanently disable a network if probability of having
+                                // internet from the currently connected BSSID is less than 60%.
+                                // If there is no historically information of the current BSSID,
+                                // the probability of internet will default to 50%, and the network
+                                // will be permanently disabled.
                                 mWifiConfigManager.updateNetworkSelectionStatus(config.networkId,
-                                        DISABLED_NO_INTERNET_PERMANENT);
+                                        probInternet < PROBABILITY_WITH_INTERNET_TO_PERMANENTLY_DISABLE_NETWORK
+                                                ? DISABLED_NO_INTERNET_PERMANENT
+                                                : DISABLED_NO_INTERNET_TEMPORARY);
                             } else {
                                 // stop collect last-mile stats since validation fail
                                 removeMessages(CMD_DIAGS_CONNECT_TIMEOUT);
