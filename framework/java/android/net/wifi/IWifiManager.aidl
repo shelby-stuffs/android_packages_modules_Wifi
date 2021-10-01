@@ -351,4 +351,8 @@ interface IWifiManager
     boolean isWifiCoverageExtendFeatureEnabled();
 
     void enableWifiCoverageExtendFeature(boolean enable);
+
+    boolean isWifiPasspointEnabled();
+
+    void setWifiPasspointEnabled(boolean enabled);
 }
