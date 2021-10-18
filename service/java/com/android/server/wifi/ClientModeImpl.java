@@ -4262,9 +4262,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             mCmiMonitor.onConnectionEnd(mClientModeManager);
 
             // Not connected/connecting to any network:
-            // 1. remove the network in supplicant since PMKSA is now saved in framework.
+            // 1. Disable the network in supplicant to prevent it from auto-connecting. We don't
+            // remove the network to avoid losing any cached info in supplicant (reauth, etc) in
+            // case we reconnect back to the same network.
             // 2. Set a random MAC address to ensure that we're not leaking the MAC address.
-            mWifiNative.removeAllNetworks(mInterfaceName);
+            mWifiNative.disableNetwork(mInterfaceName);
             if (mWifiGlobals.isConnectedMacRandomizationEnabled()) {
                 if (!mWifiNative.setStaMacAddress(
                         mInterfaceName, MacAddressUtils.createRandomUnicastAddress())) {
