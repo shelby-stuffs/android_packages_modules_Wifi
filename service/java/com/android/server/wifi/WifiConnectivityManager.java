@@ -194,8 +194,6 @@ public class WifiConnectivityManager {
     private Object mPeriodicScanTimerToken = new Object();
     private boolean mDelayedPartialScanTimerSet = false;
     private boolean mWatchdogScanTimerSet = false;
-    private boolean mAllowConnectionOnPartialScanResults = false;
-    private boolean mWasLastConnectionAttemptedWithPartialResults = false;
 
     // Used for Initial Scan metrics
     private boolean mFailedInitialPartialScan = false;
@@ -339,7 +337,7 @@ public class WifiConnectivityManager {
      */
     private void handleScanResults(@NonNull List<ScanDetail> scanDetails,
             @NonNull String listenerName,
-            boolean isFullScan, boolean isPartialScanResults,
+            boolean isFullScan,
             @NonNull HandleScanResultsListener handleScanResultsListener) {
         List<WifiNetworkSelector.ClientModeManagerState> cmmStates = new ArrayList<>();
         Set<String> connectedSsids = new HashSet<>();
@@ -390,29 +388,6 @@ public class WifiConnectivityManager {
         // Clear expired recent failure statuses
         mConfigManager.cleanupExpiredRecentFailureReasons();
 
-        if (isPartialScanResults) {
-            if (!mContext.getResources().getBoolean(
-                    R.bool.config_wifi_framework_enable_quick_connect)) {
-                return;
-            }
-            if (mAllowConnectionOnPartialScanResults ||
-                ((mContext.getResources().getBoolean(R.bool.config_wifiEnablePartialInitialScan))
-                  && (mInitialScanState != INITIAL_SCAN_STATE_COMPLETE))) {
-                return;
-            }
-        }
-
-        for (WifiNetworkSelector.ClientModeManagerState cmmState : cmmStates) {
-            if (cmmState.disconnected) {
-                mWasLastConnectionAttemptedWithPartialResults = false;
-            }
-            // Do not select network with partial network if we are already connected
-            if (isPartialScanResults && (cmmState.connected ||
-                mWasLastConnectionAttemptedWithPartialResults)) {
-                return;
-            }
-        }
-
         localLog(listenerName + " onResults: start network selection");
 
         List<WifiCandidates.Candidate> candidates = mNetworkSelector.getCandidatesFromScan(
@@ -459,7 +434,7 @@ public class WifiConnectivityManager {
             // intentional fallthrough: No oem paid/private suggestions, fallback to legacy flow.
         }
         handleCandidatesFromScanResultsForPrimaryCmmUsingMbbIfAvailable(
-                listenerName, candidates, handleScanResultsListener, isPartialScanResults);
+                listenerName, candidates, handleScanResultsListener);
     }
 
     /**
@@ -483,7 +458,7 @@ public class WifiConnectivityManager {
                     listenerName,
                     Stream.concat(primaryCmmCandidates.stream(), secondaryCmmCandidates.stream())
                             .collect(Collectors.toList()),
-                    handleScanResultsListener, false);
+                    handleScanResultsListener);
             return;
         }
         String secondaryCmmCandidateBssid =
@@ -501,7 +476,7 @@ public class WifiConnectivityManager {
                     listenerName,
                     Stream.concat(primaryCmmCandidates.stream(), secondaryCmmCandidates.stream())
                             .collect(Collectors.toList()),
-                    handleScanResultsListener, false);
+                    handleScanResultsListener);
             return;
         }
 
@@ -526,7 +501,7 @@ public class WifiConnectivityManager {
                                 Stream.concat(primaryCmmCandidates.stream(),
                                         secondaryCmmCandidates.stream())
                                         .collect(Collectors.toList()),
-                                handleScanResultsListener, false);
+                                handleScanResultsListener);
                         return;
                     }
                     // Don't use make before break for these connection requests.
@@ -558,13 +533,11 @@ public class WifiConnectivityManager {
      */
     private void handleCandidatesFromScanResultsForPrimaryCmmUsingMbbIfAvailable(
             @NonNull String listenerName, @NonNull List<WifiCandidates.Candidate> candidates,
-            @NonNull HandleScanResultsListener handleScanResultsListener,
-                     boolean isPartialScanResults) {
+            @NonNull HandleScanResultsListener handleScanResultsListener) {
         WifiConfiguration candidate = mNetworkSelector.selectNetwork(candidates);
         if (candidate != null) {
             localLog(listenerName + ":  WNS candidate-" + candidate.SSID);
             connectToNetworkForPrimaryCmmUsingMbbIfAvailable(candidate);
-            mWasLastConnectionAttemptedWithPartialResults = isPartialScanResults;
             handleScanResultsWithCandidate(handleScanResultsListener);
         } else {
             localLog(listenerName + ":  No candidate");
@@ -672,7 +645,6 @@ public class WifiConnectivityManager {
     private class AllSingleScanListener implements WifiScanner.ScanListener {
         private List<ScanDetail> mScanDetails = new ArrayList<ScanDetail>();
         private int mNumScanResultsIgnoredDueToSingleRadioChain = 0;
-        private boolean mPartialScanResults = false;
 
         public void clearScanDetails() {
             mScanDetails.clear();
@@ -731,7 +703,7 @@ public class WifiConnectivityManager {
                         + mNumScanResultsIgnoredDueToSingleRadioChain);
             }
             handleScanResults(scanDetailList,
-                    ALL_SINGLE_SCAN_LISTENER, isFullBandScanResults, mPartialScanResults,
+                    ALL_SINGLE_SCAN_LISTENER, isFullBandScanResults,
                     wasCandidateSelected -> {
                         // Update metrics to see if a single scan detected a valid network
                         // while PNO scan didn't.
@@ -749,11 +721,6 @@ public class WifiConnectivityManager {
                         if (mInitialScanState == INITIAL_SCAN_STATE_AWAITING_RESPONSE) {
                             // Done with initial scan
                             setInitialScanState(INITIAL_SCAN_STATE_COMPLETE);
-                            if (!wasCandidateSelected && mPartialScanResults) {
-                                Log.i(TAG, "Connection not attempted with the reduced initial"
-                                      + "scans, due to partial scan timer");
-                                return;
-                            }
 
                             if (wasCandidateSelected) {
                                 Log.i(TAG, "Connection attempted with the reduced initial scans");
@@ -775,15 +742,6 @@ public class WifiConnectivityManager {
                             mInitialPartialScanChannelCount = 0;
                         }
                     });
-        }
-
-        @Override
-        public void onPartialScanResults(WifiScanner.ScanData[] scanDatas) {
-            if (mVerboseLoggingEnabled)
-                Log.d(TAG, "onPartialScanResults called");
-            mPartialScanResults = true;
-            onResults(scanDatas);
-            mPartialScanResults = false;
         }
 
         @Override
@@ -942,7 +900,7 @@ public class WifiConnectivityManager {
             clearScanDetails();
             mScanRestartCount = 0;
 
-            handleScanResults(scanDetailList, PNO_SCAN_LISTENER, false, false,
+            handleScanResults(scanDetailList, PNO_SCAN_LISTENER, false,
                     wasCandidateSelected -> {
                         if (!wasCandidateSelected) {
                             // The scan results were rejected by WifiNetworkSelector due to low
@@ -2594,7 +2552,6 @@ public class WifiConnectivityManager {
             mConfigManager.stopRestrictingAutoJoinToSubscriptionId();
             mConfigManager.clearUserTemporarilyDisabledList();
             mConfigManager.removeAllEphemeralOrPasspointConfiguredNetworks();
-            mWasLastConnectionAttemptedWithPartialResults = false;
             // Flush ANQP cache if configured to do so
             if (mWifiGlobals.flushAnqpCacheOnWifiToggleOffEvent()) {
                 mPasspointManager.clearAnqpRequestsAndFlushCache();
@@ -2622,13 +2579,6 @@ public class WifiConnectivityManager {
             mAutoJoinEnabledExternal = enable;
             checkAllStatesAndEnableAutoJoin();
         }
-    }
-
-    /**
-     * Allow quick connect with partial scan results
-     */
-    public void allowConnectOnPartialScanResults(boolean enable) {
-        mAllowConnectionOnPartialScanResults = enable;
     }
 
     @VisibleForTesting

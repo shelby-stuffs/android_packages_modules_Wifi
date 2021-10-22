@@ -269,9 +269,8 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
                 pollLatestScanDataForPno();
                 break;
             case WifiMonitor.SCAN_RESULTS_EVENT:
-                boolean isPartialScanResults = (msg.arg1 == WifiScanner.ON_PARTIAL_SCAN_RESULTS);
                 cancelScanTimeout();
-                pollLatestScanData(isPartialScanResults);
+                pollLatestScanData();
                 break;
             default:
                 // ignore unknown event
@@ -358,7 +357,7 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
         return bandsScanned;
     }
 
-    private void pollLatestScanData(boolean isPartial) {
+    private void pollLatestScanData() {
         synchronized (mSettingsLock) {
             if (mLastScanSettings == null) {
                  // got a scan before we started scanning or after scan was canceled
@@ -397,18 +396,12 @@ public class WificondScannerImpl extends WifiScannerImpl implements Handler.Call
                 mLatestSingleScanResult = new WifiScanner.ScanData(0, 0, 0,
                         getScannedBandsInternal(mLastScanSettings.singleScanFreqs),
                         singleScanResults.toArray(new ScanResult[singleScanResults.size()]));
-                if (isPartial) {
-                    mLastScanSettings.singleScanEventHandler
-                            .onScanStatus(WifiNative.WIFI_SCAN_PARTIAL_RESULTS_AVAILABLE);
-                } else {
-                    mLastScanSettings.singleScanEventHandler
-                            .onScanStatus(WifiNative.WIFI_SCAN_RESULTS_AVAILABLE);
-                }
+                mLastScanSettings.singleScanEventHandler
+                        .onScanStatus(WifiNative.WIFI_SCAN_RESULTS_AVAILABLE);
             }
-            if (!isPartial) {
-                WifiGbk.ageBssCache(); // wifigbk++
-                mLastScanSettings = null;
-            }
+
+            WifiGbk.ageBssCache(); // wifigbk++
+            mLastScanSettings = null;
         }
     }
 

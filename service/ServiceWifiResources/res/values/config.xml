@@ -213,12 +213,6 @@
          scan in minutes -->
     <integer translatable="false" name="config_wifiInitialPartialScanChannelCacheAgeMins">14400</integer>
 
-    <!-- Boolean indicating enable or disable quick connect -->
-    <bool translatable="false" name="config_wifi_framework_enable_quick_connect">false</bool>
-
-    <!-- Integer for Wifi Partial scan results fetching period(in ms) -->
-    <integer translatable="false" name="config_wifi_partial_scan_results_fetching_period_ms">0</integer>
-
     <!-- Wifi driver supports Beacon Protection for SoftAp -->
     <bool translatable="false" name="config_vendor_softap_beacon_protection_supported">false</bool>
 

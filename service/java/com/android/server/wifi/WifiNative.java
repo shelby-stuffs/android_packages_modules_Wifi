@@ -55,7 +55,6 @@ import com.android.server.wifi.util.InformationElementUtil;
 import com.android.server.wifi.util.NativeUtil;
 import com.android.server.wifi.util.NetdWrapper;
 import com.android.server.wifi.util.NetdWrapper.NetdEventObserver;
-import com.android.wifi.resources.R;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -76,7 +75,6 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
-import android.os.Message;
 
 /**
  * Native calls for bring up/shut down of the supplicant daemon and for
@@ -106,10 +104,6 @@ public class WifiNative {
     private CountryCodeChangeListenerInternal mCountryCodeChangeListener;
     private boolean mUseFakeScanDetails;
     private final ArrayList<ScanDetail> mFakeScanDetails = new ArrayList<>();
-    /* Trigger periodic partial scan results*/
-    private static final int PERIODIC_PARTIAL_SCAN_RESULT_EVENT = 1;
-    private static String mIfaceNameforPartialScanResult;
-    private boolean mAllowConnectionOnPartialScanResults = false;
 
     public WifiNative(WifiVendorHal vendorHal,
                       SupplicantStaIfaceHal staIfaceHal, HostapdHal hostapdHal,
@@ -140,10 +134,6 @@ public class WifiNative {
         mSupplicantStaIfaceHal.enableVerboseLogging(mVerboseLoggingEnabled);
         mHostapdHal.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiVendorHal.enableVerboseLogging(mVerboseLoggingEnabled);
-    }
-
-    public void allowConnectOnPartialScanResults(boolean enable) {
-        mAllowConnectionOnPartialScanResults = enable;
     }
 
     /**
@@ -425,14 +415,12 @@ public class WifiNative {
         @Override
         public void onScanResultReady() {
             Log.d(TAG, "Scan result ready event");
-            mPartialScanResultsHandler.removeMessages(PERIODIC_PARTIAL_SCAN_RESULT_EVENT);
             mWifiMonitor.broadcastScanResultEvent(mIfaceName);
         }
 
         @Override
         public void onScanFailed() {
             Log.d(TAG, "Scan failed event");
-            mPartialScanResultsHandler.removeMessages(PERIODIC_PARTIAL_SCAN_RESULT_EVENT);
             mWifiMonitor.broadcastScanFailedEvent(mIfaceName);
         }
     }
@@ -1522,7 +1510,6 @@ public class WifiNative {
     public void teardownInterface(@NonNull String ifaceName) {
         synchronized (mLock) {
             final Iface iface = mIfaceMgr.getIface(ifaceName);
-            mPartialScanResultsHandler.removeMessages(PERIODIC_PARTIAL_SCAN_RESULT_EVENT);
             if (iface == null) {
                 Log.e(TAG, "Trying to teardown an invalid iface=" + ifaceName);
                 return;
@@ -1637,9 +1624,6 @@ public class WifiNative {
     public boolean scan(
             @NonNull String ifaceName, @WifiAnnotations.ScanType int scanType, Set<Integer> freqs,
             List<String> hiddenNetworkSSIDs, boolean enable6GhzRnr) {
-        boolean scanRequested;
-        if (mVerboseLoggingEnabled)
-            Log.d(TAG, "Scan trigered from WifiNative");
         List<byte[]> hiddenNetworkSsidsArrays = new ArrayList<>();
         for (String hiddenNetworkSsid : hiddenNetworkSSIDs) {
             try {
@@ -1654,45 +1638,17 @@ public class WifiNative {
                 continue;
             }
         }
-        mIfaceNameforPartialScanResult = ifaceName;
         // enable6GhzRnr is a new parameter first introduced in Android S.
         if (SdkLevel.isAtLeastS()) {
             Bundle extraScanningParams = new Bundle();
             extraScanningParams.putBoolean(WifiNl80211Manager.SCANNING_PARAM_ENABLE_6GHZ_RNR,
                     enable6GhzRnr);
-            scanRequested = mWifiCondManager.startScan(ifaceName, scanType, freqs,
-                            hiddenNetworkSsidsArrays, extraScanningParams);
+            return mWifiCondManager.startScan(ifaceName, scanType, freqs, hiddenNetworkSsidsArrays,
+                    extraScanningParams);
         } else {
-            scanRequested = mWifiCondManager.startScan(ifaceName, scanType, freqs,
+            return mWifiCondManager.startScan(ifaceName, scanType, freqs,
                             hiddenNetworkSsidsArrays);
         }
-        // TODO: fix the partial scan scheduling blocking onResults callback in ScanOnlyMode
-        return scanRequested;
-    }
-
-    Handler mPartialScanResultsHandler = new Handler() {
-       @Override
-       public void handleMessage(Message msg) {
-           switch (msg.what) {
-           case PERIODIC_PARTIAL_SCAN_RESULT_EVENT:
-               Log.d(TAG,"Broadcast partial scan results event");
-               mWifiMonitor.broadcastPartialScanResultEvent(mIfaceNameforPartialScanResult);
-               schedulePeriodicPartialScanResult();
-               break;
-           default:
-               break;
-           }
-       }
-    };
-
-    private void schedulePeriodicPartialScanResult() {
-        Message msg = mPartialScanResultsHandler.obtainMessage(PERIODIC_PARTIAL_SCAN_RESULT_EVENT);
-        int wifiPartialScanResultsFetchingPeriod = mWifiInjector.getContext().getResources()
-                .getInteger(R.integer.config_wifi_partial_scan_results_fetching_period_ms);
-        if (wifiPartialScanResultsFetchingPeriod == 0)
-            return;
-        mPartialScanResultsHandler.sendMessageDelayed(msg,
-            wifiPartialScanResultsFetchingPeriod);
     }
 
     /**
@@ -3279,7 +3235,6 @@ public class WifiNative {
     public static final int WIFI_SCAN_THRESHOLD_NUM_SCANS = 1;
     public static final int WIFI_SCAN_THRESHOLD_PERCENT = 2;
     public static final int WIFI_SCAN_FAILED = 3;
-    public static final int WIFI_SCAN_PARTIAL_RESULTS_AVAILABLE = 4;
 
     /**
      * Starts a background scan.
