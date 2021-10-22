@@ -1433,6 +1433,22 @@ public class ActiveModeWarden {
     }
 
     /**
+     * During Wifi off -> on transition, there is a race condition between country code update,
+     * single scan triggered by App based ACTION_WIFI_SCAN_AVAILABILITY_CHANGED. The single scan
+     * might fail if country code is updated while the scan is ongoing.
+     * To mitigate that issue, send ACTION_WIFI_SCAN_AVAILABILITY_CHANGED again when the country
+     * code update is completed.
+     *
+     * @param newCountryCode the new country code, null when there is no active mode enabled.
+     */
+    public void updateClientScanModeAfterCountryCodeUpdate(@Nullable String newCountryCode) {
+        // Handle country code changed only during Wifi off -> on transition.
+        if (newCountryCode != null) {
+            updateClientScanMode();
+        }
+    }
+
+    /**
      * WifiController is the class used to manage wifi state for various operating
      * modes (normal, airplane, wifi hotspot, etc.).
      */

@@ -54,7 +54,10 @@ import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiSsid;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.Binder;
+import android.os.Build;
+import android.os.PatternMatcher;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -66,6 +69,7 @@ import android.text.TextUtils;
 import android.util.Pair;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.modules.utils.BasicShellCommandHandler;
@@ -77,7 +81,8 @@ import com.android.server.wifi.coex.CoexUtils;
 import com.android.server.wifi.hotspot2.NetworkDetail;
 import com.android.server.wifi.util.ApConfigUtil;
 import com.android.server.wifi.util.ArrayUtils;
-import com.android.server.wifi.util.ScanResultUtil;
+
+import libcore.util.HexEncoding;
 
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -937,7 +942,11 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     return 0;
                 }
                 case "add-fake-scan": {
-                    String ssid = getNextArgRequired();
+                    String option = getNextOption();
+                    boolean isHex = (option != null && option.equals("-x"));
+                    WifiSsid wifiSsid = WifiSsid.createFromByteArray(isHex
+                            ? HexEncoding.decode(getNextArgRequired())
+                            : getNextArgRequired().getBytes(StandardCharsets.UTF_8));
                     String bssid = getNextArgRequired();
                     String capabilities = getNextArgRequired();
                     int frequency;
@@ -967,11 +976,11 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     ScanResult.InformationElement ieSSid = new ScanResult.InformationElement(
                             ScanResult.InformationElement.EID_SSID,
                             0,
-                            ssid.getBytes(StandardCharsets.UTF_8));
+                            wifiSsid.getOctets());
                     ScanResult.InformationElement[] ies =
                             new ScanResult.InformationElement[]{ieSSid};
                     ScanDetail sd = new ScanDetail(new NetworkDetail(bssid, ies, null, frequency),
-                            WifiSsid.createFromAsciiEncoded(ssid), bssid, capabilities, dbm,
+                            wifiSsid, bssid, capabilities, dbm,
                             frequency, SystemClock.elapsedRealtime() * 1000, ies, null, null);
                     mWifiNative.addFakeScanDetail(sd);
                     return 0;
@@ -1031,6 +1040,8 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         String ssid = getNextArgRequired();
         String type = getNextArgRequired();
         WifiConfiguration configuration = new WifiConfiguration();
+        // Wrap the SSID in double quotes for UTF-8. The quotes may be removed if the SSID is in
+        // hexadecimal digits, specified by the [-x] option below.
         configuration.SSID = "\"" + ssid + "\"";
         if (TextUtils.equals(type, "wpa3")) {
             configuration.setSecurityParams(WifiConfiguration.SECURITY_TYPE_SAE);
@@ -1047,7 +1058,9 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         }
         String option = getNextOption();
         while (option != null) {
-            if (option.equals("-m")) {
+            if (option.equals("-x")) {
+                configuration.SSID = ssid;
+            } else if (option.equals("-m")) {
                 configuration.meteredOverride = METERED_OVERRIDE_METERED;
             } else if (option.equals("-d")) {
                 configuration.allowAutojoin = false;
@@ -1226,11 +1239,17 @@ public class WifiShellCommand extends BasicShellCommandHandler {
     }
 
     private NetworkRequest buildNetworkRequest(PrintWriter pw) {
+        boolean isGlob = "-g".equals(getNextOption());
         String ssid = getNextArgRequired();
         String type = getNextArgRequired();
         WifiNetworkSpecifier.Builder specifierBuilder =
                 new WifiNetworkSpecifier.Builder();
-        specifierBuilder.setSsid(ssid);
+        if (isGlob) {
+            specifierBuilder.setSsidPattern(
+                    new PatternMatcher(ssid, PatternMatcher.PATTERN_ADVANCED_GLOB));
+        } else {
+            specifierBuilder.setSsid(ssid);
+        }
         if (TextUtils.equals(type, "wpa3")) {
             specifierBuilder.setWpa3Passphrase(getNextArgRequired());
         } else if (TextUtils.equals(type, "wpa3_transition")) {
@@ -1278,6 +1297,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 .build();
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
     @NonNull
     private List<CoexUtils.CoexCellChannel> buildCoexCellChannels() {
         List<CoexUtils.CoexCellChannel> cellChannels = new ArrayList<>();
@@ -1494,7 +1514,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    Start a new scan");
         pw.println("  list-networks");
         pw.println("    Lists the saved networks");
-        pw.println("  connect-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-m] [-d] "
+        pw.println("  connect-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
                 + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
         pw.println("    Connect to a network with provided params and add to saved networks list");
         pw.println("    <ssid> - SSID of the network");
@@ -1505,6 +1525,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
         pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
         pw.println("           - 'wpa3' - WPA-3 PSK networks");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
         pw.println("    -m - Mark the network metered.");
         pw.println("    -d - Mark the network autojoin disabled.");
         pw.println("    -h - Mark the network hidden.");
@@ -1512,7 +1533,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    -b <bssid> - Set specific BSSID.");
         pw.println("    -r auto|none|persistent|non_persistent - MAC randomization scheme for the"
                 + " network");
-        pw.println("  add-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-m] [-d] "
+        pw.println("  add-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
                 + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
         pw.println("    Add/update saved network with provided params");
         pw.println("    <ssid> - SSID of the network");
@@ -1523,6 +1544,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
         pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
         pw.println("           - 'wpa3' - WPA-3 PSK networks");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
         pw.println("    -m - Mark the network metered.");
         pw.println("    -d - Mark the network autojoin disabled.");
         pw.println("    -h - Mark the network hidden.");
@@ -1682,11 +1704,12 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    each on a separate line.");
         pw.println("  settings-reset");
         pw.println("    Initiates wifi settings reset");
-        pw.println("  add-request <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-b <bssid>]");
+        pw.println("  add-request [-g] <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-b <bssid>]");
         pw.println("    Add a network request with provided params");
         pw.println("    Use 'network-requests-set-user-approved android yes'"
                 +  " to pre-approve requests added via rooted shell (Not persisted)");
-        pw.println("    <ssid> - SSID of the network");
+        pw.println("    -g - Marks the following SSID as a glob pattern");
+        pw.println("    <ssid> - SSID of the network, or glob pattern if -g is present");
         pw.println("    open|owe|wpa2|wpa3 - Security type of the network.");
         pw.println("        - Use 'open' or 'owe' for networks with no passphrase");
         pw.println("           - 'open' - Open networks (Most prevalent)");
@@ -1734,7 +1757,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 + "'add-fake-scan'), stop with 'stop-faking-scans'.");
         pw.println("  stop-faking-scans");
         pw.println("    Stop faking scan results - started with 'start-faking-scans'.");
-        pw.println("  add-fake-scan <ssid> <bssid> <capabilities> <frequency> <dbm>");
+        pw.println("  add-fake-scan [-x] <ssid> <bssid> <capabilities> <frequency> <dbm>");
         pw.println("    Add a fake scan result to be used when enabled via `start-faking-scans'.");
         pw.println("    Example WPA2: add-fake-scan fakeWpa2 80:01:02:03:04:05 "
                 + "\"[WPA2-PSK-CCMP][RSN-PSK-CCMP][ESS]\" 2412 -55");
@@ -1754,6 +1777,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 "    Example Passpoint: add-fake-scan fakePasspoint 80:01:02:03:04:0B "
                         + "\"[WPA2-EAP/SHA1-CCMP][RSN-EAP/SHA1-CCMP][ESS][MFPR][MFPC]"
                         + "[PASSPOINT]\" 2412 -55");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
         pw.println("  reset-fake-scans");
         pw.println("    Resets all fake scan results added by 'add-fake-scan'.");
         pw.println("  enable-scanning enabled|disabled [-h]");

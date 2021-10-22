@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2021 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,17 +16,11 @@
 
 package android.net.wifi;
 
-import android.os.Messenger;
-import android.os.Bundle;
-
 /**
- * {@hide}
+ * Interface for Wi-Fi driver country code changed listener.
+ * @hide
  */
-interface IWifiScanner
+oneway interface IOnWifiDriverCountryCodeChangedListener
 {
-    Messenger getMessenger();
-
-    Bundle getAvailableChannels(int band, String packageName, String featureId);
-
-    boolean isScanning();
+    void onDriverCountryCodeChanged(String countryCode);
 }

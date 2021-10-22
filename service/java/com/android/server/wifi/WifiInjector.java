@@ -34,7 +34,6 @@ import android.net.wifi.WifiScanner;
 import android.net.wifi.nl80211.WifiNl80211Manager;
 import android.os.BatteryStatsManager;
 import android.os.Handler;
-import android.os.HandlerExecutor;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Process;
@@ -49,6 +48,7 @@ import android.util.LocalLog;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.modules.utils.HandlerExecutor;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.aware.WifiAwareMetrics;
 import com.android.server.wifi.coex.CoexManager;
@@ -69,6 +69,9 @@ import com.android.server.wifi.util.WifiPermissionsWrapper;
 import com.android.server.wifi.util.WorkSourceHelper;
 import com.android.wifi.resources.R;
 
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchProviderException;
@@ -411,6 +414,7 @@ public class WifiInjector {
         PasspointNetworkNominateHelper nominateHelper =
                 new PasspointNetworkNominateHelper(mPasspointManager, mWifiConfigManager,
                         mConnectivityLocalLog);
+        mPasspointManager.setPasspointNetworkNominateHelper(nominateHelper);
         mSavedNetworkNominator = new SavedNetworkNominator(
                 mWifiConfigManager, nominateHelper, mConnectivityLocalLog, mWifiCarrierInfoManager,
                 mWifiPermissionsUtil, mWifiNetworkSuggestionsManager);
@@ -608,6 +612,13 @@ public class WifiInjector {
 
     public HandlerThread getWifiHandlerThread() {
         return mWifiHandlerThread;
+    }
+
+    /**
+     * Wrapper method for getting the current native Java Thread ID of the current thread.
+     */
+    public long getCurrentThreadId() {
+        return Thread.currentThread().getId();
     }
 
     public WifiTrafficPoller getWifiTrafficPoller() {
@@ -1062,7 +1073,16 @@ public class WifiInjector {
     public LinkProbeManager getLinkProbeManager() {
         return mLinkProbeManager;
     }
+
     public Context getContext() {
         return mContext;
+    }
+
+    /**
+     * Creates a BufferedReader for the given filename. Useful for unit tests that depend on IO.
+     */
+    @NonNull
+    public BufferedReader createBufferedReader(String filename) throws FileNotFoundException {
+        return new BufferedReader(new FileReader(filename));
     }
 }

@@ -105,6 +105,7 @@
           <item type="bool" name="config_wifiSoftapHeTwtSupported" />
           <item type="bool" name="config_wifiLocalOnlyHotspot6ghz" />
           <item type="bool" name="config_wifi_local_only_hotspot_5ghz" />
+          <item type="bool" name="config_wifiSaveFactoryMacToWifiConfigStore" />
           <item type="bool" name="config_wifi_connected_mac_randomization_supported" />
           <item type="bool" name="config_wifiAllowNonPersistentMacRandomizationOnOpenSsids" />
           <item type="bool" name="config_wifi_p2p_mac_randomization_supported" />
@@ -205,6 +206,7 @@
           <item type="integer" name="config_wifiConnectivityLocalLogMaxLinesHighRam" />
           <item type="integer" name="config_wifiClientModeImplNumLogRecs" />
           <item type="bool" name="config_vendor_wifi_softap_owe_supported" />
+          <item type="bool" name="config_wifiDriverSupportedNl80211RegChangedEvent" />
           <item type="bool" name="config_disconnectOnlyOnInitialIpReachability" />
           <!-- Params from config.xml that can be overlayed -->
 

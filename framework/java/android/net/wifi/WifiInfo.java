@@ -402,6 +402,23 @@ public class WifiInfo implements TransportInfo, Parcelable {
         this.score = score;
     }
 
+    /** @hide */
+    private boolean mIsUsable = true;
+
+    /** @hide */
+    public boolean isUsable() {
+        return mIsUsable;
+    }
+
+    /**
+     * This could be set to false by the external scorer when the network quality is bad.
+     * The wifi module could use this information in network selection.
+     * @hide
+     */
+    public void setUsable(boolean isUsable) {
+        mIsUsable = isUsable;
+    }
+
     /**
      * Flag indicating that AP has hinted that upstream connection is metered,
      * and sensitive to heavy data transfers.
@@ -480,6 +497,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
         mSuccessfulRxPacketsPerSecond = 0;
         mTxRetriedTxPacketsPerSecond = 0;
         score = 0;
+        mIsUsable = true;
         mSecurityType = -1;
     }
 
@@ -538,6 +556,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
             mSuccessfulTxPacketsPerSecond = source.mSuccessfulTxPacketsPerSecond;
             mSuccessfulRxPacketsPerSecond = source.mSuccessfulRxPacketsPerSecond;
             score = source.score;
+            mIsUsable = source.mIsUsable;
             mWifiStandard = source.mWifiStandard;
             mMaxSupportedTxLinkSpeed = source.mMaxSupportedTxLinkSpeed;
             mMaxSupportedRxLinkSpeed = source.mMaxSupportedRxLinkSpeed;
@@ -1224,6 +1243,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
                 .append(", Net ID: ").append(mNetworkId)
                 .append(", Metered hint: ").append(mMeteredHint)
                 .append(", score: ").append(Integer.toString(score))
+                .append(", isUsable: ").append(mIsUsable)
                 .append(", CarrierMerged: ").append(mCarrierMerged)
                 .append(", SubscriptionId: ").append(mSubscriptionId)
                 .append(", IsPrimary: ").append(mIsPrimary)
@@ -1286,6 +1306,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
         dest.writeInt(mOemPrivate ? 1 : 0);
         dest.writeInt(mCarrierMerged ? 1 : 0);
         dest.writeInt(score);
+        dest.writeBoolean(mIsUsable);
         dest.writeLong(txSuccess);
         dest.writeDouble(mSuccessfulTxPacketsPerSecond);
         dest.writeLong(txRetries);
@@ -1342,6 +1363,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
                 info.mOemPrivate = in.readInt() != 0;
                 info.mCarrierMerged = in.readInt() != 0;
                 info.score = in.readInt();
+                info.mIsUsable = in.readBoolean();
                 info.txSuccess = in.readLong();
                 info.mSuccessfulTxPacketsPerSecond = in.readDouble();
                 info.txRetries = in.readLong();
@@ -1505,6 +1527,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
                 && Objects.equals(mSuccessfulRxPacketsPerSecond,
                 thatWifiInfo.mSuccessfulRxPacketsPerSecond)
                 && Objects.equals(score, thatWifiInfo.score)
+                && Objects.equals(mIsUsable, thatWifiInfo.mIsUsable)
                 && Objects.equals(mWifiStandard, thatWifiInfo.mWifiStandard)
                 && Objects.equals(mMaxSupportedTxLinkSpeed, thatWifiInfo.mMaxSupportedTxLinkSpeed)
                 && Objects.equals(mMaxSupportedRxLinkSpeed, thatWifiInfo.mMaxSupportedRxLinkSpeed)
@@ -1550,6 +1573,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
                 mSuccessfulTxPacketsPerSecond,
                 mSuccessfulRxPacketsPerSecond,
                 score,
+                mIsUsable,
                 mWifiStandard,
                 mMaxSupportedTxLinkSpeed,
                 mMaxSupportedRxLinkSpeed,
@@ -1590,7 +1614,7 @@ public class WifiInfo implements TransportInfo, Parcelable {
      * @hide
      */
     public void setCurrentSecurityType(@WifiConfiguration.SecurityType int securityType) {
-        mSecurityType = convertSecurityTypeToWifiInfo(securityType);
+        mSecurityType = convertWifiConfigurationSecurityType(securityType);
     }
 
     /**
@@ -1610,9 +1634,15 @@ public class WifiInfo implements TransportInfo, Parcelable {
         return mSecurityType;
     }
 
-    private @SecurityType int convertSecurityTypeToWifiInfo(
-            @WifiConfiguration.SecurityType int securityType) {
-        switch (securityType) {
+    /**
+     * Converts the WifiConfiguration.SecurityType to a WifiInfo.SecurityType
+     * @param wifiConfigSecurity WifiConfiguration.SecurityType to convert
+     * @return security type as a WifiInfo.SecurityType
+     * @hide
+     */
+    public static @SecurityType int convertWifiConfigurationSecurityType(
+            @WifiConfiguration.SecurityType int wifiConfigSecurity) {
+        switch (wifiConfigSecurity) {
             case WifiConfiguration.SECURITY_TYPE_OPEN:
                 return SECURITY_TYPE_OPEN;
             case WifiConfiguration.SECURITY_TYPE_WEP:

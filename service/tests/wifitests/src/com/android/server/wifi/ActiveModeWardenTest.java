@@ -128,6 +128,7 @@ public class ActiveModeWardenTest extends WifiBaseTest {
     private static final int TEST_AP_BANDWIDTH = SoftApInfo.CHANNEL_WIDTH_20MHZ;
     private static final int TEST_UID = 435546654;
     private static final String TEST_PACKAGE = "com.test";
+    private static final String TEST_COUNTRYCODE = "US";
     private static final WorkSource TEST_WORKSOURCE = new WorkSource(TEST_UID, TEST_PACKAGE);
 
     TestLooper mLooper;
@@ -329,10 +330,14 @@ public class ActiveModeWardenTest extends WifiBaseTest {
         } else {
             verify(mClientModeManager).setRole(ROLE_CLIENT_PRIMARY, TEST_WORKSOURCE);
         }
-        verify(mScanRequestProxy).enableScanning(true, true);
+        verify(mScanRequestProxy, times(1)).enableScanning(true, true);
         if (fromState.equals(DISABLED_STATE_STRING)) {
             verify(mBatteryStats).reportWifiOn();
         }
+        for (int i = 0; i < 3; i++) {
+            mActiveModeWarden.updateClientScanModeAfterCountryCodeUpdate(TEST_COUNTRYCODE);
+        }
+        verify(mScanRequestProxy, times(4)).enableScanning(true, true);
         assertEquals(mClientModeManager, mActiveModeWarden.getPrimaryClientModeManager());
         verify(mModeChangeCallback).onActiveModeManagerRoleChanged(mClientModeManager);
     }

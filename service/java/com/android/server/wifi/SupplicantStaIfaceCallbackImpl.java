@@ -180,7 +180,7 @@ abstract class SupplicantStaIfaceCallbackImpl extends ISupplicantStaIfaceCallbac
 
             if (newState == State.ASSOCIATING || newState == State.ASSOCIATED
                     || newState == State.COMPLETED) {
-                mStaIfaceHal.updateOnLinkedNetworkRoaming(mIfaceName, id);
+                mStaIfaceHal.updateOnLinkedNetworkRoaming(mIfaceName, id, false);
             }
 
             if (newState == State.COMPLETED) {
@@ -318,8 +318,13 @@ abstract class SupplicantStaIfaceCallbackImpl extends ISupplicantStaIfaceCallbac
                         .getCandidateSecurityParams();
                 if (params != null
                         && params.getSecurityType() == WifiConfiguration.SECURITY_TYPE_SAE) {
-                    mStaIfaceHal.logCallback("SAE incorrect password");
-                    isWrongPwd = true;
+                    // If this is ever connected, the password should be correct.
+                    isWrongPwd = !curConfiguration.getNetworkSelectionStatus().hasEverConnected();
+                    if (isWrongPwd) {
+                        mStaIfaceHal.logCallback("SAE incorrect password");
+                    } else {
+                        mStaIfaceHal.logCallback("SAE association rejection");
+                    }
                 }
             } else if (assocRejectInfo.statusCode == StatusCode.CHALLENGE_FAIL
                     && WifiConfigurationUtil.isConfigForWepNetwork(curConfiguration)) {

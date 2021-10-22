@@ -32,6 +32,7 @@ import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED
 
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_PRIMARY;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SECONDARY_TRANSIENT;
+import static com.android.server.wifi.ClientModeImpl.ARP_TABLE_PATH;
 import static com.android.server.wifi.ClientModeImpl.CMD_PRE_DHCP_ACTION;
 import static com.android.server.wifi.ClientModeImpl.CMD_UNWANTED_NETWORK;
 import static com.android.server.wifi.ClientModeImpl.WIFI_WORK_SOURCE;
@@ -84,6 +85,7 @@ import android.hardware.wifi.supplicant.V1_4.ISupplicantStaIfaceCallback.MboAsso
 import android.net.CaptivePortalData;
 import android.net.DhcpResultsParcelable;
 import android.net.InetAddresses;
+import android.net.IpPrefix;
 import android.net.Layer2InformationParcelable;
 import android.net.Layer2PacketParcelable;
 import android.net.LinkAddress;
@@ -96,6 +98,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.NetworkProvider;
 import android.net.NetworkSpecifier;
+import android.net.RouteInfo;
 import android.net.StaticIpConfiguration;
 import android.net.Uri;
 import android.net.ip.IIpClient;
@@ -104,6 +107,7 @@ import android.net.vcn.VcnManager;
 import android.net.vcn.VcnNetworkPolicyResult;
 import android.net.wifi.IActionListener;
 import android.net.wifi.ScanResult;
+import android.net.wifi.SecurityParams;
 import android.net.wifi.SupplicantState;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiConfiguration.KeyMgmt;
@@ -117,6 +121,7 @@ import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.nl80211.WifiNl80211Manager;
 import android.net.wifi.p2p.WifiP2pManager;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.BatteryStatsManager;
 import android.os.Binder;
 import android.os.Bundle;
@@ -132,6 +137,7 @@ import android.provider.Settings;
 import android.telephony.TelephonyManager;
 import android.test.mock.MockContentProvider;
 import android.test.mock.MockContentResolver;
+import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 
@@ -158,7 +164,6 @@ import com.android.server.wifi.proto.nano.WifiMetricsProto.WifiUsabilityStats;
 import com.android.server.wifi.util.ActionListenerWrapper;
 import com.android.server.wifi.util.NativeUtil;
 import com.android.server.wifi.util.RssiUtilTest;
-import com.android.server.wifi.util.ScanResultUtil;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.wifi.resources.R;
 
@@ -174,6 +179,7 @@ import org.mockito.MockitoAnnotations;
 import org.mockito.MockitoSession;
 import org.mockito.quality.Strictness;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -181,13 +187,19 @@ import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.Inet4Address;
+import java.net.InetAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
@@ -585,6 +597,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiGlobals.isWpa3SaeUpgradeEnabled()).thenReturn(true);
         when(mWifiGlobals.isOweUpgradeEnabled()).thenReturn(true);
         when(mWifiGlobals.getClientModeImplNumLogRecs()).thenReturn(100);
+        when(mWifiGlobals.isSaveFactoryMacToConfigStoreEnabled()).thenReturn(true);
         when(mWifiInjector.makeWifiNetworkAgent(any(), any(), any(), any(), any()))
                 .thenAnswer(new AnswerWithArguments() {
                     public WifiNetworkAgent answer(
@@ -875,6 +888,47 @@ public class ClientModeImplTest extends WifiBaseTest {
      * {@link WifiNative#connectToNetwork(WifiConfiguration)}.
      */
     @Test
+    public void triggerConnectWithUpgradeType() throws Exception {
+        String ssid = "TestOpenOweSsid";
+        WifiConfiguration config = spy(WifiConfigurationTestUtil.createOpenOweNetwork(
+                ScanResultUtil.createQuotedSsid(ssid)));
+        doAnswer(new AnswerWithArguments() {
+            public void answer(
+                    WifiConfiguration network, ScanDetail scanDetail) {
+                if (!config.SSID.equals(network.SSID)) return;
+                config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                        SecurityParams.createSecurityParamsBySecurityType(
+                                WifiConfiguration.SECURITY_TYPE_OWE));
+            }
+        }).when(mWifiNetworkSelector).updateNetworkCandidateSecurityParams(any(), any());
+        String caps = "[RSN-OWE_TRANSITION]";
+        ScanResult scanResult = new ScanResult(WifiSsid.createFromAsciiEncoded(ssid),
+                ssid, TEST_BSSID_STR, 1245, 0, caps, -78, 2412, 1025, 22, 33, 20, 0, 0, true);
+        ScanResult.InformationElement ie = createIE(ScanResult.InformationElement.EID_SSID,
+                ssid.getBytes(StandardCharsets.UTF_8));
+        scanResult.informationElements = new ScanResult.InformationElement[]{ie};
+        when(mScanRequestProxy.getScanResults()).thenReturn(Arrays.asList(scanResult));
+
+        config.networkId = FRAMEWORK_NETWORK_ID;
+        config.setRandomizedMacAddress(TEST_LOCAL_MAC_ADDRESS);
+        config.macRandomizationSetting = WifiConfiguration.RANDOMIZATION_AUTO;
+        config.getNetworkSelectionStatus().setHasEverConnected(mTestNetworkParams.hasEverConnected);
+        assertEquals(null, config.getNetworkSelectionStatus().getCandidateSecurityParams());
+
+        setupAndStartConnectSequence(config);
+        validateSuccessfulConnectSequence(config);
+        assertTrue(config.getNetworkSelectionStatus().getCandidateSecurityParams()
+                .isSecurityType(WifiConfiguration.SECURITY_TYPE_OWE));
+    }
+
+    /**
+     * Tests the network connection initiation sequence with the default network request pending
+     * from WifiNetworkFactory.
+     * This simulates the connect sequence using the public
+     * {@link WifiManager#enableNetwork(int, boolean)} and ensures that we invoke
+     * {@link WifiNative#connectToNetwork(WifiConfiguration)}.
+     */
+    @Test
     public void triggerConnectFromNonSettingsApp() throws Exception {
         WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
         config.networkId = FRAMEWORK_NETWORK_ID;
@@ -1118,6 +1172,42 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // then move to next state
         assertEquals("L3ProvisioningState", getCurrentState().getName());
+    }
+
+    @Test
+    public void testSimAuthRequestIsHandledWhileAlreadyConnectedSuccess() throws Exception {
+        connect();
+
+        WifiCarrierInfoManager.SimAuthRequestData requestData =
+                new WifiCarrierInfoManager.SimAuthRequestData();
+        requestData.protocol = WifiEnterpriseConfig.Eap.SIM;
+        requestData.networkId = FRAMEWORK_NETWORK_ID;
+        String testSimAuthResponse = "TEST_SIM_AUTH_RESPONSE";
+        when(mWifiCarrierInfoManager.getGsmSimAuthResponse(any(), any()))
+                .thenReturn(testSimAuthResponse);
+        mCmi.sendMessage(WifiMonitor.SUP_REQUEST_SIM_AUTH, requestData);
+        mLooper.dispatchAll();
+
+        // Expect success
+        verify(mWifiNative).simAuthResponse(WIFI_IFACE_NAME, WifiNative.SIM_AUTH_RESP_TYPE_GSM_AUTH,
+                testSimAuthResponse);
+    }
+
+    @Test
+    public void testSimAuthRequestIsHandledWhileAlreadyConnectedFail() throws Exception {
+        connect();
+
+        WifiCarrierInfoManager.SimAuthRequestData requestData =
+                new WifiCarrierInfoManager.SimAuthRequestData();
+        requestData.protocol = WifiEnterpriseConfig.Eap.SIM;
+        requestData.networkId = FRAMEWORK_NETWORK_ID;
+        // Mock WifiCarrierInfoManager to return null so that sim auth fails.
+        when(mWifiCarrierInfoManager.getGsmSimAuthResponse(any(), any())).thenReturn(null);
+        mCmi.sendMessage(WifiMonitor.SUP_REQUEST_SIM_AUTH, requestData);
+        mLooper.dispatchAll();
+
+        // Expect failure
+        verify(mWifiNative).simAuthFailedResponse(WIFI_IFACE_NAME);
     }
 
     /**
@@ -4223,7 +4313,8 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
-     * Verify that we do not set the user connect choice after connecting to a newly added network.
+     * Verify that we do not set the user connect choice after connecting to a newly added saved
+     * network.
      */
     @Test
     public void testNoSetUserConnectChoiceOnFirstConnection() throws Exception {
@@ -4235,12 +4326,27 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
-     * Verify that on the second successful connection to a network we set the user connect choice.
+     * Verify that on the second successful connection to a saved network we set the user connect
+     * choice.
      */
     @Test
     public void testConnectionSetUserConnectChoiceOnSecondConnection() throws Exception {
         when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
         mTestNetworkParams.hasEverConnected = true;
+        connect();
+        verify(mWifiBlocklistMonitor).handleBssidConnectionSuccess(TEST_BSSID_STR, TEST_SSID);
+        verify(mWifiConfigManager).updateNetworkAfterConnect(eq(FRAMEWORK_NETWORK_ID), eq(true),
+                anyInt());
+    }
+
+    /**
+     * Verify that on the first successful connection to an ephemeral network we set the user
+     * connect choice.
+     */
+    @Test
+    public void testConnectionSetUserConnectChoiceOnEphemeralConfig() throws Exception {
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
+        mConnectedNetwork.ephemeral = true;
         connect();
         verify(mWifiBlocklistMonitor).handleBssidConnectionSuccess(TEST_BSSID_STR, TEST_SSID);
         verify(mWifiConfigManager).updateNetworkAfterConnect(eq(FRAMEWORK_NETWORK_ID), eq(true),
@@ -4597,6 +4703,24 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.setLowLatencyMode(anyBoolean())).thenReturn(false);
         assertFalse(mCmi.setLowLatencyMode(lowLatencyMode));
         verify(mWifiNative).setLowLatencyMode(eq(lowLatencyMode));
+    }
+
+    /**
+     * Verify the wifi module can be confiured to always get the factory MAC address from
+     * WifiNative instead of using saved value in WifiConfigStore.
+     */
+    @Test
+    public void testGetFactoryMacAddressAlwaysFromWifiNative() throws Exception {
+        // Configure overlay to always retrieve the MAC address from WifiNative.
+        when(mWifiGlobals.isSaveFactoryMacToConfigStoreEnabled()).thenReturn(false);
+        initializeAndAddNetworkAndVerifySuccess();
+
+        clearInvocations(mWifiNative, mSettingsConfigStore);
+        assertEquals(TEST_GLOBAL_MAC_ADDRESS.toString(), mCmi.getFactoryMacAddress());
+        assertEquals(TEST_GLOBAL_MAC_ADDRESS.toString(), mCmi.getFactoryMacAddress());
+        assertEquals(TEST_GLOBAL_MAC_ADDRESS.toString(), mCmi.getFactoryMacAddress());
+
+        verify(mWifiNative, times(3)).getStaFactoryMacAddress(WIFI_IFACE_NAME);
     }
 
     /**
@@ -5126,7 +5250,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         config.setSecurityParams(WifiConfiguration.SECURITY_TYPE_EAP);
         config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_EAP);
         config.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.IEEE8021X);
-        config.SSID = ScanResultUtil.createQuotedSSID(sFilsSsid);
+        config.SSID = ScanResultUtil.createQuotedSsid(sFilsSsid);
         config.networkId = 1;
         config.setRandomizedMacAddress(TEST_LOCAL_MAC_ADDRESS);
         config.macRandomizationSetting = WifiConfiguration.RANDOMIZATION_AUTO;
@@ -5171,6 +5295,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(ClientModeImpl.CMD_START_FILS_CONNECTION, 0, 0,
                 Collections.singletonList(l2Packet));
         mLooper.dispatchAll();
+        assertEquals("L2ConnectingState", mCmi.getCurrentState().getName());
     }
 
     /**
@@ -5278,6 +5403,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         mCmi.sendMessage(ClientModeImpl.CMD_START_CONNECT, 0, 0, TEST_BSSID_STR);
         mLooper.dispatchAll();
+        assertEquals("L2ConnectingState", mCmi.getCurrentState().getName());
 
         prepareFilsHlpPktAndSendStartConnect();
 
@@ -6650,5 +6776,262 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         triggerConnect();
+    }
+
+    @Test
+    public void testNetworkRemovedUpdatesLinkedNetworks() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableLinkedNetworkRoaming, true);
+        WifiConfiguration connectedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid1\"");
+        connectedConfig.networkId = FRAMEWORK_NETWORK_ID;
+        WifiConfiguration removeConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid2\"");
+        removeConfig.networkId = FRAMEWORK_NETWORK_ID + 1;
+        connectedConfig.linkedConfigurations = new HashMap<>();
+        connectedConfig.linkedConfigurations.put(removeConfig.getProfileKey(), 1);
+        removeConfig.linkedConfigurations = new HashMap<>();
+        removeConfig.linkedConfigurations.put(connectedConfig.getProfileKey(), 1);
+        when(mWifiConfigManager.getConfiguredNetwork(connectedConfig.networkId))
+                .thenReturn(connectedConfig);
+        when(mWifiConfigManager.getConfiguredNetwork(removeConfig.networkId))
+                .thenReturn(removeConfig);
+        mConnectedNetwork = connectedConfig;
+        connect();
+
+        when(mWifiNative.getCurrentNetworkSecurityParams(any())).thenReturn(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        mConfigUpdateListenerCaptor.getValue().onNetworkRemoved(removeConfig);
+        mLooper.dispatchAll();
+
+        verify(mWifiConfigManager).updateLinkedNetworks(connectedConfig.networkId);
+    }
+
+    @Test
+    public void testConnectClearsAllowlistSsids() throws Exception {
+        connect();
+        verify(mWifiBlocklistMonitor)
+                .setAllowlistSsids(eq(mConnectedNetwork.SSID), eq(Collections.emptyList()));
+    }
+
+    @Test
+    public void testNetworkUpdatedUpdatesLinkedNetworks() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableLinkedNetworkRoaming, true);
+        WifiConfiguration connectedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid1\"");
+        connectedConfig.networkId = FRAMEWORK_NETWORK_ID;
+        WifiConfiguration updatedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid2\"");
+        updatedConfig.networkId = FRAMEWORK_NETWORK_ID + 1;
+        connectedConfig.linkedConfigurations = new HashMap<>();
+        connectedConfig.linkedConfigurations.put(updatedConfig.getProfileKey(), 1);
+        updatedConfig.linkedConfigurations = new HashMap<>();
+        updatedConfig.linkedConfigurations.put(connectedConfig.getProfileKey(), 1);
+        when(mWifiConfigManager.getConfiguredNetwork(connectedConfig.networkId))
+                .thenReturn(connectedConfig);
+        when(mWifiConfigManager.getConfiguredNetwork(updatedConfig.networkId))
+                .thenReturn(updatedConfig);
+        mConnectedNetwork = connectedConfig;
+        connect();
+
+        when(mWifiNative.getCurrentNetworkSecurityParams(any())).thenReturn(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        IActionListener connectActionListener = mock(IActionListener.class);
+        mCmi.saveNetwork(
+                new NetworkUpdateResult(
+                        updatedConfig.networkId, false, false, true, false),
+                new ActionListenerWrapper(connectActionListener),
+                Binder.getCallingUid());
+        mLooper.dispatchAll();
+
+        verify(mWifiConfigManager).updateLinkedNetworks(connectedConfig.networkId);
+    }
+
+    @Test
+    public void testNetworkValidationUpdatesLinkedNetworks() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableLinkedNetworkRoaming, true);
+        BufferedReader reader = mock(BufferedReader.class);
+        WifiConfiguration connectedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid1\"");
+        connectedConfig.networkId = FRAMEWORK_NETWORK_ID;
+        when(mWifiConfigManager.getConfiguredNetwork(connectedConfig.networkId))
+                .thenReturn(connectedConfig);
+        mConnectedNetwork = connectedConfig;
+        connect();
+        verify(mWifiInjector).makeWifiNetworkAgent(any(), any(), any(), any(),
+                mWifiNetworkAgentCallbackCaptor.capture());
+        verify(mWifiBlocklistMonitor).setAllowlistSsids(
+                eq(connectedConfig.SSID), eq(Collections.emptyList()));
+        verify(mWifiBlocklistMonitor).updateFirmwareRoamingConfiguration(
+                eq(Set.of(connectedConfig.SSID)));
+
+        LinkProperties linkProperties = mock(LinkProperties.class);
+        RouteInfo routeInfo = mock(RouteInfo.class);
+        IpPrefix ipPrefix = mock(IpPrefix.class);
+        Inet4Address destinationAddress = mock(Inet4Address.class);
+        InetAddress gatewayAddress = mock(InetAddress.class);
+        String hostAddress = "127.0.0.1";
+        String gatewayMac = "192.168.0.1";
+        when(linkProperties.getRoutes()).thenReturn(Arrays.asList(routeInfo));
+        when(routeInfo.isDefaultRoute()).thenReturn(true);
+        when(routeInfo.getDestination()).thenReturn(ipPrefix);
+        when(ipPrefix.getAddress()).thenReturn(destinationAddress);
+        when(routeInfo.hasGateway()).thenReturn(true);
+        when(routeInfo.getGateway()).thenReturn(gatewayAddress);
+        when(gatewayAddress.getHostAddress()).thenReturn(hostAddress);
+        when(mWifiInjector.createBufferedReader(ARP_TABLE_PATH)).thenReturn(reader);
+        when(reader.readLine()).thenReturn(new StringJoiner(" ")
+                .add(hostAddress)
+                .add("HWType")
+                .add("Flags")
+                .add(gatewayMac)
+                .add("Mask")
+                .add("Device")
+                .toString());
+
+        mIpClientCallback.onLinkPropertiesChange(linkProperties);
+        mLooper.dispatchAll();
+        when(mWifiNative.getCurrentNetworkSecurityParams(any())).thenReturn(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        when(mWifiConfigManager.setNetworkDefaultGwMacAddress(anyInt(), any())).thenReturn(true);
+        when(mWifiConfigManager.saveToStore(anyBoolean())).thenReturn(true);
+        WifiConfiguration linkedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid2\"");
+        linkedConfig.networkId = connectedConfig.networkId + 1;
+        Map<String, WifiConfiguration> linkedNetworks = new HashMap<>();
+        linkedNetworks.put(linkedConfig.getProfileKey(), linkedConfig);
+        when(mWifiConfigManager.getLinkedNetworksWithoutMasking(connectedConfig.networkId))
+                .thenReturn(linkedNetworks);
+        when(mWifiNative.updateLinkedNetworks(any(), anyInt(), any())).thenReturn(true);
+        mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
+                NetworkAgent.VALIDATION_STATUS_VALID, null /* captivePortalUrl */);
+        mLooper.dispatchAll();
+
+        verify(mWifiConfigManager)
+                .setNetworkDefaultGwMacAddress(mConnectedNetwork.networkId, gatewayMac);
+        verify(mWifiConfigManager).updateLinkedNetworks(connectedConfig.networkId);
+        verify(mWifiNative).updateLinkedNetworks(
+                any(), eq(connectedConfig.networkId), eq(linkedNetworks));
+        List<String> allowlistSsids = new ArrayList<>();
+        allowlistSsids.add(linkedConfig.SSID);
+        allowlistSsids.add(connectedConfig.SSID);
+        verify(mWifiBlocklistMonitor).setAllowlistSsids(
+                eq(connectedConfig.SSID), eq(allowlistSsids));
+        verify(mWifiBlocklistMonitor).updateFirmwareRoamingConfiguration(
+                eq(new ArraySet<>(allowlistSsids)));
+    }
+
+    @Test
+    public void testNonPskNetworkDoesNotUpdateLinkedNetworks() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableLinkedNetworkRoaming, true);
+        BufferedReader reader = mock(BufferedReader.class);
+        WifiConfiguration connectedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid1\"");
+        connectedConfig.networkId = FRAMEWORK_NETWORK_ID;
+        when(mWifiConfigManager.getConfiguredNetwork(connectedConfig.networkId))
+                .thenReturn(connectedConfig);
+        mConnectedNetwork = connectedConfig;
+        connect();
+        verify(mWifiInjector).makeWifiNetworkAgent(any(), any(), any(), any(),
+                mWifiNetworkAgentCallbackCaptor.capture());
+
+        LinkProperties linkProperties = mock(LinkProperties.class);
+        RouteInfo routeInfo = mock(RouteInfo.class);
+        IpPrefix ipPrefix = mock(IpPrefix.class);
+        Inet4Address destinationAddress = mock(Inet4Address.class);
+        InetAddress gatewayAddress = mock(InetAddress.class);
+        String hostAddress = "127.0.0.1";
+        String gatewayMac = "192.168.0.1";
+        when(linkProperties.getRoutes()).thenReturn(Arrays.asList(routeInfo));
+        when(routeInfo.isDefaultRoute()).thenReturn(true);
+        when(routeInfo.getDestination()).thenReturn(ipPrefix);
+        when(ipPrefix.getAddress()).thenReturn(destinationAddress);
+        when(routeInfo.hasGateway()).thenReturn(true);
+        when(routeInfo.getGateway()).thenReturn(gatewayAddress);
+        when(gatewayAddress.getHostAddress()).thenReturn(hostAddress);
+        when(mWifiInjector.createBufferedReader(ARP_TABLE_PATH)).thenReturn(reader);
+        when(reader.readLine()).thenReturn(new StringJoiner(" ")
+                .add(hostAddress)
+                .add("HWType")
+                .add("Flags")
+                .add(gatewayMac)
+                .add("Mask")
+                .add("Device")
+                .toString());
+
+        mIpClientCallback.onLinkPropertiesChange(linkProperties);
+        mLooper.dispatchAll();
+        when(mWifiNative.getCurrentNetworkSecurityParams(any())).thenReturn(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE));
+        when(mWifiConfigManager.setNetworkDefaultGwMacAddress(anyInt(), any())).thenReturn(true);
+        when(mWifiConfigManager.saveToStore(anyBoolean())).thenReturn(true);
+        mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
+                NetworkAgent.VALIDATION_STATUS_VALID, null /* captivePortalUrl */);
+        mLooper.dispatchAll();
+
+        verify(mWifiConfigManager)
+                .setNetworkDefaultGwMacAddress(mConnectedNetwork.networkId, gatewayMac);
+        verify(mWifiConfigManager, never()).updateLinkedNetworks(connectedConfig.networkId);
+    }
+
+    @Test
+    public void testInvalidScanResultDoesNotUpdateLinkedNetworks() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableLinkedNetworkRoaming, true);
+        BufferedReader reader = mock(BufferedReader.class);
+        WifiConfiguration connectedConfig = WifiConfigurationTestUtil.createPskNetwork("\"ssid1\"");
+        connectedConfig.networkId = FRAMEWORK_NETWORK_ID;
+        when(mWifiConfigManager.getConfiguredNetwork(connectedConfig.networkId))
+                .thenReturn(connectedConfig);
+        mConnectedNetwork = connectedConfig;
+        connect();
+        verify(mWifiInjector).makeWifiNetworkAgent(any(), any(), any(), any(),
+                mWifiNetworkAgentCallbackCaptor.capture());
+
+        LinkProperties linkProperties = mock(LinkProperties.class);
+        RouteInfo routeInfo = mock(RouteInfo.class);
+        IpPrefix ipPrefix = mock(IpPrefix.class);
+        Inet4Address destinationAddress = mock(Inet4Address.class);
+        InetAddress gatewayAddress = mock(InetAddress.class);
+        String hostAddress = "127.0.0.1";
+        String gatewayMac = "192.168.0.1";
+        when(linkProperties.getRoutes()).thenReturn(Arrays.asList(routeInfo));
+        when(routeInfo.isDefaultRoute()).thenReturn(true);
+        when(routeInfo.getDestination()).thenReturn(ipPrefix);
+        when(ipPrefix.getAddress()).thenReturn(destinationAddress);
+        when(routeInfo.hasGateway()).thenReturn(true);
+        when(routeInfo.getGateway()).thenReturn(gatewayAddress);
+        when(gatewayAddress.getHostAddress()).thenReturn(hostAddress);
+        when(mWifiInjector.createBufferedReader(ARP_TABLE_PATH)).thenReturn(reader);
+        when(reader.readLine()).thenReturn(new StringJoiner(" ")
+                .add(hostAddress)
+                .add("HWType")
+                .add("Flags")
+                .add(gatewayMac)
+                .add("Mask")
+                .add("Device")
+                .toString());
+
+        mIpClientCallback.onLinkPropertiesChange(linkProperties);
+        mLooper.dispatchAll();
+        when(mWifiNative.getCurrentNetworkSecurityParams(any())).thenReturn(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        when(mWifiConfigManager.setNetworkDefaultGwMacAddress(anyInt(), any())).thenReturn(true);
+        when(mWifiConfigManager.saveToStore(anyBoolean())).thenReturn(true);
+
+        // FT/PSK scan, do not update linked networks
+        ScanResult ftPskScan = new ScanResult();
+        ftPskScan.capabilities = "FT/PSK";
+        when(mScanRequestProxy.getScanResult(any())).thenReturn(ftPskScan);
+        mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
+                NetworkAgent.VALIDATION_STATUS_VALID, null /* captivePortalUrl */);
+        mLooper.dispatchAll();
+        verify(mWifiConfigManager)
+                .setNetworkDefaultGwMacAddress(mConnectedNetwork.networkId, gatewayMac);
+        verify(mWifiConfigManager, never()).updateLinkedNetworks(connectedConfig.networkId);
+
+        // Null scan, do not update linked networks
+        mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
+                NetworkAgent.VALIDATION_STATUS_VALID, null /* captivePortalUrl */);
+        mLooper.dispatchAll();
+        verify(mWifiConfigManager)
+                .setNetworkDefaultGwMacAddress(mConnectedNetwork.networkId, gatewayMac);
+        verify(mWifiConfigManager, never()).updateLinkedNetworks(connectedConfig.networkId);
     }
 }

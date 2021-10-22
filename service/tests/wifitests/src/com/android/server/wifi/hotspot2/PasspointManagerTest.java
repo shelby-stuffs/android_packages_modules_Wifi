@@ -38,6 +38,7 @@ import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.anyMap;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.lenient;
@@ -207,6 +208,7 @@ public class PasspointManagerTest extends WifiBaseTest {
     @Mock OsuNetworkConnection mOsuNetworkConnection;
     @Mock OsuServerConnection mOsuServerConnection;
     @Mock PasspointProvisioner mPasspointProvisioner;
+    @Mock PasspointNetworkNominateHelper mPasspointNetworkNominateHelper;
     @Mock IProvisioningCallback mCallback;
     @Mock WfaKeyStore mWfaKeyStore;
     @Mock KeyStore mKeyStore;
@@ -257,7 +259,8 @@ public class PasspointManagerTest extends WifiBaseTest {
         when(mContext.getSystemService(Context.APP_OPS_SERVICE)).thenReturn(mAppOpsManager);
         when(mWifiInjector.getWifiNetworkSuggestionsManager())
                 .thenReturn(mWifiNetworkSuggestionsManager);
-        when(mWifiPermissionsUtil.doesUidBelongToCurrentUser(anyInt())).thenReturn(true);
+        when(mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(anyInt()))
+                .thenReturn(true);
         // Update mConfigSettingsPasspointEnabled when WifiSettingsStore#handleWifiPasspointEnabled
         // is called.
         doAnswer(invocation -> {
@@ -278,6 +281,7 @@ public class PasspointManagerTest extends WifiBaseTest {
                 mWifiKeyStore, mClock, mObjectFactory, mWifiConfigManager,
                 mWifiConfigStore, mWifiSettingsStore, mWifiMetrics, mWifiCarrierInfoManager,
                 mMacAddressUtil, mWifiPermissionsUtil);
+        mManager.setPasspointNetworkNominateHelper(mPasspointNetworkNominateHelper);
         // Verify Passpoint is enabled on creation.
         assertTrue(mManager.isWifiPasspointEnabled());
         mManager.setUseInjectedPKIX(true);
@@ -431,6 +435,8 @@ public class PasspointManagerTest extends WifiBaseTest {
         when(provider.getPackageName()).thenReturn(packageName);
         assertTrue(mManager.addOrUpdateProvider(
                 config, TEST_CREATOR_UID, TEST_PACKAGE, isSuggestion, true));
+        verify(mPasspointNetworkNominateHelper, atLeastOnce())
+                .refreshPasspointNetworkCandidates(isSuggestion);
         return provider;
     }
 
@@ -586,7 +592,8 @@ public class PasspointManagerTest extends WifiBaseTest {
      */
     @Test
     public void addProviderWithBackgroundUser() throws Exception {
-        when(mWifiPermissionsUtil.doesUidBelongToCurrentUser(anyInt())).thenReturn(false);
+        when(mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(anyInt()))
+                .thenReturn(false);
 
         PasspointConfiguration config = createTestConfigWithUserCredential(TEST_FQDN,
                 TEST_FRIENDLY_NAME);
@@ -2058,7 +2065,8 @@ public class PasspointManagerTest extends WifiBaseTest {
         verify(mWifiMetrics).incrementNumPasspointProviderInstallation();
         verify(mWifiMetrics).incrementNumPasspointProviderInstallSuccess();
 
-        when(mWifiPermissionsUtil.doesUidBelongToCurrentUser(anyInt())).thenReturn(false);
+        when(mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(anyInt()))
+                .thenReturn(false);
         assertFalse(mManager.removeProvider(TEST_CREATOR_UID, false, null, TEST_FQDN));
     }
 

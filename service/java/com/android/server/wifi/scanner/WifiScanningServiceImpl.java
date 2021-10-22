@@ -34,6 +34,7 @@ import android.net.wifi.WifiScanner.PnoSettings;
 import android.net.wifi.WifiScanner.ScanData;
 import android.net.wifi.WifiScanner.ScanSettings;
 import android.net.wifi.WifiScanner.WifiBand;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.BadParcelableException;
 import android.os.BatteryStatsManager;
 import android.os.Binder;
@@ -69,7 +70,6 @@ import com.android.server.wifi.proto.nano.WifiMetricsProto;
 import com.android.server.wifi.scanner.ChannelHelper.ChannelCollection;
 import com.android.server.wifi.util.ArrayUtils;
 import com.android.server.wifi.util.LastCallerInfoManager;
-import com.android.server.wifi.util.ScanResultUtil;
 import com.android.server.wifi.util.WifiHandler;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.server.wifi.util.WorkSourceUtil;
@@ -146,6 +146,20 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
         b.putIntegerArrayList(WifiScanner.GET_AVAILABLE_CHANNELS_EXTRA, list);
         mLog.trace("getAvailableChannels uid=%").c(Binder.getCallingUid()).flush();
         return b;
+    }
+
+    /**
+     * See {@link WifiScanner#isScanning()}
+     * @return true if in ScanningState.
+     */
+    @Override
+    public boolean isScanning() {
+        int uid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkCallersHardwareLocationPermission(uid)) {
+            throw new SecurityException("UID " + uid
+                    + " does not have hardware Location permission");
+        }
+        return mIsScanning;
     }
 
     private void enforceNetworkStack(int uid) {
@@ -401,6 +415,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
     private ChannelHelper mChannelHelper;
     private BackgroundScanScheduler mBackgroundScheduler;
     private WifiNative.ScanSettings mPreviousSchedule;
+    private boolean mIsScanning = false;
 
     private WifiBackgroundScanStateMachine mBackgroundScanStateMachine;
     private WifiSingleScanStateMachine mSingleScanStateMachine;
@@ -1052,6 +1067,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 WifiStatsLog.write(WifiStatsLog.WIFI_SCAN_STATE_CHANGED,
                         uidsAndTags.first, uidsAndTags.second,
                         WifiStatsLog.WIFI_SCAN_STATE_CHANGED__STATE__ON);
+                mIsScanning = true;
             }
 
             @Override
@@ -1063,6 +1079,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 WifiStatsLog.write(WifiStatsLog.WIFI_SCAN_STATE_CHANGED,
                         uidsAndTags.first, uidsAndTags.second,
                         WifiStatsLog.WIFI_SCAN_STATE_CHANGED__STATE__OFF);
+                mIsScanning = false;
 
                 // if any scans are still active (never got results available then indicate failure)
                 mWifiMetrics.incrementScanReturnEntry(

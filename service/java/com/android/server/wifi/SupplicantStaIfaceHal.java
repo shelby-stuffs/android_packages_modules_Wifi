@@ -1076,7 +1076,7 @@ public class SupplicantStaIfaceHal {
      */
     public boolean roamToNetwork(@NonNull String ifaceName, WifiConfiguration config) {
         synchronized (mLock) {
-            if (updateOnLinkedNetworkRoaming(ifaceName, config.networkId)) {
+            if (updateOnLinkedNetworkRoaming(ifaceName, config.networkId, true)) {
                 SupplicantStaNetworkHal networkHandle = getCurrentNetworkRemoteHandle(ifaceName);
                 if (networkHandle == null) {
                     loge("Roaming config matches a linked config, but a linked network handle was"
@@ -3730,26 +3730,35 @@ public class SupplicantStaIfaceHal {
      * if we have.
      *
      * @param ifaceName Name of the interface.
-     * @param newNetworkId network id of the network we've roamed to.
+     * @param newNetworkId Network id of the new network we've roamed to. If fromFramework is
+     *                     {@code true}, this will be a framework network id. Otherwise, this will
+     *                     be a remote network id.
+     * @param fromFramework {@code true} if the network id is a framework network id, {@code false}
+                            if the network id is a remote network id.
      * @return true if we've roamed to a linked network, false if not.
      */
-    public boolean updateOnLinkedNetworkRoaming(@NonNull String ifaceName, int newNetworkId) {
+    public boolean updateOnLinkedNetworkRoaming(
+            @NonNull String ifaceName, int newNetworkId, boolean fromFramework) {
         synchronized (mLock) {
-            SupplicantStaNetworkHal networkHal = getCurrentNetworkRemoteHandle(ifaceName);
             List<Pair<SupplicantStaNetworkHal, WifiConfiguration>> linkedNetworkHandles =
                     mLinkedNetworkLocalAndRemoteConfigs.get(ifaceName);
-            if (linkedNetworkHandles == null || networkHal == null
-                    || networkHal.getNetworkId() == newNetworkId) {
+            SupplicantStaNetworkHal currentHandle = getCurrentNetworkRemoteHandle(ifaceName);
+            WifiConfiguration currentConfig = getCurrentNetworkLocalConfig(ifaceName);
+            if (linkedNetworkHandles == null || currentHandle == null || currentConfig == null) {
+                return false;
+            }
+            if (fromFramework ? currentConfig.networkId == newNetworkId
+                    : currentHandle.getNetworkId() == newNetworkId) {
                 return false;
             }
             for (Pair<SupplicantStaNetworkHal, WifiConfiguration> pair : linkedNetworkHandles) {
-                if (pair.first.getNetworkId() != newNetworkId) {
-                    continue;
+                if (fromFramework ? pair.second.networkId == newNetworkId
+                        : pair.first.getNetworkId() == newNetworkId) {
+                    Log.i(TAG, "Roamed to linked network, make linked network as current network");
+                    mCurrentNetworkRemoteHandles.put(ifaceName, pair.first);
+                    mCurrentNetworkLocalConfigs.put(ifaceName, pair.second);
+                    return true;
                 }
-                Log.i(TAG, "Roamed to linked network, make linked network as current network");
-                mCurrentNetworkRemoteHandles.put(ifaceName, pair.first);
-                mCurrentNetworkLocalConfigs.put(ifaceName, pair.second);
-                return true;
             }
             return false;
         }
@@ -3775,7 +3784,7 @@ public class SupplicantStaIfaceHal {
             }
 
             if (networkId != currentConfig.networkId) {
-                Log.e(TAG, "current network id is not matching");
+                Log.e(TAG, "current config network id is not matching");
                 return false;
             }
 
@@ -3784,7 +3793,13 @@ public class SupplicantStaIfaceHal {
                 return false;
             }
 
-            if (!removeAllNetworksExcept(ifaceName, currentHandle.getNetworkId())) {
+            final int remoteNetworkId = currentHandle.getNetworkId();
+            if (remoteNetworkId == -1) {
+                Log.e(TAG, "current handle getNetworkId failed");
+                return false;
+            }
+
+            if (!removeAllNetworksExcept(ifaceName, remoteNetworkId)) {
                 Log.e(TAG, "couldn't remove non-current supplicant networks");
                 return false;
             }
@@ -3843,7 +3858,13 @@ public class SupplicantStaIfaceHal {
         }
     }
 
-    public SecurityParams getCurrentSecurityParams(@NonNull String ifaceName) {
+    /**
+     * Gets the security params of the current network associated with this interface
+     *
+     * @param ifaceName Name of the interface
+     * @return Security params of the current network associated with the interface
+     */
+    public SecurityParams getCurrentNetworkSecurityParams(@NonNull String ifaceName) {
         WifiConfiguration currentConfig = getCurrentNetworkLocalConfig(ifaceName);
 
         if (currentConfig == null) {

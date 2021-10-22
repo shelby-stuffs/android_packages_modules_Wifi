@@ -359,6 +359,7 @@ public class WifiNetworkSuggestionsManager {
         public WifiConfiguration createInternalWifiConfiguration(
                 @Nullable WifiCarrierInfoManager carrierInfoManager) {
             WifiConfiguration config = new WifiConfiguration(wns.getWifiConfiguration());
+            config.shared = false;
             config.allowAutojoin = isAutojoinEnabled;
             if (config.enterpriseConfig
                     != null && config.enterpriseConfig.isAuthenticationSimBased()) {
@@ -880,7 +881,7 @@ public class WifiNetworkSuggestionsManager {
     public @WifiManager.NetworkSuggestionsStatusCode int add(
             List<WifiNetworkSuggestion> networkSuggestions, int uid, String packageName,
             @Nullable String featureId) {
-        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUser(uid)) {
+        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(uid)) {
             Log.e(TAG, "UID " + uid + " not visible to the current user");
             return WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL;
         }
@@ -1084,6 +1085,13 @@ public class WifiNetworkSuggestionsManager {
                         WifiConfigurationUtil.VALIDATE_FOR_ADD)) {
                     return false;
                 }
+                if (config.macRandomizationSetting != WifiConfiguration.RANDOMIZATION_PERSISTENT
+                        && config.macRandomizationSetting
+                        != WifiConfiguration.RANDOMIZATION_NON_PERSISTENT) {
+                    Log.w(TAG, "MAC randomization setting is invalid. Automatically setting"
+                            + " config to use persistent random MAC address.");
+                    config.macRandomizationSetting = WifiConfiguration.RANDOMIZATION_PERSISTENT;
+                }
                 if (config.isEnterprise()) {
                     final WifiEnterpriseConfig enterpriseConfig = config.enterpriseConfig;
                     if (enterpriseConfig.isEapMethodServerCertUsed()
@@ -1101,6 +1109,13 @@ public class WifiNetworkSuggestionsManager {
             } else {
                 if (!wns.passpointConfiguration.validate()) {
                     return false;
+                }
+                if (!wns.passpointConfiguration.isMacRandomizationEnabled()) {
+                    Log.w(TAG, "MAC randomization must be enabled on Passpoint suggestion."
+                            + " Defaulting to use persistent MAC randomization for invalid"
+                            + " configuration.");
+                    wns.passpointConfiguration.setMacRandomizationEnabled(true);
+                    wns.passpointConfiguration.setNonPersistentMacRandomizationEnabled(false);
                 }
             }
             if (!isAppWorkingAsCrossCarrierProvider(packageName)
@@ -1292,7 +1307,7 @@ public class WifiNetworkSuggestionsManager {
      */
     public @WifiManager.NetworkSuggestionsStatusCode int remove(
             List<WifiNetworkSuggestion> networkSuggestions, int uid, String packageName) {
-        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUser(uid)) {
+        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(uid)) {
             Log.e(TAG, "UID " + uid + " not visible to the current user");
             return WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL;
         }
@@ -1359,7 +1374,7 @@ public class WifiNetworkSuggestionsManager {
      */
     public @NonNull List<WifiNetworkSuggestion> get(@NonNull String packageName, int uid) {
         List<WifiNetworkSuggestion> networkSuggestionList = new ArrayList<>();
-        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUser(uid)) {
+        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(uid)) {
             Log.e(TAG, "UID " + uid + " not visible to the current user");
             return networkSuggestionList;
         }
@@ -2206,7 +2221,7 @@ public class WifiNetworkSuggestionsManager {
     public boolean registerSuggestionConnectionStatusListener(
             @NonNull ISuggestionConnectionStatusListener listener,
             String packageName, int uid) {
-        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUser(uid)) {
+        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(uid)) {
             Log.e(TAG, "UID " + uid + " not visible to the current user");
             return false;
         }
@@ -2227,7 +2242,7 @@ public class WifiNetworkSuggestionsManager {
      */
     public void unregisterSuggestionConnectionStatusListener(
             @NonNull ISuggestionConnectionStatusListener listener, String packageName, int uid) {
-        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUser(uid)) {
+        if (!mWifiPermissionsUtil.doesUidBelongToCurrentUserOrDeviceOwner(uid)) {
             Log.e(TAG, "UID " + uid + " not visible to the current user");
             return;
         }

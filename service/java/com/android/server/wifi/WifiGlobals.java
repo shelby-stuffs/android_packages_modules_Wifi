@@ -62,6 +62,8 @@ public class WifiGlobals {
     // This is read from the overlay, cache it after boot up.
     private final int mClientModeImplNumLogRecs;
     // This is read from the overlay, cache it after boot up.
+    private final boolean mSaveFactoryMacToConfigStoreEnabled;
+    // This is read from the overlay, cache it after boot up.
     private final boolean mIsDisconnectOnlyOnInitialIpReachability;
 
     // This is set by WifiManager#setVerboseLoggingEnabled(int).
@@ -86,6 +88,8 @@ public class WifiGlobals {
                 .getInteger(R.integer.config_wifiP2pDeviceNamePostfixNumDigits);
         mClientModeImplNumLogRecs = mContext.getResources()
                 .getInteger(R.integer.config_wifiClientModeImplNumLogRecs);
+        mSaveFactoryMacToConfigStoreEnabled = mContext.getResources()
+                .getBoolean(R.bool.config_wifiSaveFactoryMacToWifiConfigStore);
         mIsDisconnectOnlyOnInitialIpReachability = mContext.getResources()
                 .getBoolean(R.bool.config_disconnectOnlyOnInitialIpReachability);
     }
@@ -219,6 +223,11 @@ public class WifiGlobals {
         return mClientModeImplNumLogRecs;
     }
 
+    /** Get whether to use the saved factory MAC address when available **/
+    public boolean isSaveFactoryMacToConfigStoreEnabled() {
+        return mSaveFactoryMacToConfigStoreEnabled;
+    }
+
     /** Check if IP Reachability lost need to be monitor for first 10 sec of connection/roam. */
     public boolean getDisconnectOnlyOnInitialIpReachability() {
         return mIsDisconnectOnlyOnInitialIpReachability;
@@ -238,6 +247,7 @@ public class WifiGlobals {
         pw.println("mP2pDeviceNamePrefix=" + mP2pDeviceNamePrefix);
         pw.println("mP2pDeviceNamePostfixNumDigits=" + mP2pDeviceNamePostfixNumDigits);
         pw.println("mClientModeImplNumLogRecs=" + mClientModeImplNumLogRecs);
+        pw.println("mSaveFactoryMacToConfigStoreEnabled=" + mSaveFactoryMacToConfigStoreEnabled);
         pw.println("mIsDisconnectOnlyOnInitialIpReachability=" + mIsDisconnectOnlyOnInitialIpReachability);
     }
 }

@@ -43,6 +43,7 @@ import android.util.Log;
 import android.util.SparseArray;
 
 import androidx.annotation.RequiresApi;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.Protocol;
@@ -1134,6 +1135,26 @@ public class WifiScanner {
         mAsyncChannel.sendMessage(CMD_DEREGISTER_SCAN_LISTENER, 0, key);
     }
 
+    /**
+     * Check whether the Wi-Fi subsystem has started a scan and is waiting for scan results.
+     * @return true if a scan initiated via
+     *         {@link WifiScanner#startScan(ScanSettings, ScanListener)} or
+     *         {@link WifiManager#startScan()} is in progress.
+     *         false if there is currently no scanning initiated by {@link WifiScanner} or
+     *         {@link WifiManager}, but it's still possible the wifi radio is scanning for
+     *         another reason.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.LOCATION_HARDWARE)
+    public boolean isScanning() {
+        try {
+            return mService.isScanning();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     /** start wifi scan in background
      * @param settings specifies various parameters for the scan; for more information look at
      * {@link ScanSettings}
@@ -1751,6 +1772,12 @@ public class WifiScanner {
     }
 
     /** @hide */
+    @VisibleForTesting
+    public Handler getInternalHandler() {
+        return mInternalHandler;
+    }
+
+    /** @hide */
     public static class OperationResult implements Parcelable {
         public int reason;
         public String description;
@@ -1800,8 +1827,12 @@ public class WifiScanner {
                     // This will cause all further async API calls on the WifiManager
                     // to fail and throw an exception
                     mAsyncChannel = null;
-                    getLooper().quit();
                     return;
+            }
+
+            if (mAsyncChannel == null) {
+                Log.e(TAG, "Channel was already disconnected!");
+                return;
             }
 
             ListenerWithExecutor listenerWithExecutor = getListenerWithExecutor(msg.arg2);

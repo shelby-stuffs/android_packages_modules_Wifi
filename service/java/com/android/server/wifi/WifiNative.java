@@ -1704,18 +1704,15 @@ public class WifiNative {
     public ArrayList<ScanDetail> getScanResults(@NonNull String ifaceName) {
         if (mUseFakeScanDetails) {
             synchronized (mFakeScanDetails) {
-                ArrayList<ScanDetail> copy = new ArrayList<>();
+                ArrayList<ScanDetail> copyList = new ArrayList<>();
                 for (ScanDetail sd: mFakeScanDetails) {
-                    sd.getScanResult().ifaceName = ifaceName;
+                    ScanDetail copy = new ScanDetail(sd);
+                    copy.getScanResult().ifaceName = ifaceName;
                     // otherwise the fake will be too old
-                    sd.getScanResult().timestamp = SystemClock.elapsedRealtime() * 1000;
-
-                    // clone the ScanResult (which was updated above) so that each call gets a
-                    // unique timestamp
-                    copy.add(new ScanDetail(new ScanResult(sd.getScanResult()),
-                            sd.getNetworkDetail()));
+                    copy.getScanResult().timestamp = SystemClock.elapsedRealtime() * 1000;
+                    copyList.add(copy);
                 }
-                return copy;
+                return copyList;
             }
         }
         return convertNativeScanResults(ifaceName, mWifiCondManager.getScanResults(
@@ -4403,11 +4400,17 @@ public class WifiNative {
         return true;
     }
 
-    public SecurityParams getCurrentSecurityParams(@NonNull String ifaceName) {
-        return mSupplicantStaIfaceHal.getCurrentSecurityParams(ifaceName);
-    }
-
     public boolean needToDeleteIfacesDueToBridgeMode(int ifaceType, WorkSource requestorWs) {
        return mWifiVendorHal.needToDeleteIfacesDueToBridgeMode(ifaceType, requestorWs);
+    }
+
+    /**
+     * Gets the security params of the current network associated with this interface
+     *
+     * @param ifaceName Name of the interface
+     * @return Security params of the current network associated with the interface
+     */
+    public SecurityParams getCurrentNetworkSecurityParams(@NonNull String ifaceName) {
+        return mSupplicantStaIfaceHal.getCurrentNetworkSecurityParams(ifaceName);
     }
 }

@@ -76,6 +76,7 @@ import android.hidl.manager.V1_0.IServiceManager;
 import android.hidl.manager.V1_0.IServiceNotification;
 import android.net.MacAddress;
 import android.net.wifi.ScanResult;
+import android.net.wifi.SecurityParams;
 import android.net.wifi.SupplicantState;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
@@ -646,12 +647,97 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
     }
 
     /**
-     * Tests roaming to a linked network.
+     * Tests framework roaming to a linked network.
      */
     @Test
     public void testRoamToLinkedNetwork() throws Exception {
         executeAndValidateInitializationSequence();
         executeAndValidateRoamSequence(false, true);
+    }
+
+    /**
+     * Tests updating linked networks for a network id
+     */
+    @Test
+    public void testUpdateLinkedNetworks() throws Exception {
+        executeAndValidateInitializationSequence();
+
+        final int frameworkNetId = 1;
+        final int supplicantNetId = 10;
+
+        // No current network in supplicant, return false
+        assertFalse(mDut.updateLinkedNetworks(
+                WLAN0_IFACE_NAME, SUPPLICANT_NETWORK_ID, null));
+
+        WifiConfiguration config = executeAndValidateConnectSequence(
+                frameworkNetId, false);
+
+        // Mismatched framework network id, return false
+        assertFalse(mDut.updateLinkedNetworks(WLAN0_IFACE_NAME, frameworkNetId + 1, null));
+
+        // Supplicant network id is invalid, return false
+        when(mSupplicantStaNetworkMock.getNetworkId()).thenReturn(-1);
+        assertFalse(mDut.updateLinkedNetworks(WLAN0_IFACE_NAME, frameworkNetId, null));
+
+        // Supplicant failed to return network list, return false
+        when(mSupplicantStaNetworkMock.getNetworkId()).thenReturn(supplicantNetId);
+        doAnswer(new AnswerWithArguments() {
+            public void answer(ISupplicantStaIface.listNetworksCallback cb) {
+                cb.onValues(mStatusFailure, new ArrayList<>());
+            }
+        }).when(mISupplicantStaIfaceMock)
+                .listNetworks(any(ISupplicantStaIface.listNetworksCallback.class));
+        assertFalse(mDut.updateLinkedNetworks(
+                WLAN0_IFACE_NAME, frameworkNetId, null));
+
+        // Supplicant returned a null network list, return false
+        doAnswer(new AnswerWithArguments() {
+            public void answer(ISupplicantStaIface.listNetworksCallback cb) {
+                cb.onValues(mStatusSuccess, null);
+            }
+        }).when(mISupplicantStaIfaceMock)
+                .listNetworks(any(ISupplicantStaIface.listNetworksCallback.class));
+        assertFalse(mDut.updateLinkedNetworks(
+                WLAN0_IFACE_NAME, frameworkNetId, null));
+
+        // Successfully link a network to the current network
+        final ArrayList<Integer> supplicantNetIds = new ArrayList<>();
+        supplicantNetIds.add(supplicantNetId);
+        doAnswer(new AnswerWithArguments() {
+            public void answer(ISupplicantStaIface.listNetworksCallback cb) {
+                cb.onValues(mStatusSuccess, supplicantNetIds);
+            }
+        }).when(mISupplicantStaIfaceMock)
+                .listNetworks(any(ISupplicantStaIface.listNetworksCallback.class));
+        WifiConfiguration linkedConfig = new WifiConfiguration();
+        linkedConfig.setSecurityParams(WifiConfiguration.SECURITY_TYPE_PSK);
+        Map<String, WifiConfiguration> linkedNetworks = new HashMap<>();
+        linkedNetworks.put(linkedConfig.getProfileKey(), linkedConfig);
+        SupplicantStaNetworkHal linkedNetworkHandle = mock(SupplicantStaNetworkHal.class);
+        when(linkedNetworkHandle.getNetworkId()).thenReturn(supplicantNetId + 1);
+        when(linkedNetworkHandle.saveWifiConfiguration(linkedConfig)).thenReturn(true);
+        when(linkedNetworkHandle.select()).thenReturn(true);
+        mDut.setStaNetworkMockable(linkedNetworkHandle);
+        assertTrue(mDut.updateLinkedNetworks(
+                WLAN0_IFACE_NAME, frameworkNetId, linkedNetworks));
+
+        // Successfully remove linked network but not the current network from supplicant
+        supplicantNetIds.add(supplicantNetId + 1);
+        doAnswer(new AnswerWithArguments() {
+            public void answer(ISupplicantStaIface.listNetworksCallback cb) {
+                cb.onValues(mStatusSuccess, supplicantNetIds);
+            }
+        }).when(mISupplicantStaIfaceMock)
+                .listNetworks(any(ISupplicantStaIface.listNetworksCallback.class));
+        doAnswer(new AnswerWithArguments() {
+            public SupplicantStatus answer(int id) {
+                return mStatusSuccess;
+            }
+        }).when(mISupplicantStaIfaceMock).removeNetwork(supplicantNetId + 1);
+        assertTrue(mDut.updateLinkedNetworks(
+                WLAN0_IFACE_NAME, frameworkNetId, null));
+        verify(mISupplicantStaIfaceMock).removeNetwork(supplicantNetId + 1);
+        verify(mISupplicantStaIfaceMock, never()).removeNetwork(supplicantNetId);
     }
 
     /**
@@ -1250,6 +1336,42 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
                 NativeUtil.macAddressToByteArray(BSSID), statusCode, false);
         verify(mWifiMonitor).broadcastAuthenticationFailureEvent(eq(WLAN0_IFACE_NAME),
                 eq(WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD), eq(-1));
+        ArgumentCaptor<AssocRejectEventInfo> assocRejectEventInfoCaptor =
+                ArgumentCaptor.forClass(AssocRejectEventInfo.class);
+        verify(mWifiMonitor).broadcastAssociationRejectionEvent(
+                eq(WLAN0_IFACE_NAME), assocRejectEventInfoCaptor.capture());
+        AssocRejectEventInfo assocRejectEventInfo =
+                (AssocRejectEventInfo) assocRejectEventInfoCaptor.getValue();
+        assertNotNull(assocRejectEventInfo);
+        assertEquals(SUPPLICANT_SSID, assocRejectEventInfo.ssid);
+        assertEquals(BSSID, assocRejectEventInfo.bssid);
+        assertEquals(statusCode, assocRejectEventInfo.statusCode);
+        assertFalse(assocRejectEventInfo.timedOut);
+        assertNull(assocRejectEventInfo.oceRssiBasedAssocRejectInfo);
+        assertNull(assocRejectEventInfo.mboAssocDisallowedInfo);
+    }
+
+    /**
+     * Tests the handling of association rejection for WPA3-Personal networks
+     */
+    @Test
+    public void testWpa3AuthRejectionEverConnected() throws Exception {
+        executeAndValidateInitializationSequence();
+        assertNotNull(mISupplicantStaIfaceCallback);
+
+        WifiConfiguration config = executeAndValidateConnectSequenceWithKeyMgmt(
+                SUPPLICANT_NETWORK_ID, false,
+                WifiConfiguration.SECURITY_TYPE_SAE, null, true);
+        mISupplicantStaIfaceCallback.onStateChanged(
+                ISupplicantStaIfaceCallback.State.ASSOCIATING,
+                NativeUtil.macAddressToByteArray(BSSID),
+                SUPPLICANT_NETWORK_ID,
+                NativeUtil.decodeSsid(SUPPLICANT_SSID));
+        int statusCode = ISupplicantStaIfaceCallback.StatusCode.UNSPECIFIED_FAILURE;
+        mISupplicantStaIfaceCallback.onAssociationRejected(
+                NativeUtil.macAddressToByteArray(BSSID), statusCode, false);
+        verify(mWifiMonitor, never()).broadcastAuthenticationFailureEvent(eq(WLAN0_IFACE_NAME),
+                anyInt(), anyInt());
         ArgumentCaptor<AssocRejectEventInfo> assocRejectEventInfoCaptor =
                 ArgumentCaptor.forClass(AssocRejectEventInfo.class);
         verify(mWifiMonitor).broadcastAssociationRejectionEvent(
@@ -2074,6 +2196,9 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
         WifiConfiguration config = new WifiConfiguration();
         config.networkId = testFrameworkNetworkId;
         config.setSecurityParams(WifiConfiguration.SECURITY_TYPE_EAP);
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_EAP));
         PmkCacheStoreData pmkCacheData =
                 new PmkCacheStoreData(PMK_CACHE_EXPIRATION_IN_SEC, new ArrayList<Byte>(),
                         MacAddress.fromBytes(CONNECTED_MAC_ADDRESS_BYTES));
@@ -2926,11 +3051,12 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
      * @param haveExistingNetwork Removes the existing network.
      * @param securityType The security type.
      * @param wepKey if configurations are for a WEP network else null.
+     * @param hasEverConnected indicate that this configuration is ever connected or not.
      * @return the WifiConfiguration object of the new network to connect.
      */
     private WifiConfiguration executeAndValidateConnectSequenceWithKeyMgmt(
             final int newFrameworkNetworkId, final boolean haveExistingNetwork,
-            int securityType, String wepKey) throws Exception {
+            int securityType, String wepKey, boolean hasEverConnected) throws Exception {
         setupMocksForConnectSequence(haveExistingNetwork);
         WifiConfiguration config = new WifiConfiguration();
         config.setSecurityParams(securityType);
@@ -2940,10 +3066,28 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
         WifiConfiguration.NetworkSelectionStatus networkSelectionStatus =
                 new WifiConfiguration.NetworkSelectionStatus();
         networkSelectionStatus.setCandidateSecurityParams(config.getSecurityParams(securityType));
+        networkSelectionStatus.setHasEverConnected(hasEverConnected);
         config.setNetworkSelectionStatus(networkSelectionStatus);
         assertTrue(mDut.connectToNetwork(WLAN0_IFACE_NAME, config));
         validateConnectSequence(haveExistingNetwork, 1);
         return config;
+    }
+
+    /**
+     * Helper function to execute all the actions to perform connection to the network.
+     *
+     * @param newFrameworkNetworkId Framework Network Id of the new network to connect.
+     * @param haveExistingNetwork Removes the existing network.
+     * @param securityType The security type.
+     * @param wepKey if configurations are for a WEP network else null.
+     * @return the WifiConfiguration object of the new network to connect.
+     */
+    private WifiConfiguration executeAndValidateConnectSequenceWithKeyMgmt(
+            final int newFrameworkNetworkId, final boolean haveExistingNetwork,
+            int securityType, String wepKey) throws Exception {
+        return executeAndValidateConnectSequenceWithKeyMgmt(
+                newFrameworkNetworkId, haveExistingNetwork,
+                securityType, wepKey, false);
     }
 
     /**
@@ -2982,7 +3126,9 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
         roamingConfig.getNetworkSelectionStatus().setNetworkSelectionBSSID(roamBssid);
         SupplicantStaNetworkHal linkedNetworkHandle = mock(SupplicantStaNetworkHal.class);
         if (linkedNetwork) {
-            when(linkedNetworkHandle.getNetworkId()).thenReturn(roamNetworkId);
+            // Set the StaNetworkMockable to add a new handle for the linked network
+            int roamRemoteNetworkId = roamNetworkId + 1;
+            when(linkedNetworkHandle.getNetworkId()).thenReturn(roamRemoteNetworkId);
             when(linkedNetworkHandle.saveWifiConfiguration(any())).thenReturn(true);
             when(linkedNetworkHandle.select()).thenReturn(true);
             mDut.setStaNetworkMockable(linkedNetworkHandle);
@@ -3463,4 +3609,21 @@ public class SupplicantStaIfaceHalTest extends WifiBaseTest {
 
     }
 
+    /**
+     * Tests the behavior of {@link SupplicantStaIfaceHal#getCurrentNetworkSecurityParams(String)}
+     * @throws Exception
+     */
+    @Test
+    public void testGetCurrentNetworkSecurityParams() throws Exception {
+        executeAndValidateInitializationSequence();
+
+        // Null current network should return null security params
+        assertNull(mDut.getCurrentNetworkSecurityParams(WLAN0_IFACE_NAME));
+
+        // Connecting to network with PSK candidate security params should return PSK params.
+        executeAndValidateConnectSequenceWithKeyMgmt(
+                0, false, WifiConfiguration.SECURITY_TYPE_PSK, "97CA326539");
+        assertTrue(mDut.getCurrentNetworkSecurityParams(WLAN0_IFACE_NAME)
+                .isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK));
+    }
 }

@@ -1372,8 +1372,9 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
                         anyString(), anyInt());
         doAnswer(mReturnPermission).when(mMockPermissionsWrapper).getUidPermission(
                         anyString(), anyInt());
-        when(mMockUserManager.isSameProfileGroup(UserHandle.SYSTEM,
-                UserHandle.getUserHandleForUid(MANAGED_PROFILE_UID)))
+        when(mMockUserManager.isSameProfileGroup(
+                UserHandle.getUserHandleForUid(MANAGED_PROFILE_UID),
+                UserHandle.SYSTEM))
                 .thenReturn(true);
         when(mMockPermissionsWrapper.getCurrentUser()).thenReturn(mCurrentUser);
         when(mMockPermissionsWrapper.getUidPermission(mManifestStringCoarse, mUid))
@@ -1383,5 +1384,37 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
         when(mMockPermissionsWrapper.getUidPermission(mManifestStringHardware, mUid))
                 .thenReturn(mHardwareLocationPermission);
         when(mLocationManager.isLocationEnabledForUser(any())).thenReturn(mIsLocationEnabled);
+    }
+
+    /**
+     * Test case setting: caller does not have Coarse Location permission.
+     * Expect a SecurityException
+     */
+    @Test(expected = SecurityException.class)
+    public void testEnforceCoarseLocationPermissionExpectSecurityException() throws Exception {
+        setupTestCase();
+        WifiPermissionsUtil codeUnderTest = new WifiPermissionsUtil(mMockPermissionsWrapper,
+                mMockContext, mMockUserManager, mWifiInjector);
+        codeUnderTest.enforceCoarseLocationPermission(TEST_PACKAGE_NAME, TEST_FEATURE_ID, mUid);
+    }
+
+    /**
+     * Test case setting: caller does have Coarse Location permission.
+     * A SecurityException should not be thrown.
+     */
+    @Test
+    public void testEnforceCoarseLocationPermission() throws Exception {
+        mThrowSecurityException = false;
+        mIsLocationEnabled = true;
+        mCoarseLocationPermission = PackageManager.PERMISSION_GRANTED;
+        mAllowCoarseLocationApps = AppOpsManager.MODE_ALLOWED;
+        mUid = MANAGED_PROFILE_UID;
+        setupTestCase();
+        WifiPermissionsUtil codeUnderTest = new WifiPermissionsUtil(mMockPermissionsWrapper,
+                mMockContext, mMockUserManager, mWifiInjector);
+        codeUnderTest.enforceCoarseLocationPermission(TEST_PACKAGE_NAME, TEST_FEATURE_ID, mUid);
+        // verify that checking Coarse for apps!
+        verify(mMockAppOps).noteOp(eq(AppOpsManager.OPSTR_COARSE_LOCATION), anyInt(), anyString(),
+                any(), any());
     }
 }

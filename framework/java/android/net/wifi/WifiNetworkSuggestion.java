@@ -1008,16 +1008,21 @@ public final class WifiNetworkSuggestion implements Parcelable {
             wifiConfiguration.oemPrivate = mIsNetworkOemPrivate;
             wifiConfiguration.carrierMerged = mIsCarrierMerged;
             wifiConfiguration.subscriptionId = mSubscriptionId;
+            wifiConfiguration.macRandomizationSetting =
+                    mMacRandomizationSetting == RANDOMIZATION_NON_PERSISTENT
+                            ? WifiConfiguration.RANDOMIZATION_NON_PERSISTENT
+                            : WifiConfiguration.RANDOMIZATION_PERSISTENT;
             mPasspointConfiguration.setCarrierId(mCarrierId);
             mPasspointConfiguration.setSubscriptionId(mSubscriptionId);
             mPasspointConfiguration.setMeteredOverride(wifiConfiguration.meteredOverride);
             mPasspointConfiguration.setOemPrivate(mIsNetworkOemPrivate);
             mPasspointConfiguration.setOemPaid(mIsNetworkOemPaid);
             mPasspointConfiguration.setCarrierMerged(mIsCarrierMerged);
-            wifiConfiguration.macRandomizationSetting =
-                    mMacRandomizationSetting == RANDOMIZATION_NON_PERSISTENT
-                    ? WifiConfiguration.RANDOMIZATION_NON_PERSISTENT
-                    : WifiConfiguration.RANDOMIZATION_PERSISTENT;
+            // MAC randomization should always be enabled for passpoint suggestions regardless of
+            // the PasspointConfiguration's original setting.
+            mPasspointConfiguration.setMacRandomizationEnabled(true);
+            mPasspointConfiguration.setNonPersistentMacRandomizationEnabled(
+                    mMacRandomizationSetting == RANDOMIZATION_NON_PERSISTENT);
             return wifiConfiguration;
         }
 
@@ -1086,8 +1091,6 @@ public final class WifiNetworkSuggestion implements Parcelable {
                             + "suggestion with Passpoint configuration");
                 }
                 wifiConfiguration = buildWifiConfigurationForPasspoint();
-                mPasspointConfiguration.setNonPersistentMacRandomizationEnabled(
-                        mMacRandomizationSetting == RANDOMIZATION_NON_PERSISTENT);
             } else {
                 if (mSsid == null) {
                     throw new IllegalStateException("setSsid should be invoked for suggestion");
@@ -1522,5 +1525,14 @@ public final class WifiNetworkSuggestion implements Parcelable {
     @SystemApi
     public int getCarrierId() {
         return wifiConfiguration.carrierId;
+    }
+
+    /**
+     * @see Builder#setMacRandomizationSetting(int)
+     */
+    public @MacRandomizationSetting int getMacRandomizationSetting() {
+        return wifiConfiguration.macRandomizationSetting
+                == WifiConfiguration.RANDOMIZATION_NON_PERSISTENT
+                ? RANDOMIZATION_NON_PERSISTENT : RANDOMIZATION_PERSISTENT;
     }
 }

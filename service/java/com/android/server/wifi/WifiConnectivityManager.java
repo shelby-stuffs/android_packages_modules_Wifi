@@ -41,8 +41,8 @@ import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiScanner.PnoSettings;
 import android.net.wifi.WifiScanner.ScanSettings;
 import android.net.wifi.hotspot2.PasspointConfiguration;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.Handler;
-import android.os.HandlerExecutor;
 import android.os.PowerManager;
 import android.os.Process;
 import android.os.WorkSource;
@@ -52,9 +52,9 @@ import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.modules.utils.HandlerExecutor;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.hotspot2.PasspointManager;
-import com.android.server.wifi.util.ScanResultUtil;
 import com.android.wifi.resources.R;
 
 import java.io.FileDescriptor;
@@ -82,8 +82,6 @@ import java.util.stream.Stream;
 public class WifiConnectivityManager {
     public static final String WATCHDOG_TIMER_TAG =
             "WifiConnectivityManager Schedule Watchdog Timer";
-    public static final String PERIODIC_SCAN_TIMER_TAG =
-            "WifiConnectivityManager Schedule Periodic Scan Timer";
     public static final String RESTART_SINGLE_SCAN_TIMER_TAG =
             "WifiConnectivityManager Restart Single Scan";
     public static final String RESTART_CONNECTIVITY_SCAN_TIMER_TAG =
@@ -189,6 +187,7 @@ public class WifiConnectivityManager {
     private long mLastNetworkSelectionTimeStamp = RESET_TIME_STAMP;
     private boolean mPnoScanStarted = false;
     private boolean mPeriodicScanTimerSet = false;
+    private Object mPeriodicScanTimerToken = new Object();
     private boolean mDelayedPartialScanTimerSet = false;
     private boolean mWatchdogScanTimerSet = false;
     private boolean mAllowConnectionOnPartialScanResults = false;
@@ -266,15 +265,6 @@ public class WifiConnectivityManager {
             new AlarmManager.OnAlarmListener() {
                 public void onAlarm() {
                     watchdogHandler();
-                }
-            };
-
-    // Due to b/28020168, timer based single scan will be scheduled
-    // to provide periodic scan in an exponential backoff fashion.
-    private final AlarmManager.OnAlarmListener mPeriodicScanTimerListener =
-            new AlarmManager.OnAlarmListener() {
-                public void onAlarm() {
-                    periodicScanTimerHandler();
                 }
             };
 
@@ -636,7 +626,7 @@ public class WifiConnectivityManager {
         List<String> results = new ArrayList<>();
         List<ScanResult> passpointAp = new ArrayList<>();
         for (ScanDetail scanDetail : scanDetails) {
-            results.add(ScanResultUtil.createQuotedSSID(scanDetail.getScanResult().SSID));
+            results.add(ScanResultUtil.createQuotedSsid(scanDetail.getScanResult().SSID));
             if (!scanDetail.getScanResult().isPasspointNetwork()) {
                 continue;
             }
@@ -814,7 +804,7 @@ public class WifiConnectivityManager {
                 return;
             }
 
-            mScanDetails.add(ScanResultUtil.toScanDetail(fullScanResult));
+            mScanDetails.add(new ScanDetail(fullScanResult));
         }
     }
 
@@ -940,7 +930,7 @@ public class WifiConnectivityManager {
                     localLog("Skipping scan result with null information elements");
                     continue;
                 }
-                mScanDetails.add(ScanResultUtil.toScanDetail(result));
+                mScanDetails.add(new ScanDetail(result));
             }
 
             // Create a new list to avoid looping call trigger concurrent exception.
@@ -1022,6 +1012,13 @@ public class WifiConnectivityManager {
 
         @Override
         public void onActiveModeManagerRoleChanged(@NonNull ActiveModeManager activeModeManager) {
+            // MBB will result in a brief period where there is no primary STA.
+            // Need to detect these cases and avoid calling setWifiEnabled(false) since wifi is
+            // not actually getting disabled.
+            if (activeModeManager.getPreviousRole() == ROLE_CLIENT_PRIMARY
+                    && activeModeManager.getRole() == ROLE_CLIENT_SECONDARY_TRANSIENT) {
+                return;
+            }
             update();
         }
 
@@ -1813,16 +1810,6 @@ public class WifiConnectivityManager {
         mLastPeriodicSingleScanTimeStamp = RESET_TIME_STAMP;
     }
 
-    // Periodic scan timer handler
-    private void periodicScanTimerHandler() {
-        localLog("periodicScanTimerHandler");
-
-        // Schedule the next timer and start a single scan if screen is on.
-        if (mScreenOn) {
-            startPeriodicSingleScan();
-        }
-    }
-
     // Start a single scan
     private void startForcedSingleScan(boolean isFullBandScan, WorkSource workSource) {
         mPnoScanListener.resetLowRssiNetworkRetryDelay();
@@ -2071,18 +2058,31 @@ public class WifiConnectivityManager {
     }
 
     // Set up periodic scan timer
+    // Due to b/28020168, timer based single scan will be scheduled
+    // to provide periodic scan in an exponential backoff fashion.
     private void schedulePeriodicScanTimer(int intervalMs) {
-        mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                            mClock.getElapsedSinceBootMillis() + intervalMs,
-                            PERIODIC_SCAN_TIMER_TAG,
-                            mPeriodicScanTimerListener, mEventHandler);
+        if (mPeriodicScanTimerSet) {
+            Log.e(TAG, "A periodic scan was already scheduled.");
+            return;
+        }
+        localLog("schedulePeriodicScanTimer intervalMs " + intervalMs);
         mPeriodicScanTimerSet = true;
+        mEventHandler.postDelayed(() -> {
+            synchronized (mLock) {
+                mPeriodicScanTimerSet = false;
+            }
+            // Schedule the next timer and start a single scan if screen is on.
+            if (mScreenOn) {
+                startPeriodicSingleScan();
+            }
+        }, mPeriodicScanTimerToken, intervalMs);
     }
 
     // Cancel periodic scan timer
     private void cancelPeriodicScanTimer() {
         if (mPeriodicScanTimerSet) {
-            mAlarmManager.cancel(mPeriodicScanTimerListener);
+            localLog("cancelPeriodicScanTimer");
+            mEventHandler.removeCallbacksAndMessages(mPeriodicScanTimerToken);
             mPeriodicScanTimerSet = false;
         }
     }
@@ -2317,12 +2317,12 @@ public class WifiConnectivityManager {
      * @param bssid the failed network.
      * @param ssid identifies the failed network.
      */
-    public void handleConnectionAttemptEnded(@NonNull ActiveModeManager activeModeManager,
+    public void handleConnectionAttemptEnded(@NonNull ClientModeManager clientModeManager,
             int failureCode, @NonNull String bssid, @NonNull String ssid) {
         List<ClientModeManager> internetConnectivityCmms =
                 mActiveModeWarden.getInternetConnectivityClientModeManagers();
-        if (!(internetConnectivityCmms.contains(activeModeManager))) {
-            Log.w(TAG, "Ignoring call from non primary Mode Manager " + activeModeManager,
+        if (!internetConnectivityCmms.contains(clientModeManager)) {
+            Log.w(TAG, "Ignoring call from non primary Mode Manager " + clientModeManager,
                     new Throwable());
             return;
         }
@@ -2334,11 +2334,16 @@ public class WifiConnectivityManager {
             mOpenNetworkNotifier.handleWifiConnected(ssidUnquoted);
         } else {
             mOpenNetworkNotifier.handleConnectionFailure();
-            retryConnectionOnLatestCandidates(bssid, ssid);
+            // Only attempt to reconnect when connection on the primary CMM fails, since MBB
+            // CMM will be destroyed after the connection failure.
+            if (clientModeManager.getRole() == ROLE_CLIENT_PRIMARY) {
+                retryConnectionOnLatestCandidates(clientModeManager, bssid, ssid);
+            }
         }
     }
 
-    private void retryConnectionOnLatestCandidates(String bssid, String ssid) {
+    private void retryConnectionOnLatestCandidates(@NonNull ClientModeManager clientModeManager,
+            String bssid, String ssid) {
         try {
             if (mLatestCandidates == null || mLatestCandidates.size() == 0
                     || mClock.getElapsedSinceBootMillis() - mLatestCandidatesTimestampMs
@@ -2372,7 +2377,12 @@ public class WifiConnectivityManager {
                 mWifiBlocklistMonitor.blockBssidForDurationMs(bssid, ssid,
                         TEMP_BSSID_BLOCK_DURATION,
                         WifiBlocklistMonitor.REASON_FRAMEWORK_DISCONNECT_FAST_RECONNECT, 0);
-                connectToNetworkForPrimaryCmmUsingMbbIfAvailable(candidate);
+                triggerConnectToNetworkUsingCmm(clientModeManager, candidate,
+                        ClientModeImpl.SUPPLICANT_BSSID_ANY);
+                // since using primary manager to connect, stop any existing managers in the
+                // secondary transient role since they are no longer needed.
+                mActiveModeWarden.stopAllClientModeManagersInRole(
+                        ROLE_CLIENT_SECONDARY_TRANSIENT);
             }
         } catch (IllegalArgumentException e) {
             localLog("retryConnectionOnLatestCandidates: failed to create MacAddress from bssid="

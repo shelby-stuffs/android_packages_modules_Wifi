@@ -25,6 +25,7 @@ package android.net.wifi {
     method public static int convertFrequencyMhzToChannelIfSupported(int);
     method public int describeContents();
     method @NonNull public java.util.List<android.net.wifi.ScanResult.InformationElement> getInformationElements();
+    method @NonNull public int[] getSecurityTypes();
     method public int getWifiStandard();
     method public boolean is80211mcResponder();
     method public boolean isPasspointNetwork();
@@ -587,6 +588,7 @@ package android.net.wifi {
     method public int describeContents();
     method @Nullable public android.net.MacAddress getBssid();
     method @Nullable public android.net.wifi.WifiEnterpriseConfig getEnterpriseConfig();
+    method public int getMacRandomizationSetting();
     method @Nullable public String getPassphrase();
     method @Nullable public android.net.wifi.hotspot2.PasspointConfiguration getPasspointConfig();
     method @IntRange(from=0) public int getPriority();
