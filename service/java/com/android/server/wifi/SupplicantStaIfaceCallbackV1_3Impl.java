@@ -19,6 +19,7 @@ package com.android.server.wifi;
 import android.annotation.NonNull;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantStaIfaceCallback;
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.SecurityParams;
 import android.net.wifi.WifiManager;
 import android.util.Log;
 
@@ -174,7 +175,8 @@ abstract class SupplicantStaIfaceCallbackV1_3Impl extends
 
         if (curConfig == null) return;
 
-        if (WifiConfigurationUtil.isConfigForPskNetwork(curConfig)) return;
+        SecurityParams params = curConfig.getNetworkSelectionStatus().getCandidateSecurityParams();
+        if (params == null || params.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)) return;
 
         mStaIfaceHal.addPmkCacheEntry(mIfaceName,
                 curConfig.networkId, expirationTimeInSec, serializedEntry);
