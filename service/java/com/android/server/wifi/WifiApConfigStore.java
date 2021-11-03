@@ -177,14 +177,14 @@ public class WifiApConfigStore {
     public SoftApConfiguration upgradeSoftApConfiguration(@NonNull SoftApConfiguration config) {
         SoftApConfiguration.Builder configBuilder = new SoftApConfiguration.Builder(config);
         if (SdkLevel.isAtLeastS() && ApConfigUtil.isBridgedModeSupported(mContext)
-                && config.getBands().length == 1) {
+                && config.getBands().length == 1 && mContext.getResources().getBoolean(
+                R.bool.config_wifi_softap_upgrade)) {
             int[] dual_bands = new int[] {
                     SoftApConfiguration.BAND_2GHZ,
                     SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ};
-            if (SdkLevel.isAtLeastS()) {
-                configBuilder.setBands(dual_bands);
-            }
-            Log.i(TAG, "Device support bridged AP, upgrade band setting to bridged configuration");
+            configBuilder.setBands(dual_bands);
+            Log.i(TAG, "Device support bridged AP, upgrade band setting to "
+                    + "bridged configuration");
         }
         return configBuilder.build();
     }

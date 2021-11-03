@@ -684,4 +684,7 @@
 
     <!-- Indicate IP Reachability lost to be ignored after 10 sec of connection/roam -->
     <bool translatable="false" name="config_disconnectOnlyOnInitialIpReachability">true</bool>
+
+    <!-- Boolean indicating that softAp configuration auto upgrade is disable -->
+    <bool translatable="false" name="config_wifi_softap_upgrade">false</bool>
 </resources>

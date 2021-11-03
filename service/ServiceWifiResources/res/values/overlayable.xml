@@ -206,6 +206,7 @@
           <item type="integer" name="config_wifiClientModeImplNumLogRecs" />
           <item type="bool" name="config_vendor_wifi_softap_owe_supported" />
           <item type="bool" name="config_disconnectOnlyOnInitialIpReachability" />
+          <item type="bool" name="config_wifi_softap_upgrade" />
           <!-- Params from config.xml that can be overlayed -->
 
           <!-- Params from strings.xml that can be overlayed -->
