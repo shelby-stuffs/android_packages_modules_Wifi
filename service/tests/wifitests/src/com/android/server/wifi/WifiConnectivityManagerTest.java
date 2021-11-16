@@ -76,6 +76,7 @@ import android.net.wifi.WifiScanner.ScanListener;
 import android.net.wifi.WifiScanner.ScanSettings;
 import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.PasspointConfiguration;
+import android.net.wifi.util.ScanResultUtil;
 import android.os.Handler;
 import android.os.IPowerManager;
 import android.os.IThermalService;
@@ -92,7 +93,6 @@ import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.ActiveModeWarden.ExternalClientModeManagerRequestListener;
 import com.android.server.wifi.hotspot2.PasspointManager;
 import com.android.server.wifi.util.LruConnectionTracker;
-import com.android.server.wifi.util.ScanResultUtil;
 import com.android.wifi.resources.R;
 
 import org.junit.After;
@@ -1800,7 +1800,7 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
                 new ScanDetail(
                         new ScanResult(WifiSsid.createFromAsciiEncoded(CANDIDATE_SSID),
                                 CANDIDATE_SSID, CANDIDATE_BSSID, 1245, 0, "some caps", -78, 2450,
-                                1025, 22, 33, 20, 0, 0, true), null));
+                                1025, 22, 33, 20, 0, 0, true)));
 
         when(mWifiNS.getFilteredScanDetailsForOpenUnsavedNetworks())
                 .thenReturn(expectedOpenNetworks);
@@ -1829,7 +1829,7 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
                 new ScanDetail(
                         new ScanResult(WifiSsid.createFromAsciiEncoded(CANDIDATE_SSID),
                                 CANDIDATE_SSID, CANDIDATE_BSSID, 1245, 0, "some caps", -78, 2450,
-                                1025, 22, 33, 20, 0, 0, true), null));
+                                1025, 22, 33, 20, 0, 0, true)));
 
         when(mWifiNS.getFilteredScanDetailsForOpenUnsavedNetworks())
                 .thenReturn(expectedOpenNetworks);
@@ -3093,7 +3093,7 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
         int i = 0;
         for (ScanResult scanResult : mScanData.getResults()) {
             scanResult.SSID = TEST_SSID + i;
-            updateNetworks.add(ScanResultUtil.createQuotedSSID(scanResult.SSID));
+            updateNetworks.add(ScanResultUtil.createQuotedSsid(scanResult.SSID));
             i++;
         }
         updateNetworks.add(TEST_FQDN);
