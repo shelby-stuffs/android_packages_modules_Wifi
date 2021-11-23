@@ -82,6 +82,9 @@
           <item type="bool" name="config_wifiEnablePartialInitialScan" />
           <item type="integer" name="config_wifiInitialPartialScanChannelMaxCount" />
           <item type="integer" name="config_wifiInitialPartialScanChannelCacheAgeMins" />
+          <item type="bool" name="config_wifiConnectedFrequencyEnhancementEnabled" />
+          <item type="integer" name="config_wifiPnoScanCacheAgeMins" />
+          <item type="integer" name="config_wifiFrameworkMaxNumofChannelsPerNetwork" />
           <item type="bool" name="config_wifi_framework_use_single_radio_chain_scan_results_network_selection" />
           <item type="bool" name="config_wifiAllowLinkingUnknownDefaultGatewayConfigurations" />
           <item type="bool" name="config_vendor_softap_beacon_protection_supported" />

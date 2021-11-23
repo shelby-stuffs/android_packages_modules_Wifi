@@ -230,6 +230,15 @@
          scan in minutes -->
     <integer translatable="false" name="config_wifiInitialPartialScanChannelCacheAgeMins">14400</integer>
 
+    <!-- Boolean indicating connected frequency enhancement is enabled/disabled -->
+    <bool translatable="false" name="config_wifiConnectedFrequencyEnhancementEnabled">false</bool>
+
+    <!-- Integer for maximum age for saved channels retrieve to do pno scan in minutes -->
+    <integer translatable="false" name="config_wifiPnoScanCacheAgeMins">4320</integer>
+
+    <!-- Integer for maximum number of channels per network used for pno scan -->
+    <integer translatable="false" name="config_wifiFrameworkMaxNumofChannelsPerNetwork">5</integer>
+
     <!-- Wifi driver supports Beacon Protection for SoftAp -->
     <bool translatable="false" name="config_vendor_softap_beacon_protection_supported">false</bool>
 

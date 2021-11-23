@@ -1719,6 +1719,23 @@ public class WifiConnectivityManager {
     }
 
     /**
+     * Add the channels into the channel set with a size limit.
+     * @param channelSet Target set for adding channel to.
+     * @param config Network for query channel from ConnectedFrequencyManagaer
+     * @param ageInMillis Only consider channel info whose timestamps are younger than this value.
+     * @return True if all available channels for this network are added, otherwise false.
+     */
+    private boolean addChannelFromWifiConfigStore(@NonNull Set<Integer> channelSet,
+            @NonNull WifiConfiguration config, long ageInMillis) {
+        List<Integer> frequencies = mConfigManager.connectedFreqList(config.getProfileKey(), ageInMillis);
+        if (frequencies == null) return false;
+        for (Integer channel : frequencies) {
+            channelSet.add(channel);
+        }
+        return true;
+    }
+
+    /**
      * Fetch channel set for target network.
      */
     @VisibleForTesting
@@ -2228,6 +2245,14 @@ public class WifiConnectivityManager {
         boolean pnoFrequencyCullingEnabled = mContext.getResources()
                 .getBoolean(R.bool.config_wifiPnoFrequencyCullingEnabled);
 
+        boolean isConnectedFreqEnhancementEnable = mContext.getResources().getBoolean(
+                R.bool.config_wifiConnectedFrequencyEnhancementEnabled);
+        long ageInMillis = (long) (1000 * 60 * (long) mContext.getResources().getInteger(
+                    R.integer.config_wifiPnoScanCacheAgeMins));
+        if (mVerboseLoggingEnabled) {
+            Log.d(TAG, "Connected frequency enhancement is: " + isConnectedFreqEnhancementEnable +
+                    " maximum age for saved channels retrieve in millis: " + ageInMillis);
+        }
         List<PnoSettings.PnoNetwork> pnoList = new ArrayList<>();
         Set<String> pnoSet = new HashSet<>();
 
@@ -2260,8 +2285,12 @@ public class WifiConnectivityManager {
                 continue;
             }
             Set<Integer> channelList = new HashSet<>();
-            addChannelFromWifiScoreCard(channelList, config.SSID, 0,
-                    MAX_PNO_SCAN_FREQUENCY_AGE_MS);
+            if (isConnectedFreqEnhancementEnable) {
+                addChannelFromWifiConfigStore(channelList, config, ageInMillis);
+            } else {
+                addChannelFromWifiScoreCard(channelList, config.SSID, 0,
+                        MAX_PNO_SCAN_FREQUENCY_AGE_MS);
+            }
             pnoNetwork.frequencies = channelList.stream().mapToInt(Integer::intValue).toArray();
         }
         return pnoList;

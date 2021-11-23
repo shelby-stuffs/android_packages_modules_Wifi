@@ -271,6 +271,8 @@ public class WifiConfigManager {
     // Keep order of network connection.
     private final LruConnectionTracker mLruConnectionTracker;
     private final BuildProperties mBuildProperties;
+    private final ConnectedFreqManager mConnectedFreqManager;
+    private final ConnectedFreqManager.ConnectedFreqStoreData mConnectedFreqStoreData;
 
     /**
      * Local log used for debugging any WifiConfigManager issues.
@@ -301,6 +303,7 @@ public class WifiConfigManager {
      * will get used.
      */
     private final Map<String, String> mRandomizedMacAddressMapping;
+    private final HashMap<String, HashMap<String,String>> mConnectedFreqMap;
 
     /**
      * Store the network update listeners.
@@ -423,15 +426,19 @@ public class WifiConfigManager {
                 new MissingCounterTimerLockList<>(SCAN_RESULT_MISSING_COUNT_THRESHOLD, mClock);
         mNonCarrierMergedNetworksStatusTracker = new NonCarrierMergedNetworksStatusTracker(mClock);
         mRandomizedMacAddressMapping = new HashMap<>();
+        mConnectedFreqMap = new HashMap<>();
         mListeners = new ArraySet<>();
 
         // Register store data for network list and deleted ephemeral SSIDs.
         mNetworkListSharedStoreData = networkListSharedStoreData;
         mNetworkListUserStoreData = networkListUserStoreData;
         mRandomizedMacStoreData = randomizedMacStoreData;
+        mConnectedFreqManager = new ConnectedFreqManager(mClock, mContext);
+        mConnectedFreqStoreData = mConnectedFreqManager.new ConnectedFreqStoreData();
         mWifiConfigStore.registerStoreData(mNetworkListSharedStoreData);
         mWifiConfigStore.registerStoreData(mNetworkListUserStoreData);
         mWifiConfigStore.registerStoreData(mRandomizedMacStoreData);
+        mWifiConfigStore.registerStoreData(mConnectedFreqStoreData);
 
         mFrameworkFacade = frameworkFacade;
         mDeviceConfigFacade = deviceConfigFacade;
@@ -651,6 +658,7 @@ public class WifiConfigManager {
         mWifiConfigStore.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiKeyStore.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiBlocklistMonitor.enableVerboseLogging(mVerboseLoggingEnabled);
+        mConnectedFreqManager.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     /**
@@ -1642,6 +1650,7 @@ public class WifiConfigManager {
         // Stage the backup of the SettingsProvider package which backs this up.
         mBackupManagerProxy.notifyDataChanged();
         mWifiBlocklistMonitor.handleNetworkRemoved(config.SSID);
+        mConnectedFreqManager.removeNetwork(config.getProfileKey());
 
         localLog("removeNetworkInternal: removed config."
                 + " netId=" + config.networkId
@@ -2435,6 +2444,7 @@ public class WifiConfigManager {
 
         WifiScoreCard.PerNetwork network = mWifiScoreCard.lookupNetwork(config.SSID);
         network.addFrequency(scanResult.frequency);
+        mConnectedFreqManager.addFrequency(config.getProfileKey(), scanResult.frequency);
         ScanDetailCache scanDetailCache = getOrCreateScanDetailCacheForNetwork(config);
         if (scanDetailCache == null) {
             Log.e(TAG, "Could not allocate scan cache for " + config.getPrintableSsid());
@@ -3129,6 +3139,7 @@ public class WifiConfigManager {
         mUserTemporarilyDisabledList.clear();
         mNonCarrierMergedNetworksStatusTracker.clear();
         mRandomizedMacAddressMapping.clear();
+        mConnectedFreqMap.clear();
         mScanDetailCaches.clear();
         clearLastSelectedNetwork();
     }
@@ -3180,7 +3191,8 @@ public class WifiConfigManager {
      */
     private void loadInternalDataFromSharedStore(
             List<WifiConfiguration> configurations,
-            Map<String, String> macAddressMapping) {
+            Map<String, String> macAddressMapping,
+            HashMap<String, HashMap<String, String>> connectedFreqListMap) {
         for (WifiConfiguration configuration : configurations) {
             if (!WifiConfigurationUtil.validate(
                     configuration, WifiConfigurationUtil.VALIDATE_FOR_ADD)) {
@@ -3208,6 +3220,8 @@ public class WifiConfigManager {
             }
         }
         mRandomizedMacAddressMapping.putAll(macAddressMapping);
+        mConnectedFreqMap.putAll(connectedFreqListMap);
+        mConnectedFreqManager.addAll(connectedFreqListMap);
     }
 
     /**
@@ -3291,11 +3305,12 @@ public class WifiConfigManager {
     private void loadInternalData(
             List<WifiConfiguration> sharedConfigurations,
             List<WifiConfiguration> userConfigurations,
-            Map<String, String> macAddressMapping) {
+            Map<String, String> macAddressMapping,
+            HashMap<String, HashMap<String, String>> connectedFreqListMap) {
         // Clear out all the existing in-memory lists and load the lists from what was retrieved
         // from the config store.
         clearInternalData();
-        loadInternalDataFromSharedStore(sharedConfigurations, macAddressMapping);
+        loadInternalDataFromSharedStore(sharedConfigurations, macAddressMapping, connectedFreqListMap);
         loadInternalDataFromUserStore(userConfigurations);
         generateRandomizedMacAddresses();
         if (mConfiguredNetworks.sizeForAllUsers() == 0) {
@@ -3319,8 +3334,9 @@ public class WifiConfigManager {
         // On user builds, ignore the failure and let the user create new networks.
         Log.w(TAG, "Ignoring config store errors on user build");
         if (!onlyUserStore) {
+            HashMap<String, HashMap<String, String>> freqMap = new HashMap<>();
             loadInternalData(Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyMap());
+                    Collections.emptyMap(), freqMap);
         } else {
             loadInternalDataFromUserStore(Collections.emptyList());
         }
@@ -3364,7 +3380,8 @@ public class WifiConfigManager {
         }
         loadInternalData(mNetworkListSharedStoreData.getConfigurations(),
                 mNetworkListUserStoreData.getConfigurations(),
-                mRandomizedMacStoreData.getMacMapping());
+                mRandomizedMacStoreData.getMacMapping(),
+                mConnectedFreqStoreData.getFreqList());
         return true;
     }
 
@@ -3402,6 +3419,11 @@ public class WifiConfigManager {
         return true;
     }
 
+    public List<Integer> connectedFreqList(String configKey, long ageInMillis) {
+        List<Integer> results = new ArrayList<>();
+        results = mConnectedFreqManager.getConnectedFreqList(configKey, ageInMillis);
+        return results;
+    }
     /**
      * Save the current snapshot of the in-memory lists to the config store.
      *
@@ -3417,7 +3439,10 @@ public class WifiConfigManager {
         ArrayList<WifiConfiguration> userConfigurations = new ArrayList<>();
         // List of network IDs for legacy Passpoint configuration to be removed.
         List<Integer> legacyPasspointNetId = new ArrayList<>();
+        mConnectedFreqMap.clear();
         for (WifiConfiguration config : mConfiguredNetworks.valuesForAllUsers()) {
+            HashMap<String, String> connectedFreqListMap = mConnectedFreqManager.getFrequencyListMap(config.getProfileKey());
+            mConnectedFreqMap.put(config.getProfileKey(), connectedFreqListMap);
             // Ignore ephemeral networks and non-legacy Passpoint configurations.
             if (config.ephemeral || (config.isPasspoint() && !config.isLegacyPasspointConfig)) {
                 continue;
@@ -3463,6 +3488,7 @@ public class WifiConfigManager {
         mNetworkListSharedStoreData.setConfigurations(sharedConfigurations);
         mNetworkListUserStoreData.setConfigurations(userConfigurations);
         mRandomizedMacStoreData.setMacMapping(mRandomizedMacAddressMapping);
+        mConnectedFreqStoreData.setFreqList(mConnectedFreqMap);
 
         try {
             mWifiConfigStore.write(forceWrite);
