@@ -165,6 +165,14 @@ public class WifiConfigurationUtil {
     }
 
     /**
+     * Helper method to check if the provided |config| corresponds to a Passpoint network or not.
+     */
+    public static boolean isConfigForPasspoint(WifiConfiguration config) {
+        return config.isSecurityType(WifiConfiguration.SECURITY_TYPE_PASSPOINT_R1_R2)
+                || config.isSecurityType(WifiConfiguration.SECURITY_TYPE_PASSPOINT_R3);
+    }
+
+    /**
      * Helper method to check if the provided |config| corresponds to an open or enhanced
      * open network, or not.
      */
@@ -172,7 +180,8 @@ public class WifiConfigurationUtil {
         return (!(isConfigForWepNetwork(config) || isConfigForPskNetwork(config)
                 || isConfigForWapiPskNetwork(config) || isConfigForWapiCertNetwork(config)
                 || isConfigForEapNetwork(config) || isConfigForSaeNetwork(config)
-                || isConfigForWpa3Enterprise192BitNetwork(config)));
+                || isConfigForWpa3Enterprise192BitNetwork(config)
+                || isConfigForPasspoint(config)));
     }
 
     /**
