@@ -108,9 +108,13 @@ public class WifiGbk {
             logi("Invalid ScanResult - BSSID=" + result.BSSID + " SSID=" + result.SSID);
             return false;
         }
+        // TODO(b/208146343) support for isHidden() is removed and an SSID's hidden status
+        // is now stored in WifiInfo. Update as necessary.
+        /*
         if (result.wifiSsid.isHidden()) {
             return false;
         }
+        */
         return true;
     }
 

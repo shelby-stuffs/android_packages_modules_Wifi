@@ -45,6 +45,7 @@ import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
@@ -212,10 +213,9 @@ public class ClientModeImplTest extends WifiBaseTest {
 
     private static final int MANAGED_PROFILE_UID = 1100000;
     private static final int OTHER_USER_UID = 1200000;
-    private static final int LOG_REC_LIMIT_IN_VERBOSE_MODE =
-            (ActivityManager.isLowRamDeviceStatic()
-                    ? ClientModeImpl.NUM_LOG_RECS_VERBOSE_LOW_MEMORY
-                    : ClientModeImpl.NUM_LOG_RECS_VERBOSE);
+    private static final int LOG_REC_LIMIT_IN_VERBOSE_MODE = ClientModeImpl.NUM_LOG_RECS_VERBOSE;
+    private static final int LOG_REC_LIMIT_IN_VERBOSE_MODE_LOW_RAM =
+            ClientModeImpl.NUM_LOG_RECS_VERBOSE_LOW_MEMORY;
     private static final int FRAMEWORK_NETWORK_ID = 0;
     private static final int PASSPOINT_NETWORK_ID = 1;
     private static final int OTHER_NETWORK_ID = 47;
@@ -314,8 +314,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         when(context.getOpPackageName()).thenReturn(OP_PACKAGE_NAME);
 
-        when(context.getSystemService(ActivityManager.class)).thenReturn(
-                mock(ActivityManager.class));
+        when(context.getSystemService(ActivityManager.class)).thenReturn(mActivityManager);
 
         WifiP2pManager p2pm = mock(WifiP2pManager.class);
         when(context.getSystemService(WifiP2pManager.class)).thenReturn(p2pm);
@@ -429,6 +428,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     ExtendedWifiInfo mWifiInfo;
     ConnectionCapabilities mConnectionCapabilities = new ConnectionCapabilities();
 
+    @Mock ActivityManager mActivityManager;
     @Mock WifiNetworkAgent mWifiNetworkAgent;
     @Mock SupplicantStateTracker mSupplicantStateTracker;
     @Mock WifiMetrics mWifiMetrics;
@@ -1666,6 +1666,36 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
+     * Tests that {@link WifiInfo#getHiddenSsid()} returns {@code true} if we've connected to a
+     * hidden SSID network.
+     * @throws Exception
+     */
+    @Test
+    public void testConnectHiddenSsid() throws Exception {
+        WifiConfiguration hiddenSsidConfig = createTestNetwork(true);
+        setupAndStartConnectSequence(hiddenSsidConfig);
+        validateSuccessfulConnectSequence(hiddenSsidConfig);
+
+        // Connect and verify WifiInfo.getHiddenSsid is true.
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATING));
+        mLooper.dispatchAll();
+
+        assertNotNull(mWifiInfo);
+        assertTrue(mWifiInfo.getHiddenSSID());
+
+        // Disconnect and verify WifiInfo.getHiddenSsid is false.
+        DisconnectEventInfo disconnectEventInfo =
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
+        mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
+        mLooper.dispatchAll();
+
+        assertNotNull(mWifiInfo);
+        assertFalse(mWifiInfo.getHiddenSSID());
+    }
+
+    /**
      * Verify that WifiStateTracker is called if wifi is disabled while connected.
      */
     @Test
@@ -2432,8 +2462,19 @@ public class ClientModeImplTest extends WifiBaseTest {
      */
     @Test
     public void enablingVerboseLoggingUpdatesLogRecSize() {
+        when(mActivityManager.isLowRamDevice()).thenReturn(false);
         mCmi.enableVerboseLogging(true);
         assertEquals(LOG_REC_LIMIT_IN_VERBOSE_MODE, mCmi.getLogRecMaxSize());
+    }
+
+    /**
+     * Verifies that, in verbose mode, we allow a larger number of log records on a low ram device.
+     */
+    @Test
+    public void enablingVerboseLoggingUpdatesLogRecSizeLowRamDevice() {
+        when(mActivityManager.isLowRamDevice()).thenReturn(true);
+        mCmi.enableVerboseLogging(true);
+        assertEquals(LOG_REC_LIMIT_IN_VERBOSE_MODE_LOW_RAM, mCmi.getLogRecMaxSize());
     }
 
     @Test
@@ -7033,5 +7074,95 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiConfigManager)
                 .setNetworkDefaultGwMacAddress(mConnectedNetwork.networkId, gatewayMac);
         verify(mWifiConfigManager, never()).updateLinkedNetworks(connectedConfig.networkId);
+    }
+
+    /**
+     * Verify that we disconnect when we mark a previous trusted network untrusted.
+     */
+    @Test
+    public void verifyDisconnectOnMarkingNetworkUntrusted() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        connect();
+        expectRegisterNetworkAgent((config) -> { }, (cap) -> {
+            assertTrue(cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED));
+        });
+
+        WifiConfiguration oldConfig = new WifiConfiguration(mConnectedNetwork);
+        mConnectedNetwork.trusted = false;
+
+        mConfigUpdateListenerCaptor.getValue().onNetworkUpdated(mConnectedNetwork, oldConfig);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
+        verify(mWifiMetrics).logStaEvent(anyString(), eq(StaEvent.TYPE_FRAMEWORK_DISCONNECT),
+                eq(StaEvent.DISCONNECT_NETWORK_UNTRUSTED));
+    }
+
+    /**
+     * Verify that we only update capabilities when we mark a previous untrusted network trusted.
+     */
+    @Test
+    public void verifyUpdateCapabilitiesOnMarkingNetworkTrusted() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        mConnectedNetwork.trusted = false;
+        connect();
+        expectRegisterNetworkAgent((config) -> { }, (cap) -> {
+            assertFalse(cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED));
+        });
+        reset(mWifiNetworkAgent);
+
+        WifiConfiguration oldConfig = new WifiConfiguration(mConnectedNetwork);
+        mConnectedNetwork.trusted = true;
+
+        mConfigUpdateListenerCaptor.getValue().onNetworkUpdated(mConnectedNetwork, oldConfig);
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+
+        expectNetworkAgentUpdateCapabilities((cap) -> {
+            assertTrue(cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED));
+        });
+    }
+
+    /**
+     * Verify on device before T we will not disconnect when we mark a previous trusted network
+     * untrusted.
+     */
+    @Test
+    public void verifyNoDisconnectOnMarkingNetworkUntrustedBeforeT() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        connect();
+        expectRegisterNetworkAgent((config) -> { }, (cap) -> {
+            assertTrue(cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED));
+        });
+
+        WifiConfiguration oldConfig = new WifiConfiguration(mConnectedNetwork);
+        mConnectedNetwork.trusted = false;
+
+        mConfigUpdateListenerCaptor.getValue().onNetworkUpdated(mConnectedNetwork, oldConfig);
+        mLooper.dispatchAll();
+        verify(mWifiNative, never()).disconnect(WIFI_IFACE_NAME);
+        verify(mWifiMetrics, never()).logStaEvent(anyString(), anyInt(), anyInt());
+    }
+
+    /**
+     * Verify on a build before T we will not update capabilities or disconnect when we mark a
+     * previous untrusted network trusted.
+     */
+    @Test
+    public void verifyNoUpdateCapabilitiesOnMarkingNetworkTrustedBeforeT() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        mConnectedNetwork.trusted = false;
+        connect();
+        expectRegisterNetworkAgent((config) -> { }, (cap) -> {
+            assertFalse(cap.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED));
+        });
+        reset(mWifiNetworkAgent);
+
+        WifiConfiguration oldConfig = new WifiConfiguration(mConnectedNetwork);
+        mConnectedNetwork.trusted = true;
+
+        mConfigUpdateListenerCaptor.getValue().onNetworkUpdated(mConnectedNetwork, oldConfig);
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+        verifyNoMoreInteractions(mWifiNetworkAgent);
     }
 }
