@@ -235,6 +235,11 @@ public final class ScanResult implements Parcelable {
     public static final int KEY_MGMT_UNKNOWN = 17;
     /**
      * @hide
+     * Security key management scheme: FT_EAP_SHA384.
+     */
+    public static final int KEY_MGMT_FT_EAP_SHA384 = 18;
+    /**
+     * @hide
      * No cipher suite.
      */
     @SystemApi
