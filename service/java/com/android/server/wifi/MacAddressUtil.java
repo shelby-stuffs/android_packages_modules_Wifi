@@ -18,9 +18,12 @@ package com.android.server.wifi;
 
 import android.net.MacAddress;
 import android.security.keystore.AndroidKeyStoreProvider;
+import android.security.keystore.BackendBusyException;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Log;
+
+import com.android.modules.utils.build.SdkLevel;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -105,6 +108,13 @@ public class MacAddressUtil {
                 | UnrecoverableKeyException | NoSuchProviderException | BackendBusyException e) {
             Log.e(TAG, "Failure in obtainMacRandHashFunction", e);
             return null;
+        } catch (Exception e) {
+            if (SdkLevel.isAtLeastS() && e instanceof BackendBusyException) {
+                Log.e(TAG, "Failure in obtainMacRandHashFunction", e);
+                return null;
+            }
+            Log.e(TAG, "Unexpected exception caught in obtainMacRandHashFunction", e);
+            throw e;
         }
     }
 
