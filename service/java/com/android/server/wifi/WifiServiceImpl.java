@@ -4444,7 +4444,8 @@ public class WifiServiceImpl extends BaseWifiService {
                     if (mActiveModeWarden.isStaStaConcurrencySupportedForMbb()) {
                         concurrencyFeatureSet |= WifiManager.WIFI_FEATURE_ADDITIONAL_STA_MBB;
                     }
-                    if (mActiveModeWarden.isStaStaConcurrencySupportedForRestrictedConnections()) {
+                    if (isConcurrentBandSupported() &&
+                        mActiveModeWarden.isStaStaConcurrencySupportedForRestrictedConnections()) {
                         concurrencyFeatureSet |= WifiManager.WIFI_FEATURE_ADDITIONAL_STA_RESTRICTED;
                     }
                     return concurrencyFeatureSet;
