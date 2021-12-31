@@ -1074,10 +1074,6 @@ public class WifiInjector {
         return mLinkProbeManager;
     }
 
-    public Context getContext() {
-        return mContext;
-    }
-
     /**
      * Creates a BufferedReader for the given filename. Useful for unit tests that depend on IO.
      */

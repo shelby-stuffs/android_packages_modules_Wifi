@@ -174,16 +174,6 @@ public class WifiScanner {
     /** An outstanding request with the same listener hasn't finished yet. */
     public static final int REASON_DUPLICATE_REQEUST = -5;
 
-    /** Partial scan results msg arg
-     * @hide
-     */
-     public static final int ON_PARTIAL_SCAN_RESULTS = 1;
-
-    /** Complete scan results msg arg
-     * @hide
-     */
-     public static final int ON_COMPLETE_SCAN_RESULTS = 0;
-
     /** @hide */
     public static final String GET_AVAILABLE_CHANNELS_EXTRA = "Channels";
 
@@ -1050,11 +1040,6 @@ public class WifiScanner {
          */
         public void onResults(ScanData[] results);
         /**
-         * reports partial results retrieved from single shot scans
-         * @hide
-         */
-        default void onPartialScanResults(ScanData[] results) {}
-        /**
          * reports full scan result for each access point found in scan
          */
         public void onFullResult(ScanResult fullScanResult);
@@ -1869,13 +1854,7 @@ public class WifiScanner {
                     ScanListener scanListener = (ScanListener) listener;
                     ParcelableScanData parcelableScanData = (ParcelableScanData) msg.obj;
                     Binder.clearCallingIdentity();
-                    if (msg.arg1 == ON_PARTIAL_SCAN_RESULTS) {
-                        executor.execute(() -> scanListener
-                                .onPartialScanResults(parcelableScanData.getResults()));
-                    } else {
-                        executor.execute(() -> scanListener
-                                .onResults(parcelableScanData.getResults()));
-                    }
+                    executor.execute(() -> scanListener.onResults(parcelableScanData.getResults()));
                 } break;
                 case CMD_FULL_SCAN_RESULT: {
                     ScanResult result = (ScanResult) msg.obj;

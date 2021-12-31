@@ -743,15 +743,10 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         case WifiNative.WIFI_SCAN_RESULTS_AVAILABLE:
                         case WifiNative.WIFI_SCAN_THRESHOLD_NUM_SCANS:
                         case WifiNative.WIFI_SCAN_THRESHOLD_PERCENT:
-                            reportScanStatusForImpl(mImplIfaceName, STATUS_SUCCEEDED,
-                                    WifiScanner.ON_COMPLETE_SCAN_RESULTS);
+                            reportScanStatusForImpl(mImplIfaceName, STATUS_SUCCEEDED);
                             break;
-                        case WifiNative.WIFI_SCAN_PARTIAL_RESULTS_AVAILABLE:
-                            reportScanStatusForImpl(mImplIfaceName, STATUS_SUCCEEDED,
-                                    WifiScanner.ON_PARTIAL_SCAN_RESULTS);
-			    break;
                         case WifiNative.WIFI_SCAN_FAILED:
-                            reportScanStatusForImpl(mImplIfaceName, STATUS_FAILED, 0);
+                            reportScanStatusForImpl(mImplIfaceName, STATUS_FAILED);
                             break;
                         default:
                             Log.e(TAG, "Unknown scan status event: " + event);
@@ -818,6 +813,10 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
             public @Nullable ScanData getLatestSingleScanResults() {
                 ScanData consolidatedScanData = null;
                 for (WifiScannerImpl impl : mScannerImpls.values()) {
+                    Integer ifaceStatus = mStatusPerImpl.get(impl.getIfaceName());
+                    if (ifaceStatus == null || ifaceStatus != STATUS_SUCCEEDED) {
+                        continue;
+                    }
                     ScanData scanData = impl.getLatestSingleScanResults();
                     if (consolidatedScanData == null) {
                         consolidatedScanData = new ScanData(scanData);
@@ -853,12 +852,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 }
             }
 
-            private void reportScanStatusForImpl(@NonNull String implIfaceName, int newStatus,
-                    int isPartialScanResult) {
-                if (isPartialScanResult == WifiScanner.ON_PARTIAL_SCAN_RESULTS) {
-                    sendMessage(CMD_SCAN_RESULTS_AVAILABLE, WifiScanner.ON_PARTIAL_SCAN_RESULTS);
-                    return;
-                }
+            private void reportScanStatusForImpl(@NonNull String implIfaceName, int newStatus) {
                 Integer currentStatus = mStatusPerImpl.get(implIfaceName);
                 if (currentStatus != null && currentStatus == STATUS_PENDING) {
                     mStatusPerImpl.put(implIfaceName, newStatus);
@@ -866,7 +860,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 // Now check if all the scanner impls scan status is available.
                 int consolidatedStatus = getConsolidatedStatus();
                 if (consolidatedStatus == STATUS_SUCCEEDED) {
-                    sendMessage(CMD_SCAN_RESULTS_AVAILABLE, WifiScanner.ON_COMPLETE_SCAN_RESULTS);
+                    sendMessage(CMD_SCAN_RESULTS_AVAILABLE);
                 } else if (consolidatedStatus == STATUS_FAILED) {
                     sendMessage(CMD_SCAN_FAILED);
                 }
@@ -1096,16 +1090,11 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         ScanData latestScanResults =
                                 mScannerImplsTracker.getLatestSingleScanResults();
                         if (latestScanResults != null) {
-                            if (msg.arg1 == WifiScanner.ON_COMPLETE_SCAN_RESULTS)
-                                handleScanResults(latestScanResults, WifiScanner.ON_COMPLETE_SCAN_RESULTS);
-                            else
-                                handleScanResults(latestScanResults, WifiScanner.ON_PARTIAL_SCAN_RESULTS);
-
+                            handleScanResults(latestScanResults);
                         } else {
                             Log.e(TAG, "latest scan results null unexpectedly");
                         }
-                        if (msg.arg1 == WifiScanner.ON_COMPLETE_SCAN_RESULTS)
-                            transitionTo(mIdleState);
+                        transitionTo(mIdleState);
                         return HANDLED;
                     case CMD_FULL_SCAN_RESULTS:
                         reportFullScanResult((ScanResult) msg.obj, /* bucketsScanned */ msg.arg2);
@@ -1371,7 +1360,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
             }
         }
 
-        void reportScanResults(@NonNull ScanData results, int partialScanResultsFlag) {
+        void reportScanResults(@NonNull ScanData results) {
             if (results != null && results.getResults() != null) {
                 if (results.getResults().length > 0) {
                     mWifiMetrics.incrementNonEmptyScanResultCount();
@@ -1387,11 +1376,9 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         new WifiScanner.ParcelableScanData(resultsToDeliver);
                 logCallback("singleScanResults",  entry.clientInfo, entry.handlerId,
                         describeForLog(resultsToDeliver));
-                entry.reportEvent(WifiScanner.CMD_SCAN_RESULT, partialScanResultsFlag,
-                        parcelableResultsToDeliver);
+                entry.reportEvent(WifiScanner.CMD_SCAN_RESULT, 0, parcelableResultsToDeliver);
                 // make sure the handler is removed
-                entry.reportEvent(WifiScanner.CMD_SINGLE_SCAN_COMPLETED,
-                        partialScanResultsFlag, null);
+                entry.reportEvent(WifiScanner.CMD_SINGLE_SCAN_COMPLETED, 0, null);
             }
 
             WifiScanner.ParcelableScanData parcelableAllResults =
@@ -1399,16 +1386,16 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
             for (RequestInfo<Void> entry : mSingleScanListeners) {
                 logCallback("singleScanResults",  entry.clientInfo, entry.handlerId,
                         describeForLog(allResults));
-                entry.reportEvent(WifiScanner.CMD_SCAN_RESULT, partialScanResultsFlag, parcelableAllResults);
+                entry.reportEvent(WifiScanner.CMD_SCAN_RESULT, 0, parcelableAllResults);
             }
         }
 
-        void handleScanResults(@NonNull ScanData results, int partialScanResultsFlag) {
+        void handleScanResults(@NonNull ScanData results) {
             mWifiMetrics.getScanMetrics().logScanSucceeded(
                     WifiMetrics.ScanMetrics.SCAN_TYPE_SINGLE, results.getResults().length);
             mWifiMetrics.incrementScanReturnEntry(
                     WifiMetricsProto.WifiLog.SCAN_SUCCESS, mActiveScans.size());
-            reportScanResults(results, partialScanResultsFlag);
+            reportScanResults(results);
             // Cache full band (with DFS or not) scan results.
             if (WifiScanner.isFullBandScan(results.getScannedBandsInternal(), true)) {
                 mCachedScanResults.clear();
@@ -1426,8 +1413,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         EMERGENCY_SCAN_END_INDICATION_ALARM_TAG,
                         mEmergencyScanEndIndicationListener, getHandler());
             }
-            if (partialScanResultsFlag == WifiScanner.ON_COMPLETE_SCAN_RESULTS)
-                mActiveScans.clear();
+            mActiveScans.clear();
         }
 
         List<ScanResult> getCachedScanResultsAsList() {
