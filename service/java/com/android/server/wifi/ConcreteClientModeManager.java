@@ -909,14 +909,9 @@ public class ConcreteClientModeManager implements ClientModeManager {
                         break;
                     }
                     case CMD_INTERFACE_DOWN:
-                        if (getRole() == ROLE_CLIENT_PRIMARY) {
-                            Log.e(getTag(), "Detected an interface down, reporting failure to "
-                                 + "SelfRecovery");
-                            mSelfRecovery.trigger(SelfRecovery.REASON_STA_IFACE_DOWN);
-                        } else {
-                            Log.i(getTag(), "Detected an interface down on non-primary STA, not "
-                                + "do SelfRecovery");
-                        }
+                        Log.e(getTag(), "Detected an interface down, reporting failure to "
+                                + "SelfRecovery");
+                        mSelfRecovery.trigger(SelfRecovery.REASON_STA_IFACE_DOWN);
                         // once interface down, nothing else to do...  stop the state machine
                         captureObituaryAndQuitNow();
                         break;
