@@ -401,10 +401,10 @@ public class ClientModeImplTest extends WifiBaseTest {
 
     static final String   TEST_SSID = "\"GoogleGuest\"";
     static final String   SSID_NO_QUOTE = TEST_SSID.replace("\"", "");
-    static final WifiSsid TEST_WIFI_SSID = WifiSsid.createFromAsciiEncoded(SSID_NO_QUOTE);
+    static final WifiSsid TEST_WIFI_SSID = WifiSsid.fromUtf8Text(SSID_NO_QUOTE);
     static final String   TEST_SSID1 = "\"RandomSsid1\"";
     static final String   SSID_NO_QUOTE1 = TEST_SSID1.replace("\"", "");
-    static final WifiSsid TEST_WIFI_SSID1 = WifiSsid.createFromAsciiEncoded(SSID_NO_QUOTE1);
+    static final WifiSsid TEST_WIFI_SSID1 = WifiSsid.fromUtf8Text(SSID_NO_QUOTE1);
     static final String   TEST_BSSID_STR = "01:02:03:04:05:06";
     static final String   TEST_BSSID_STR1 = "02:01:04:03:06:05";
     static final int      sFreq = 2437;
@@ -902,7 +902,7 @@ public class ClientModeImplTest extends WifiBaseTest {
             }
         }).when(mWifiNetworkSelector).updateNetworkCandidateSecurityParams(any(), any());
         String caps = "[RSN-OWE_TRANSITION]";
-        ScanResult scanResult = new ScanResult(WifiSsid.createFromAsciiEncoded(ssid),
+        ScanResult scanResult = new ScanResult(WifiSsid.fromUtf8Text(ssid),
                 ssid, TEST_BSSID_STR, 1245, 0, caps, -78, 2412, 1025, 22, 33, 20, 0, 0, true);
         ScanResult.InformationElement ie = createIE(ScanResult.InformationElement.EID_SSID,
                 ssid.getBytes(StandardCharsets.UTF_8));
@@ -997,7 +997,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 getGoogleGuestScanDetail(TEST_RSSI, TEST_BSSID_STR, sFreq));
         when(mScanDetailCache.getScanResult(TEST_BSSID_STR)).thenReturn(
                 getGoogleGuestScanDetail(TEST_RSSI, TEST_BSSID_STR, sFreq).getScanResult());
-        ScanResult scanResult = new ScanResult(WifiSsid.createFromAsciiEncoded(sFilsSsid),
+        ScanResult scanResult = new ScanResult(WifiSsid.fromUtf8Text(sFilsSsid),
                 sFilsSsid, TEST_BSSID_STR, 1245, 0, "", -78, 2412, 1025, 22, 33, 20, 0, 0, true);
         ScanResult.InformationElement ie = createIE(ScanResult.InformationElement.EID_SSID,
                 sFilsSsid.getBytes(StandardCharsets.UTF_8));
@@ -1009,7 +1009,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                         SupplicantState.ASSOCIATED));
         mLooper.dispatchAll();
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1126,7 +1126,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mScanDetailCache.getScanResult(TEST_BSSID_STR)).thenReturn(
                 getGoogleGuestScanDetail(TEST_RSSI, TEST_BSSID_STR, sFreq).getScanResult());
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1163,7 +1163,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         assertEquals("L2ConnectingState", getCurrentState().getName());
 
         // send expected new network SSID
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(config.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(
@@ -1273,6 +1273,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiNative, times(2)).removeAllNetworks(WIFI_IFACE_NAME);
         verify(mWifiMetrics).logStaEvent(anyString(), eq(StaEvent.TYPE_FRAMEWORK_DISCONNECT),
                 eq(StaEvent.DISCONNECT_RESET_SIM_NETWORKS));
+        verify(mSimRequiredNotifier, never()).showSimRequiredNotification(any(), anyString());
     }
 
     /**
@@ -1311,7 +1312,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.getEapAnonymousIdentity(anyString()))
                 .thenReturn(expectedAnonymousIdentity);
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1365,7 +1366,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.getEapAnonymousIdentity(anyString()))
                 .thenReturn(pseudonym);
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1421,7 +1422,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.getEapAnonymousIdentity(anyString()))
                 .thenReturn(pseudonym);
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1474,7 +1475,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.getEapAnonymousIdentity(anyString()))
                 .thenReturn(pseudonym);
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -1532,7 +1533,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNative.getEapAnonymousIdentity(anyString()))
                 .thenReturn(pseudonym);
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -2342,7 +2343,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -2376,7 +2377,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -2402,7 +2403,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -3380,7 +3381,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -4526,7 +4527,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                         SupplicantState.ASSOCIATED));
         mLooper.dispatchAll();
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -5400,7 +5401,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     private void setupFilsEnabledApInScanResult() {
         String caps = "[WPA2-EAP/SHA1+EAP/SHA256+EAP-FILS-SHA256-CCMP]"
                 + "[RSN-EAP/SHA1+EAP/SHA256+EAP-FILS-SHA256-CCMP][ESS]";
-        ScanResult scanResult = new ScanResult(WifiSsid.createFromAsciiEncoded(sFilsSsid),
+        ScanResult scanResult = new ScanResult(WifiSsid.fromUtf8Text(sFilsSsid),
                 sFilsSsid, TEST_BSSID_STR, 1245, 0, caps, -78, 2412, 1025, 22, 33, 20, 0, 0, true);
         ScanResult.InformationElement ie = createIE(ScanResult.InformationElement.EID_SSID,
                 sFilsSsid.getBytes(StandardCharsets.UTF_8));
@@ -5543,7 +5544,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiMetrics, times(1)).incrementL2ConnectionThroughFilsAuthCount();
 
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(sFilsSsid),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(sFilsSsid),
                 TEST_BSSID_STR, SupplicantState.COMPLETED));
         mLooper.dispatchAll();
 
@@ -5563,7 +5564,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         WifiInfo wifiInfo = mWifiInfo;
         assertNotNull(wifiInfo);
         assertEquals(TEST_BSSID_STR, wifiInfo.getBSSID());
-        assertTrue(WifiSsid.createFromAsciiEncoded(sFilsSsid).equals(wifiInfo.getWifiSsid()));
+        assertTrue(WifiSsid.fromUtf8Text(sFilsSsid).equals(wifiInfo.getWifiSsid()));
         assertEquals("L3ConnectedState", getCurrentState().getName());
     }
 
@@ -5872,7 +5873,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // get disconnect event
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -5892,7 +5893,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // missing disconnect event, but got supplicant state change with disconnect state instead.
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
-                new StateChangeResult(0, WifiSsid.createFromAsciiEncoded(mConnectedNetwork.SSID),
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
                         TEST_BSSID_STR, SupplicantState.DISCONNECTED));
         mLooper.dispatchAll();
 
@@ -6213,7 +6214,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mScanDetailCache.getScanResult(TEST_BSSID_STR)).thenReturn(
                 getGoogleGuestScanDetail(TEST_RSSI, TEST_BSSID_STR, sFreq).getScanResult());
 
-        WifiSsid wifiSsid = WifiSsid.createFromByteArray(
+        WifiSsid wifiSsid = WifiSsid.fromBytes(
                 NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(mConnectedNetwork.SSID)));
         mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
                 new NetworkConnectionEventInfo(0, wifiSsid, TEST_BSSID_STR, false));
@@ -6886,7 +6887,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 new ActionListenerWrapper(connectActionListener),
                 Binder.getCallingUid());
         mLooper.dispatchAll();
-        verify(connectActionListener).onFailure(WifiManager.ERROR);
+        verify(connectActionListener).onFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
         verify(mWifiConfigManager, never())
                 .getConfiguredNetworkWithoutMasking(eq(config.networkId));
         verify(mWifiNative, never()).connectToNetwork(eq(WIFI_IFACE_NAME), eq(config));

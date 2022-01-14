@@ -2094,7 +2094,10 @@ public class WifiConnectivityManager {
                 + " wifiState=" + stateToString(mWifiState)
                 + " scanImmediately=" + scanImmediately
                 + " wifiEnabled=" + mWifiEnabled
-                + " mAutoJoinEnabled=" + mAutoJoinEnabled);
+                + " mAutoJoinEnabled=" + mAutoJoinEnabled
+                + " mAutoJoinEnabledExternal=" + mAutoJoinEnabledExternal
+                + " mSpecificNetworkRequestInProgress=" + mSpecificNetworkRequestInProgress
+                + " mTrustedConnectionAllowed=" + mTrustedConnectionAllowed);
 
         if (!mWifiEnabled || !mAutoJoinEnabled) {
             return;
@@ -2310,9 +2313,7 @@ public class WifiConnectivityManager {
         }
         WifiInfo wifiInfo = getPrimaryWifiInfo();
         if (failureCode == WifiMetrics.ConnectionEvent.FAILURE_NONE) {
-            String ssidUnquoted = (wifiInfo.getWifiSsid() == null)
-                    ? null
-                    : wifiInfo.getWifiSsid().toString();
+            String ssidUnquoted = WifiInfo.removeDoubleQuotes(wifiInfo.getSSID());
             mOpenNetworkNotifier.handleWifiConnected(ssidUnquoted);
         } else {
             mOpenNetworkNotifier.handleConnectionFailure();

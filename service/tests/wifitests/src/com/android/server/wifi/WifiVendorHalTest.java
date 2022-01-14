@@ -1047,31 +1047,6 @@ public class WifiVendorHalTest extends WifiBaseTest {
     }
 
     /**
-     * Test enablement of link layer stats after startup
-     *
-     * Request link layer stats before HAL start
-     * - should not make it to the HAL layer
-     * Start the HAL in STA mode
-     * Request link layer stats twice more
-     * - enable request should make it to the HAL layer
-     * - HAL layer should have been called to make the requests (i.e., two calls total)
-     */
-    @Test
-    public void testLinkLayerStatsEnableAfterStartup() throws Exception {
-        doNothing().when(mIWifiStaIface).getLinkLayerStats(any());
-
-        assertNull(mWifiVendorHal.getWifiLinkLayerStats(TEST_IFACE_NAME));
-        assertTrue(mWifiVendorHal.startVendorHalSta());
-        assertTrue(mWifiVendorHal.isHalStarted());
-
-        verify(mHalDeviceManager).start();
-        mWifiVendorHal.getWifiLinkLayerStats(TEST_IFACE_NAME);
-        mWifiVendorHal.getWifiLinkLayerStats(TEST_IFACE_NAME);
-        verify(mIWifiStaIface).enableLinkLayerStatsCollection(false); // mLinkLayerStatsDebug
-        verify(mIWifiStaIface, times(2)).getLinkLayerStats(any());
-    }
-
-    /**
      * Test getLinkLayerStats_1_3 gets called when the hal version is V1_3.
      */
     @Test
@@ -4006,7 +3981,7 @@ public class WifiVendorHalTest extends WifiBaseTest {
         ScanResult scanResult = new ScanResult();
         scanResult.SSID = NativeUtil.encodeSsid(staScanResult.ssid);
         scanResult.BSSID = NativeUtil.macAddressFromByteArray(staScanResult.bssid);
-        scanResult.wifiSsid = WifiSsid.createFromByteArray(ssid);
+        scanResult.wifiSsid = WifiSsid.fromBytes(ssid);
         scanResult.frequency = staScanResult.frequency;
         scanResult.level = staScanResult.rssi;
         scanResult.timestamp = staScanResult.timeStampInUs;
@@ -4039,7 +4014,7 @@ public class WifiVendorHalTest extends WifiBaseTest {
 
     private void assertScanResultEqual(ScanResult expected, ScanResult actual) {
         assertEquals(expected.SSID, actual.SSID);
-        assertEquals(expected.wifiSsid.getHexString(), actual.wifiSsid.getHexString());
+        assertEquals(expected.wifiSsid, actual.wifiSsid);
         assertEquals(expected.BSSID, actual.BSSID);
         assertEquals(expected.frequency, actual.frequency);
         assertEquals(expected.level, actual.level);

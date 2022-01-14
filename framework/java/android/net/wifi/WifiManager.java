@@ -3243,6 +3243,7 @@ public class WifiManager {
      * </p>
      */
     @Deprecated
+    @RequiresPermission(allOf = {ACCESS_WIFI_STATE, ACCESS_FINE_LOCATION}, conditional = true)
     public WifiInfo getConnectionInfo() {
         try {
             return mService.getConnectionInfo(mContext.getOpPackageName(),
@@ -3256,8 +3257,10 @@ public class WifiManager {
      * Return the results of the latest access point scan.
      * @return the list of access points found in the most recent scan. An app must hold
      * {@link android.Manifest.permission#ACCESS_FINE_LOCATION ACCESS_FINE_LOCATION} permission
+     * and {@link android.Manifest.permission#ACCESS_WIFI_STATE} permission
      * in order to get valid results.
      */
+    @RequiresPermission(allOf = {ACCESS_WIFI_STATE, ACCESS_FINE_LOCATION})
     public List<ScanResult> getScanResults() {
         try {
             return mService.getScanResults(mContext.getOpPackageName(),
@@ -4609,31 +4612,13 @@ public class WifiManager {
         }
     }
 
-    /**
-     * Passed with {@link ActionListener#onFailure}.
-     * Indicates that the operation failed due to an internal error.
-     * @hide
-     */
-    public static final int ERROR                       = 0;
-
-    /**
-     * Passed with {@link ActionListener#onFailure}.
-     * Indicates that the operation is already in progress
-     * @hide
-     */
-    public static final int IN_PROGRESS                 = 1;
-
-    /**
-     * Passed with {@link ActionListener#onFailure}.
-     * Indicates that the operation failed because the framework is busy and
-     * unable to service the request
-     * @hide
-     */
-    public static final int BUSY                        = 2;
-
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({ERROR, IN_PROGRESS, BUSY})
+    @IntDef({ActionListener.FAILURE_INTERNAL_ERROR,
+            ActionListener.FAILURE_IN_PROGRESS,
+            ActionListener.FAILURE_BUSY,
+            ActionListener.FAILURE_INVALID_ARGS,
+            ActionListener.FAILURE_NOT_AUTHORIZED})
     public @interface ActionListenerFailureReason {}
 
     /* WPS specific errors */
@@ -4659,25 +4644,42 @@ public class WifiManager {
     public static final int WPS_TIMED_OUT               = 7;
 
     /**
-     * Passed with {@link ActionListener#onFailure}.
-     * Indicates that the operation failed due to invalid inputs
-     * @hide
-     */
-    public static final int INVALID_ARGS                = 8;
-
-    /**
-     * Passed with {@link ActionListener#onFailure}.
-     * Indicates that the operation failed due to user permissions.
-     * @hide
-     */
-    public static final int NOT_AUTHORIZED              = 9;
-
-    /**
      * Interface for callback invocation on an application action
      * @hide
      */
     @SystemApi
     public interface ActionListener {
+        /**
+         * Passed with {@link #onFailure}.
+         * Indicates that the operation failed due to an internal error.
+         */
+        int FAILURE_INTERNAL_ERROR = 0;
+
+        /**
+         * Passed with {@link #onFailure}.
+         * Indicates that the operation is already in progress
+         */
+        int FAILURE_IN_PROGRESS = 1;
+
+        /**
+         * Passed with {@link #onFailure}.
+         * Indicates that the operation failed because the framework is busy and
+         * unable to service the request
+         */
+        int FAILURE_BUSY = 2;
+
+        /**
+         * Passed with {@link #onFailure}.
+         * Indicates that the operation failed due to invalid inputs
+         */
+        int FAILURE_INVALID_ARGS = 3;
+
+        /**
+         * Passed with {@link #onFailure}.
+         * Indicates that the operation failed due to insufficient user permissions.
+         */
+        int FAILURE_NOT_AUTHORIZED = 4;
+
         /**
          * The operation succeeded.
          */
@@ -5441,9 +5443,13 @@ public class WifiManager {
         try {
             mService.connect(config, networkId, listenerProxy);
         } catch (RemoteException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(ERROR);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_INTERNAL_ERROR);
+            }
         } catch (SecurityException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(NOT_AUTHORIZED);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_NOT_AUTHORIZED);
+            }
         }
     }
 
@@ -5581,9 +5587,13 @@ public class WifiManager {
         try {
             mService.save(config, listenerProxy);
         } catch (RemoteException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(ERROR);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_INTERNAL_ERROR);
+            }
         } catch (SecurityException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(NOT_AUTHORIZED);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_NOT_AUTHORIZED);
+            }
         }
     }
 
@@ -5615,9 +5625,13 @@ public class WifiManager {
         try {
             mService.forget(netId, listenerProxy);
         } catch (RemoteException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(ERROR);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_INTERNAL_ERROR);
+            }
         } catch (SecurityException e) {
-            if (listenerProxy != null) listenerProxy.onFailure(NOT_AUTHORIZED);
+            if (listenerProxy != null) {
+                listenerProxy.onFailure(ActionListener.FAILURE_NOT_AUTHORIZED);
+            }
         }
     }
 
@@ -5647,7 +5661,7 @@ public class WifiManager {
             if (status) {
                 listener.onSuccess();
             } else {
-                listener.onFailure(ERROR);
+                listener.onFailure(ActionListener.FAILURE_INTERNAL_ERROR);
             }
         }
     }
@@ -5778,7 +5792,7 @@ public class WifiManager {
      */
     public void startWps(WpsInfo config, WpsCallback listener) {
         if (listener != null ) {
-            listener.onFailed(ERROR);
+            listener.onFailed(ActionListener.FAILURE_INTERNAL_ERROR);
         }
     }
 
@@ -5792,7 +5806,7 @@ public class WifiManager {
      */
     public void cancelWps(WpsCallback listener) {
         if (listener != null) {
-            listener.onFailed(ERROR);
+            listener.onFailed(ActionListener.FAILURE_INTERNAL_ERROR);
         }
     }
 

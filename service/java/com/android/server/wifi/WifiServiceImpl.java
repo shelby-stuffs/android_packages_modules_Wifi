@@ -108,6 +108,7 @@ import android.net.wifi.util.ScanResultUtil;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -292,6 +293,8 @@ public class WifiServiceImpl extends BaseWifiService {
     private final MakeBeforeBreakManager mMakeBeforeBreakManager;
     private final LastCallerInfoManager mLastCallerInfoManager;
 
+    private boolean mWifiTetheringDisallowed;
+
     /**
      * The wrapper of SoftApCallback is used in WifiService internally.
      * see: {@code WifiManager.SoftApCallback}
@@ -376,6 +379,7 @@ public class WifiServiceImpl extends BaseWifiService {
         mBuildProperties = mWifiInjector.getBuildProperties();
         mDefaultClientModeManager = mWifiInjector.getDefaultClientModeManager();
         mCountryCodeTracker = new CountryCodeTracker();
+        mWifiTetheringDisallowed = false;
     }
 
     /**
@@ -479,6 +483,21 @@ public class WifiServiceImpl extends BaseWifiService {
                     new IntentFilter(Intent.ACTION_LOCALE_CHANGED),
                     null,
                     new Handler(mWifiHandlerThread.getLooper()));
+            if (SdkLevel.isAtLeastT()) {
+                mContext.registerReceiver(
+                        new BroadcastReceiver() {
+                            @Override
+                            public void onReceive(Context context, Intent intent) {
+                                Log.d(TAG, "user restrictions changed");
+                                onUserRestrictionsChanged();
+                            }
+                        },
+                        new IntentFilter(UserManager.ACTION_USER_RESTRICTIONS_CHANGED),
+                        null,
+                        new Handler(mWifiHandlerThread.getLooper()));
+                mWifiTetheringDisallowed = mUserManager.getUserRestrictions()
+                        .getBoolean(UserManager.DISALLOW_WIFI_TETHERING);
+            }
 
             // Adding optimizations of only receiving broadcasts when wifi is enabled
             // can result in race conditions when apps toggle wifi in the background
@@ -492,15 +511,32 @@ public class WifiServiceImpl extends BaseWifiService {
         });
     }
 
+
+    /**
+     * Find which user restrictions have changed and take corresponding actions
+     */
+    @VisibleForTesting
+    public void onUserRestrictionsChanged() {
+        final Bundle restrictions = mUserManager.getUserRestrictions();
+        final boolean newWifiTetheringDisallowed =
+                restrictions.getBoolean(UserManager.DISALLOW_WIFI_TETHERING);
+
+        if (newWifiTetheringDisallowed != mWifiTetheringDisallowed) {
+            if (newWifiTetheringDisallowed) {
+                mLog.info("stopSoftAp DISALLOW_WIFI_TETHERING set").flush();
+                stopSoftApInternal(WifiManager.IFACE_IP_MODE_TETHERED);
+            }
+            mWifiTetheringDisallowed = newWifiTetheringDisallowed;
+        }
+    }
+
     private void resetCarrierNetworks(@ClientModeImpl.ResetSimReason int resetReason) {
         Log.d(TAG, "resetting carrier networks since SIM was changed");
-        if (resetReason == RESET_SIM_REASON_SIM_INSERTED
-                || resetReason == RESET_SIM_REASON_DEFAULT_DATA_SIM_CHANGED) {
+        if (resetReason == RESET_SIM_REASON_SIM_INSERTED) {
             // clear all SIM related notifications since some action was taken to address
             // "missing" SIM issue
             mSimRequiredNotifier.dismissSimRequiredNotification();
-        }
-        if (resetReason != RESET_SIM_REASON_SIM_INSERTED) {
+        } else {
             mWifiConfigManager.resetSimNetworks();
             mWifiNetworkSuggestionsManager.resetSimNetworkSuggestions();
             mPasspointManager.resetSimPasspointNetwork();
@@ -511,7 +547,7 @@ public class WifiServiceImpl extends BaseWifiService {
         for (ClientModeManager cmm : mActiveModeWarden.getClientModeManagers()) {
             cmm.resetSimAuthNetworks(resetReason);
         }
-        mWifiNetworkSuggestionsManager.resetCarrierPrivilegedApps();
+        mWifiThreadRunner.post(mWifiNetworkSuggestionsManager::resetCarrierPrivilegedApps);
         if (resetReason == RESET_SIM_REASON_SIM_INSERTED) {
             // clear the blocklists in case any SIM based network were disabled due to the SIM
             // not being available.
@@ -519,7 +555,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiConnectivityManager.forceConnectivityScan(ClientModeImpl.WIFI_WORK_SOURCE);
         } else {
             // Remove all ephemeral carrier networks keep subscriptionId update with SIM changes
-            mWifiConfigManager.removeEphemeralCarrierNetworks();
+            mWifiThreadRunner.post(mWifiConfigManager::removeEphemeralCarrierNetworks);
         }
     }
 
@@ -1228,6 +1264,14 @@ public class WifiServiceImpl extends BaseWifiService {
             @NonNull String packageName) {
         // NETWORK_STACK is a signature only permission.
         enforceNetworkStackPermission();
+
+        // If user restriction is set, cannot start softap
+        if (SdkLevel.isAtLeastT() && mUserManager.hasUserRestrictionForUser(
+                UserManager.DISALLOW_WIFI_TETHERING,
+                UserHandle.getUserHandleForUid(Binder.getCallingUid()))) {
+            mLog.err("startTetheredHotspot with user restriction: not permitted").flush();
+            return false;
+        }
 
         mLog.info("startTetheredHotspot uid=%").c(Binder.getCallingUid()).flush();
 
@@ -5140,7 +5184,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 result = mWifiConfigManager.addOrUpdateNetwork(config, uid);
                 if (!result.isSuccess()) {
                     Log.e(TAG, "connect adding/updating config=" + config + " failed");
-                    wrapper.sendFailure(WifiManager.ERROR);
+                    wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                     return;
                 }
                 broadcastWifiCredentialChanged(WifiManager.WIFI_CREDENTIAL_SAVED, config);
@@ -5155,7 +5199,7 @@ public class WifiServiceImpl extends BaseWifiService {
                     .getConfiguredNetwork(result.getNetworkId());
             if (configuration == null) {
                 Log.e(TAG, "connect to Invalid network Id=" + netIdArg);
-                wrapper.sendFailure(WifiManager.ERROR);
+                wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                 return;
             }
             if (configuration.enterpriseConfig != null
@@ -5164,17 +5208,45 @@ public class WifiServiceImpl extends BaseWifiService {
                 if (!mWifiCarrierInfoManager.isSimReady(subId)) {
                     Log.e(TAG, "connect to SIM-based config=" + configuration
                             + "while SIM is absent");
-                    wrapper.sendFailure(WifiManager.ERROR);
+                    wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                     return;
                 }
                 if (mWifiCarrierInfoManager.requiresImsiEncryption(subId)
                         && !mWifiCarrierInfoManager.isImsiEncryptionInfoAvailable(subId)) {
                     Log.e(TAG, "Imsi protection required but not available for Network="
                             + configuration);
-                    wrapper.sendFailure(WifiManager.ERROR);
+                    wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                     return;
                 }
             }
+
+            // Tear down secondary CMMs that are already connected to the same network to make
+            // sure the user's manual connection succeeds.
+            ScanResultMatchInfo targetMatchInfo =
+                    ScanResultMatchInfo.fromWifiConfiguration(configuration);
+            for (ClientModeManager cmm : mActiveModeWarden.getClientModeManagers()) {
+                if (!cmm.isConnected()) {
+                    continue;
+                }
+                ActiveModeManager.ClientRole role = cmm.getRole();
+                if (role == ROLE_CLIENT_LOCAL_ONLY || role == ROLE_CLIENT_SECONDARY_LONG_LIVED) {
+                    WifiConfiguration connectedConfig = cmm.getConnectedWifiConfiguration();
+                    if (connectedConfig == null) {
+                        continue;
+                    }
+                    ScanResultMatchInfo connectedMatchInfo =
+                            ScanResultMatchInfo.fromWifiConfiguration(connectedConfig);
+                    if (targetMatchInfo.matchForNetworkSelection(connectedMatchInfo) == null) {
+                        continue;
+                    }
+                    if (isVerboseLoggingEnabled()) {
+                        Log.v(TAG, "Shutting down client mode manager to satisfy user "
+                                + "connection: " + cmm);
+                    }
+                    cmm.stop();
+                }
+            }
+
             mMakeBeforeBreakManager.stopAllSecondaryTransientClientModeManagers(() ->
                     mConnectHelper.connectToNetwork(result, wrapper, uid));
         });
@@ -5208,7 +5280,7 @@ public class WifiServiceImpl extends BaseWifiService {
                             UserActionEvent.EVENT_ADD_OR_UPDATE_NETWORK, config.networkId);
                 }
             } else {
-                wrapper.sendFailure(WifiManager.ERROR);
+                wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
             }
         });
     }
@@ -5238,7 +5310,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 broadcastWifiCredentialChanged(WifiManager.WIFI_CREDENTIAL_FORGOT, config);
             } else {
                 Log.e(TAG, "Failed to remove network");
-                wrapper.sendFailure(WifiManager.ERROR);
+                wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
             }
         });
     }

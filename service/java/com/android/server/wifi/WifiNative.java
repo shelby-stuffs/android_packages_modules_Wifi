@@ -1201,6 +1201,7 @@ public class WifiNative {
             // Just to avoid any race conditions with interface state change callbacks,
             // update the interface state before we exit.
             onInterfaceStateChanged(iface, isInterfaceUp(iface.name));
+            mWifiVendorHal.enableLinkLayerStats(iface.name);
             initializeNwParamsForClientInterface(iface.name);
             Log.i(TAG, "Successfully setup " + iface);
 
@@ -1259,6 +1260,7 @@ public class WifiNative {
             // Just to avoid any race conditions with interface state change callbacks,
             // update the interface state before we exit.
             onInterfaceStateChanged(iface, isInterfaceUp(iface.name));
+            mWifiVendorHal.enableLinkLayerStats(iface.name);
             Log.i(TAG, "Successfully setup " + iface);
 
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
@@ -1730,7 +1732,7 @@ public class WifiNative {
             List<NativeScanResult> nativeResults) {
         ArrayList<ScanDetail> results = new ArrayList<>();
         for (NativeScanResult result : nativeResults) {
-            WifiSsid wifiSsid = WifiSsid.createFromByteArray(result.getSsid());
+            WifiSsid wifiSsid = WifiSsid.fromBytes(result.getSsid());
             MacAddress bssidMac = result.getBssid();
             if (bssidMac == null) {
                 Log.e(TAG, "Invalid MAC (BSSID) for SSID " + wifiSsid);

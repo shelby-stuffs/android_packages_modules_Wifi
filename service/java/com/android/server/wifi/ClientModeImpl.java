@@ -3687,7 +3687,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     ConnectNetworkMessage cnm = (ConnectNetworkMessage) message.obj;
                     if (mIpClient == null) {
                         logd("IpClient is not ready, CONNECT_NETWORK dropped");
-                        cnm.listener.sendFailure(WifiManager.ERROR);
+                        cnm.listener.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                         break;
                     }
                     NetworkUpdateResult result = cnm.result;
@@ -3703,7 +3703,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     ConnectNetworkMessage cnm = (ConnectNetworkMessage) message.obj;
                     if (mIpClient == null) {
                         logd("IpClient is not ready, SAVE_NETWORK dropped");
-                        cnm.listener.sendFailure(WifiManager.ERROR);
+                        cnm.listener.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                         break;
                     }
                     NetworkUpdateResult result = cnm.result;
@@ -4843,7 +4843,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             (NetworkConnectionEventInfo) message.obj;
                     String quotedOrHexConnectingSsid = getConnectingSsidInternal();
                     String quotedOrHexConnectedSsid = NativeUtil.encodeSsid(
-                            NativeUtil.byteArrayToArrayList(connectionInfo.wifiSsid.getOctets()));
+                            NativeUtil.byteArrayToArrayList(connectionInfo.wifiSsid.getBytes()));
                     if (quotedOrHexConnectingSsid != null
                             && !quotedOrHexConnectingSsid.equals(quotedOrHexConnectedSsid)) {
                         // possibly a NETWORK_CONNECTION_EVENT for a successful roam on the previous
@@ -5218,7 +5218,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             mWifiNative.removeNetworkCachedData(mLastNetworkId);
                             // remove network so that supplicant's PMKSA cache is cleared
                             mWifiNative.removeAllNetworks(mInterfaceName);
-                            if (isPrimary()) {
+                            if (isPrimary() && !mWifiCarrierInfoManager.isSimReady(mLastSubId)) {
                                 mSimRequiredNotifier.showSimRequiredNotification(
                                         config, mLastSimBasedConnectionCarrierName);
                             }
