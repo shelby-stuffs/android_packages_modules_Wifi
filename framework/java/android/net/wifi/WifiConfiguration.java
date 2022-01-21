@@ -54,7 +54,9 @@ import java.util.BitSet;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -1541,6 +1543,15 @@ public class WifiConfiguration implements Parcelable {
     @SystemApi
     public boolean meteredHint;
 
+    /**
+     * Indicate whether the network is restricted or not.
+     *
+     * This bit can only be used by suggestion network, see
+     * {@link WifiNetworkSuggestion.Builder#setRestricted(boolean)}
+     * @hide
+     */
+    public boolean restricted;
+
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = {"METERED_OVERRIDE_"}, value = {
@@ -2918,6 +2929,7 @@ public class WifiConfiguration implements Parcelable {
         dtimInterval = 0;
         mRandomizedMacAddress = MacAddress.fromString(WifiInfo.DEFAULT_MAC_ADDRESS);
         numRebootsSinceLastUse = 0;
+        restricted = false;
     }
 
     /**
@@ -2985,8 +2997,8 @@ public class WifiConfiguration implements Parcelable {
                 .append(" PRIO: ").append(this.priority)
                 .append(" HIDDEN: ").append(this.hiddenSSID)
                 .append(" PMF: ").append(this.requirePmf)
-                .append("CarrierId: ").append(this.carrierId)
-                .append("SubscriptionId").append(this.subscriptionId)
+                .append(" CarrierId: ").append(this.carrierId)
+                .append(" SubscriptionId: ").append(this.subscriptionId)
                 .append('\n');
 
 
@@ -3035,6 +3047,7 @@ public class WifiConfiguration implements Parcelable {
         if (this.ephemeral) sbuf.append(" ephemeral");
         if (this.osu) sbuf.append(" osu");
         if (this.trusted) sbuf.append(" trusted");
+        if (this.restricted) sbuf.append(" restricted");
         if (this.oemPaid) sbuf.append(" oemPaid");
         if (this.oemPrivate) sbuf.append(" oemPrivate");
         if (this.carrierMerged) sbuf.append(" carrierMerged");
@@ -3044,7 +3057,8 @@ public class WifiConfiguration implements Parcelable {
         if (this.useExternalScores) sbuf.append(" useExternalScores");
         if (this.validatedInternetAccess || this.ephemeral || this.trusted || this.oemPaid
                 || this.oemPrivate || this.carrierMerged || this.fromWifiNetworkSuggestion
-                || this.fromWifiNetworkSpecifier || this.meteredHint || this.useExternalScores) {
+                || this.fromWifiNetworkSpecifier || this.meteredHint || this.useExternalScores
+                || this.restricted) {
             sbuf.append("\n");
         }
         if (this.meteredOverride != METERED_OVERRIDE_NONE) {
@@ -3587,6 +3601,7 @@ public class WifiConfiguration implements Parcelable {
             ephemeral = source.ephemeral;
             osu = source.osu;
             trusted = source.trusted;
+            restricted = source.restricted;
             oemPaid = source.oemPaid;
             oemPrivate = source.oemPrivate;
             carrierMerged = source.carrierMerged;
@@ -3709,6 +3724,7 @@ public class WifiConfiguration implements Parcelable {
         dest.writeInt(carrierId);
         dest.writeString(mPasspointUniqueId);
         dest.writeInt(subscriptionId);
+        dest.writeBoolean(restricted);
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -3795,6 +3811,7 @@ public class WifiConfiguration implements Parcelable {
                 config.carrierId = in.readInt();
                 config.mPasspointUniqueId = in.readString();
                 config.subscriptionId = in.readInt();
+                config.restricted = in.readBoolean();
                 return config;
             }
 
@@ -3934,4 +3951,55 @@ public class WifiConfiguration implements Parcelable {
         return SECURITY_TYPE_NAMES[securityType];
     }
 
+    /**
+     * Returns the key for storing the data usage bucket.
+     *
+     * Note: DO NOT change this function. It is used to be a key to store Wi-Fi data usage data.
+     * Create a new function if we plan to change the key for Wi-Fi data usage and add the new key
+     * to {@link #getAllPersistableNetworkKeys()}.
+     *
+     * @param securityType the security type corresponding to the target network.
+     * @hide
+     */
+    public String getNetworkKeyFromSecurityType(@SecurityType int securityType) {
+        if (mPasspointUniqueId != null) {
+            // It might happen that there are two connections which use the same passpoint
+            // coniguration but different sim card (maybe same carriers?). Add subscriptionId to be
+            // the part of key to separate data in usage bucket.
+            // But now we only show one WifiConfiguration entry in Wifi picker for this case.
+            // It means that user only have a way to query usage with configuration on default SIM.
+            // (We always connect to network with default SIM). So returns the key with associated
+            // subscriptionId (the default one) first.
+            return subscriptionId + "-" + mPasspointUniqueId;
+        } else {
+            String key = SSID + getSecurityTypeName(securityType);
+            if (!shared) {
+                key += "-" + UserHandle.getUserHandleForUid(creatorUid).getIdentifier();
+            }
+            if (fromWifiNetworkSuggestion) {
+                key += "_" + creatorName + "-" + carrierId + "-" + subscriptionId;
+            }
+            return key;
+        }
+    }
+
+    /**
+     * Returns a list of all persistable network keys corresponding to this configuration.
+     * There may be multiple keys since they are security-type specific and a configuration may
+     * support multiple security types. The persistable key of a specific network connection may
+     * be obtained from {@link WifiInfo#getCurrentNetworkKey()}.
+     * An example of usage of such persistable network keys is to query the Wi-Fi data usage
+     * corresponding to this configuration. See {@code NetworkTemplate} to know the detail.
+     *
+     * @hide
+     */
+    @SystemApi
+    @NonNull
+    public Set<String> getAllPersistableNetworkKeys() {
+        Set<String> keys = new HashSet<>();
+        for (SecurityParams securityParam : mSecurityParamsList) {
+            keys.add(getNetworkKeyFromSecurityType(securityParam.getSecurityType()));
+        }
+        return keys;
+    }
 }

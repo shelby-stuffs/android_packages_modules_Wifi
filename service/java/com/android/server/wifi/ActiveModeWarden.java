@@ -642,8 +642,8 @@ public class ActiveModeWarden {
     }
 
     /** Update SoftAp Capability. */
-    public void updateSoftApCapability(SoftApCapability capability) {
-        mWifiController.sendMessage(WifiController.CMD_UPDATE_AP_CAPABILITY, capability);
+    public void updateSoftApCapability(SoftApCapability capability, int ipMode) {
+        mWifiController.sendMessage(WifiController.CMD_UPDATE_AP_CAPABILITY, ipMode, 0, capability);
     }
 
     /** Update SoftAp Configuration. */
@@ -991,9 +991,11 @@ public class ActiveModeWarden {
         }
     }
 
-    private void updateCapabilityToSoftApModeManager(SoftApCapability capability) {
+    private void updateCapabilityToSoftApModeManager(SoftApCapability capability, int ipMode) {
         for (SoftApManager softApManager : mSoftApManagers) {
-            softApManager.updateCapability(capability);
+            if (ipMode == softApManager.getSoftApModeConfiguration().getTargetMode()) {
+                softApManager.updateCapability(capability);
+            }
         }
     }
 
@@ -1800,7 +1802,7 @@ public class ActiveModeWarden {
                         }
                         break;
                     case CMD_UPDATE_AP_CAPABILITY:
-                        updateCapabilityToSoftApModeManager((SoftApCapability) msg.obj);
+                        updateCapabilityToSoftApModeManager((SoftApCapability) msg.obj, msg.arg1);
                         break;
                     case CMD_UPDATE_AP_CONFIG:
                         updateConfigurationToSoftApModeManager((SoftApConfiguration) msg.obj);

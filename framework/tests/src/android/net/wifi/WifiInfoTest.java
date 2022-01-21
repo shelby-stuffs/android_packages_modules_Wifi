@@ -64,6 +64,7 @@ public class WifiInfoTest {
     private static final int TEST_NETWORK_ID = 5;
     private static final int TEST_NETWORK_ID2 = 6;
     private static final int TEST_SUB_ID = 1;
+    private static final String TEST_NETWORK_KEY = "TestNetworkKey";
 
     private WifiInfo makeWifiInfoForNoRedactions(
             List<ScanResult.InformationElement> informationElements) {
@@ -103,6 +104,7 @@ public class WifiInfoTest {
         assertEquals(TEST_BSSID, info.getBSSID());
         assertEquals(TEST_NETWORK_ID, info.getNetworkId());
         assertTrue(info.isTrusted());
+        assertFalse((info.isRestricted()));
         assertTrue(info.isOsuAp());
         assertTrue(info.isPasspointAp());
         assertEquals(TEST_PACKAGE_NAME, info.getRequestingPackageName());
@@ -184,6 +186,7 @@ public class WifiInfoTest {
         info.setInformationElements(generateIes());
         info.setIsPrimary(true);
         info.setMacAddress(TEST_BSSID);
+        info.setCurrentNetworkKey(TEST_NETWORK_KEY);
         return info;
     }
 
@@ -197,6 +200,7 @@ public class WifiInfoTest {
         assertEquals(WifiInfo.DEFAULT_MAC_ADDRESS, info.getBSSID());
         assertEquals(WifiConfiguration.INVALID_NETWORK_ID, info.getNetworkId());
         assertTrue(info.isTrusted());
+        assertFalse(info.isRestricted());
         assertTrue(info.isOsuAp());
         assertFalse(info.isPasspointAp()); // fqdn & friendly name is masked.
         assertEquals(TEST_PACKAGE_NAME, info.getRequestingPackageName());
@@ -214,6 +218,7 @@ public class WifiInfoTest {
             assertEquals(TEST_SUB_ID, info.getSubscriptionId());
             assertTrue(info.isPrimary());
         }
+        assertEquals(null, info.getCurrentNetworkKey());
     }
 
     /**
@@ -326,6 +331,7 @@ public class WifiInfoTest {
         info.setProviderFriendlyName(TEST_PROVIDER_NAME);
         info.setInformationElements(generateIes());
         info.setMacAddress(TEST_BSSID);
+        info.setCurrentNetworkKey(TEST_NETWORK_KEY);
         return info;
     }
 
@@ -338,6 +344,7 @@ public class WifiInfoTest {
         assertNull(info.getPasspointProviderFriendlyName());
         assertEquals(WifiInfo.DEFAULT_MAC_ADDRESS, info.getMacAddress());
         assertNull(info.getInformationElements());
+        assertNull(info.getCurrentNetworkKey());
     }
 
     @Test
@@ -428,6 +435,7 @@ public class WifiInfoTest {
         writeWifiInfo.setMaxSupportedRxLinkSpeedMbps(TEST_MAX_SUPPORTED_RX_LINK_SPEED_MBPS);
         writeWifiInfo.setSubscriptionId(TEST_SUB_ID);
         writeWifiInfo.setIsPrimary(true);
+        writeWifiInfo.setRestricted(true);
 
         WifiInfo readWifiInfo = new WifiInfo(writeWifiInfo);
 
@@ -446,6 +454,7 @@ public class WifiInfoTest {
                 readWifiInfo.getMaxSupportedTxLinkSpeedMbps());
         assertEquals(TEST_MAX_SUPPORTED_RX_LINK_SPEED_MBPS,
                 readWifiInfo.getMaxSupportedRxLinkSpeedMbps());
+        assertTrue(readWifiInfo.isRestricted());
         if (SdkLevel.isAtLeastS()) {
             assertTrue(readWifiInfo.isOemPaid());
             assertTrue(readWifiInfo.isOemPrivate());
@@ -477,6 +486,7 @@ public class WifiInfoTest {
             assertEquals(SubscriptionManager.INVALID_SUBSCRIPTION_ID, wifiInfo.getSubscriptionId());
             assertFalse(wifiInfo.isPrimary());
         }
+        assertEquals(null, wifiInfo.getCurrentNetworkKey());
     }
 
     /**

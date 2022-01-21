@@ -90,9 +90,10 @@ public class SavedNetworkNominator implements WifiNetworkSelector.NetworkNominat
      */
     @Override
     public void nominateNetworks(List<ScanDetail> scanDetails,
-                    boolean untrustedNetworkAllowed /* unused */,
-                    boolean oemPaidNetworkAllowed /* unused */,
-                    boolean oemPrivateNetworkAllowed /* unused */,
+            boolean untrustedNetworkAllowed /* unused */,
+            boolean oemPaidNetworkAllowed /* unused */,
+            boolean oemPrivateNetworkAllowed /* unused */,
+            boolean restrictedNetworkAllowed /* unused */,
             @NonNull OnConnectableListener onConnectableListener) {
         findMatchedSavedNetworks(scanDetails, onConnectableListener);
         findMatchedPasspointNetworks(scanDetails, onConnectableListener);
@@ -114,9 +115,7 @@ public class SavedNetworkNominator implements WifiNetworkSelector.NetworkNominat
 
             /**
              * Ignore Passpoint and Ephemeral networks. They are configured networks,
-             * but without being persisted to the storage. They are nominated by
-             * {@link PasspointNetworkNominator} and {@link ScoredNetworkNominator}
-             * respectively.
+             * but without being persisted to the storage.
              */
             if (network.isPasspoint() || network.isEphemeral()) {
                 continue;

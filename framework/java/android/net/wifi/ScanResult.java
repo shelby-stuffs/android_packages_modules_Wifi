@@ -1095,13 +1095,29 @@ public final class ScanResult implements Parcelable {
      */
     public AnqpInformationElement[] anqpElements;
 
+    /**
+     * Returns whether a WifiSsid represents a "hidden" SSID of all zero values.
+     */
+    private boolean isHiddenSsid(@NonNull WifiSsid wifiSsid) {
+        for (byte b : wifiSsid.getBytes()) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** {@hide} */
     public ScanResult(WifiSsid wifiSsid, String BSSID, long hessid, int anqpDomainId,
             byte[] osuProviders, String caps, int level, int frequency, long tsf) {
         this.wifiSsid = wifiSsid;
-        final String utf8Ssid = (wifiSsid != null) ? wifiSsid.getUtf8Text().toString()
-                : WifiManager.UNKNOWN_SSID;
-        this.SSID = (utf8Ssid != null) ? utf8Ssid : WifiManager.UNKNOWN_SSID;
+        if (wifiSsid != null && isHiddenSsid(wifiSsid)) {
+            // Retain the legacy behavior of setting SSID to "" if the SSID is all zero values.
+            this.SSID = "";
+        } else {
+            final CharSequence utf8Ssid = (wifiSsid != null) ? wifiSsid.getUtf8Text() : null;
+            this.SSID = (utf8Ssid != null) ? utf8Ssid.toString() : WifiManager.UNKNOWN_SSID;
+        }
         this.BSSID = BSSID;
         this.hessid = hessid;
         this.anqpDomainId = anqpDomainId;
@@ -1129,9 +1145,13 @@ public final class ScanResult implements Parcelable {
     public ScanResult(WifiSsid wifiSsid, String BSSID, String caps, int level, int frequency,
             long tsf, int distCm, int distSdCm) {
         this.wifiSsid = wifiSsid;
-        final String utf8Ssid = (wifiSsid != null) ? wifiSsid.getUtf8Text().toString()
-                : WifiManager.UNKNOWN_SSID;
-        this.SSID = (utf8Ssid != null) ? utf8Ssid : WifiManager.UNKNOWN_SSID;
+        if (wifiSsid != null && isHiddenSsid(wifiSsid)) {
+            // Retain the legacy behavior of setting SSID to "" if the SSID is all zero values.
+            this.SSID = "";
+        } else {
+            final CharSequence utf8Ssid = (wifiSsid != null) ? wifiSsid.getUtf8Text() : null;
+            this.SSID = (utf8Ssid != null) ? utf8Ssid.toString() : WifiManager.UNKNOWN_SSID;
+        }
         this.BSSID = BSSID;
         this.capabilities = caps;
         this.level = level;

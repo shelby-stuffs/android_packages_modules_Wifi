@@ -1481,6 +1481,7 @@ public class HalDeviceManager {
             mEventHandler.post(() -> {
                 Log.e(TAG, "IWifiEventCallback.onFailure: " + statusString(status));
                 synchronized (mLock) {
+                    mWifi = null;
                     mIsReady = false;
                     teardownInternal();
                 }
