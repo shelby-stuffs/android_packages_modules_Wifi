@@ -219,8 +219,8 @@ public class ScanRequestProxy {
     /**
      * Enable verbose logging.
      */
-    public void enableVerboseLogging(int verbose) {
-        mVerboseLoggingEnabled = (verbose > 0);
+    public void enableVerboseLogging(boolean verboseEnabled) {
+        mVerboseLoggingEnabled = verboseEnabled;
     }
 
     /**
@@ -605,6 +605,13 @@ public class ScanRequestProxy {
                 ssid.equals(ScanResultUtil.createQuotedSsid(r.SSID))
                 && ScanResultUtil.isScanResultForSaeNetwork(r)
                 && !ScanResultUtil.isScanResultForPskNetwork(r));
+    }
+
+    /** Indicate whether there are WPA2/WPA3 transition mode networks. */
+    public boolean isWpa2Wpa3PersonalTransitionNetworkInRange(String ssid) {
+        return mLastScanResultsMap.values().stream().anyMatch(r ->
+                ssid.equals(ScanResultUtil.createQuotedSsid(r.SSID))
+                && ScanResultUtil.isScanResultForPskSaeTransitionNetwork(r));
     }
 
     /** Indicate whether there are OPEN only networks. */

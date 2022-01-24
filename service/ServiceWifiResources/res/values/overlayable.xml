@@ -127,6 +127,9 @@
           <item type="array" name="config_wifiDisconnectedScanIntervalScheduleSec" />
           <item type="array" name="config_wifiConnectedScanIntervalScheduleSec" />
           <item type="array" name="config_wifiSingleSavedNetworkConnectedScanIntervalScheduleSec" />
+          <item type="array" name="config_wifiDisconnectedScanType" />
+          <item type="array" name="config_wifiConnectedScanType" />
+          <item type="array" name="config_wifiSingleSavedNetworkConnectedScanType" />
           <item type="integer" name="config_wifiPnoScanLowRssiNetworkRetryStartDelaySec" />
           <item type="integer" name="config_wifiPnoScanLowRssiNetworkRetryMaxDelaySec" />
           <item type="integer" name="config_wifiConnectedHighRssiScanMinimumWindowSizeSec" />
@@ -205,6 +208,7 @@
           <item type="integer" name="config_wifiClientModeImplNumLogRecs" />
           <item type="bool" name="config_vendor_wifi_softap_owe_supported" />
           <item type="bool" name="config_wifiDriverSupportedNl80211RegChangedEvent" />
+          <item type="integer" name="config_wifiVerboseLoggingAlwaysOnLevel" />
           <item type="bool" name="config_disconnectOnlyOnInitialIpReachability" />
           <!-- Params from config.xml that can be overlayed -->
 
