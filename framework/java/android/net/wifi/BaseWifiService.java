@@ -431,6 +431,16 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public void registerLocalOnlyHotspotSoftApCallback(ISoftApCallback callback, Bundle extras) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void unregisterLocalOnlyHotspotSoftApCallback(ISoftApCallback callback, Bundle extras) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void startWatchLocalOnlyHotspot(ILocalOnlyHotspotCallback callback) {
         throw new UnsupportedOperationException();
     }
