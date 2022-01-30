@@ -220,6 +220,7 @@ package android.net.wifi {
   }
 
   public final class ScanResult implements android.os.Parcelable {
+    method public void setWifiSsid(@NonNull android.net.wifi.WifiSsid);
     field public static final int CIPHER_BIP_CMAC_256 = 9; // 0x9
     field public static final int CIPHER_BIP_GMAC_128 = 7; // 0x7
     field public static final int CIPHER_BIP_GMAC_256 = 8; // 0x8
@@ -274,6 +275,7 @@ package android.net.wifi {
     method @NonNull public java.util.List<android.net.MacAddress> getAllowedClientList();
     method @Deprecated public int getBand();
     method @NonNull public java.util.List<android.net.MacAddress> getBlockedClientList();
+    method public long getBridgedModeOpportunisticShutdownTimeoutMillis();
     method @Deprecated public int getChannel();
     method @NonNull public android.util.SparseIntArray getChannels();
     method public int getMacRandomizationSetting();
@@ -304,6 +306,7 @@ package android.net.wifi {
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBands(@NonNull int[]);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBlockedClientList(@NonNull java.util.List<android.net.MacAddress>);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBridgedModeOpportunisticShutdownEnabled(boolean);
+    method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBridgedModeOpportunisticShutdownTimeoutMillis(long);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setBssid(@Nullable android.net.MacAddress);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setChannel(int, int);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setChannels(@NonNull android.util.SparseIntArray);
@@ -382,10 +385,6 @@ package android.net.wifi {
     field @Deprecated public static final int METERED_OVERRIDE_METERED = 1; // 0x1
     field @Deprecated public static final int METERED_OVERRIDE_NONE = 0; // 0x0
     field @Deprecated public static final int METERED_OVERRIDE_NOT_METERED = 2; // 0x2
-    field @Deprecated public static final int RANDOMIZATION_AUTO = 3; // 0x3
-    field @Deprecated public static final int RANDOMIZATION_NONE = 0; // 0x0
-    field @Deprecated public static final int RANDOMIZATION_NON_PERSISTENT = 2; // 0x2
-    field @Deprecated public static final int RANDOMIZATION_PERSISTENT = 1; // 0x1
     field @Deprecated public static final int RECENT_FAILURE_AP_UNABLE_TO_HANDLE_NEW_STA = 17; // 0x11
     field @Deprecated public static final int RECENT_FAILURE_DISCONNECTION_AP_BUSY = 1004; // 0x3ec
     field @Deprecated public static final int RECENT_FAILURE_MBO_ASSOC_DISALLOWED_AIR_INTERFACE_OVERLOADED = 1007; // 0x3ef
@@ -540,6 +539,7 @@ package android.net.wifi {
     method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_SETUP_WIZARD}) public java.util.Map<android.net.wifi.hotspot2.OsuProvider,android.net.wifi.hotspot2.PasspointConfiguration> getMatchingPasspointConfigsForOsuProviders(@NonNull java.util.Set<android.net.wifi.hotspot2.OsuProvider>);
     method @NonNull @RequiresPermission(allOf={android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_WIFI_STATE}) public java.util.Map<android.net.wifi.WifiNetworkSuggestion,java.util.List<android.net.wifi.ScanResult>> getMatchingScanResults(@NonNull java.util.List<android.net.wifi.WifiNetworkSuggestion>, @Nullable java.util.List<android.net.wifi.ScanResult>);
     method @RequiresPermission(allOf={android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_WIFI_STATE, android.Manifest.permission.READ_WIFI_CREDENTIAL}, conditional=true) public java.util.List<android.net.wifi.WifiConfiguration> getPrivilegedConfiguredNetworks();
+    method @Nullable @RequiresPermission(allOf={android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_WIFI_STATE, android.Manifest.permission.READ_WIFI_CREDENTIAL}, conditional=true) public android.net.wifi.WifiConfiguration getPrivilegedConnectedNetwork();
     method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public android.net.wifi.SoftApConfiguration getSoftApConfiguration();
     method @NonNull @RequiresPermission(android.Manifest.permission.LOCATION_HARDWARE) public java.util.List<android.net.wifi.WifiAvailableChannel> getUsableChannels(int, int);
     method public int getVerboseLoggingLevel();
@@ -581,6 +581,7 @@ package android.net.wifi {
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setPasspointMeteredOverride(@NonNull String, int);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setScanAlwaysAvailable(boolean);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setScanThrottleEnabled(boolean);
+    method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}) public void setScreenOnScanSchedule(@Nullable int[], @Nullable int[]);
     method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public boolean setSoftApConfiguration(@NonNull android.net.wifi.SoftApConfiguration);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setVerboseLoggingEnabled(boolean);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setVerboseLoggingLevel(int);
@@ -1144,10 +1145,6 @@ package android.net.wifi.rtt {
     method @NonNull public java.util.List<android.net.wifi.rtt.ResponderConfig> getRttResponders();
   }
 
-  public static final class RangingRequest.Builder {
-    method public android.net.wifi.rtt.RangingRequest.Builder addResponder(@NonNull android.net.wifi.rtt.ResponderConfig);
-  }
-
   public final class RangingResult implements android.os.Parcelable {
     method @NonNull public byte[] getLci();
     method @NonNull public byte[] getLcr();
@@ -1156,17 +1153,13 @@ package android.net.wifi.rtt {
   public final class ResponderConfig implements android.os.Parcelable {
     ctor public ResponderConfig(@NonNull android.net.MacAddress, int, boolean, int, int, int, int, int);
     ctor public ResponderConfig(@NonNull android.net.wifi.aware.PeerHandle, int, boolean, int, int, int, int, int);
-    method public int describeContents();
-    method public static android.net.wifi.rtt.ResponderConfig fromScanResult(android.net.wifi.ScanResult);
-    method public static android.net.wifi.rtt.ResponderConfig fromWifiAwarePeerHandleWithDefaults(android.net.wifi.aware.PeerHandle);
-    method public static android.net.wifi.rtt.ResponderConfig fromWifiAwarePeerMacAddressWithDefaults(android.net.MacAddress);
-    method public void writeToParcel(android.os.Parcel, int);
+    method @NonNull public static android.net.wifi.rtt.ResponderConfig fromWifiAwarePeerHandleWithDefaults(@NonNull android.net.wifi.aware.PeerHandle);
+    method @NonNull public static android.net.wifi.rtt.ResponderConfig fromWifiAwarePeerMacAddressWithDefaults(@NonNull android.net.MacAddress);
     field public static final int CHANNEL_WIDTH_160MHZ = 3; // 0x3
     field public static final int CHANNEL_WIDTH_20MHZ = 0; // 0x0
     field public static final int CHANNEL_WIDTH_40MHZ = 1; // 0x1
     field public static final int CHANNEL_WIDTH_80MHZ = 2; // 0x2
     field public static final int CHANNEL_WIDTH_80MHZ_PLUS_MHZ = 4; // 0x4
-    field @NonNull public static final android.os.Parcelable.Creator<android.net.wifi.rtt.ResponderConfig> CREATOR;
     field public static final int PREAMBLE_HE = 3; // 0x3
     field public static final int PREAMBLE_HT = 1; // 0x1
     field public static final int PREAMBLE_LEGACY = 0; // 0x0
@@ -1180,8 +1173,8 @@ package android.net.wifi.rtt {
     field public final int centerFreq1;
     field public final int channelWidth;
     field public final int frequency;
-    field public final android.net.MacAddress macAddress;
-    field public final android.net.wifi.aware.PeerHandle peerHandle;
+    field @Nullable public final android.net.MacAddress macAddress;
+    field @Nullable public final android.net.wifi.aware.PeerHandle peerHandle;
     field public final int preamble;
     field public final int responderType;
     field public final boolean supports80211mc;

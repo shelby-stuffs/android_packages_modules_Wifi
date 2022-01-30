@@ -107,6 +107,17 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public WifiConfiguration getPrivilegedConnectedNetwork(
+            String packageName, String featureId, Bundle extras) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setScreenOnScanSchedule(int[] scanSchedule, int[] scanType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Map<String, Map<Integer, List<ScanResult>>> getAllMatchingFqdnsForScanResults(
             List<ScanResult> scanResults) {
         throw new UnsupportedOperationException();
@@ -601,6 +612,14 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public int removeNetworkSuggestions(
+            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName, int action) {
+        throw new UnsupportedOperationException();
+    }
+    /**
+     * @deprecated Replaced by {@link #removeNetworkSuggestions(List, String, int)}
+     */
+    @Deprecated
     public int removeNetworkSuggestions(
             List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName) {
         throw new UnsupportedOperationException();

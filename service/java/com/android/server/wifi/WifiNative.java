@@ -134,37 +134,38 @@ public class WifiNative {
         mSupplicantStaIfaceHal.enableVerboseLogging(verboseEnabled, halVerboseEnabled);
         mHostapdHal.enableVerboseLogging(verboseEnabled, halVerboseEnabled);
         mWifiVendorHal.enableVerboseLogging(verboseEnabled, halVerboseEnabled);
+        mIfaceMgr.enableVerboseLogging(verboseEnabled);
     }
 
     /**
      * Callbacks for SoftAp interface.
      */
-    public class SoftApListenerFromWificond implements WifiNl80211Manager.SoftApCallback {
+    public class SoftApHalCallbackFromWificond implements WifiNl80211Manager.SoftApCallback {
         // placeholder for now - provide a shell so that clients don't use a
         // WifiNl80211Manager-specific API.
         private String mIfaceName;
-        private SoftApListener mSoftApListener;
+        private SoftApHalCallback mSoftApHalCallback;
 
-        SoftApListenerFromWificond(String ifaceName,
-                SoftApListener softApListener) {
+        SoftApHalCallbackFromWificond(String ifaceName,
+                SoftApHalCallback softApHalCallback) {
             mIfaceName = ifaceName;
-            mSoftApListener = softApListener;
+            mSoftApHalCallback = softApHalCallback;
         }
 
         @Override
         public void onFailure() {
-            mSoftApListener.onFailure();
+            mSoftApHalCallback.onFailure();
         }
 
         @Override
         public void onSoftApChannelSwitched(int frequency, int bandwidth) {
-            mSoftApListener.onInfoChanged(mIfaceName, frequency, bandwidth,
+            mSoftApHalCallback.onInfoChanged(mIfaceName, frequency, bandwidth,
                     ScanResult.WIFI_STANDARD_UNKNOWN, null);
         }
 
         @Override
         public void onConnectedClientsChanged(NativeWifiClient client, boolean isConnected) {
-            mSoftApListener.onConnectedClientsChanged(mIfaceName,
+            mSoftApHalCallback.onConnectedClientsChanged(mIfaceName,
                     client.getMacAddress(), isConnected);
         }
     }
@@ -196,11 +197,16 @@ public class WifiNative {
     /**
      * Callbacks for SoftAp instance.
      */
-    public interface SoftApListener {
+    public interface SoftApHalCallback {
         /**
          * Invoked when there is a fatal failure and the SoftAp is shutdown.
          */
         void onFailure();
+
+        /**
+         * Invoked when there is a fatal happen in specific instance only.
+         */
+        default void onInstanceFailure(String instanceName) {}
 
         /**
          * Invoked when a channel switch event happens - i.e. the SoftAp is moved to a different
@@ -301,9 +307,17 @@ public class WifiNative {
         private int mNextId;
         /** Map of the id to the iface structure */
         private HashMap<Integer, Iface> mIfaces = new HashMap<>();
+        private boolean mVerboseLoggingEnabled = false;
+
+        public void enableVerboseLogging(boolean enable) {
+            mVerboseLoggingEnabled = enable;
+        }
 
         /** Allocate a new iface for the given type */
-        private Iface allocateIface(@Iface.IfaceType  int type) {
+        private Iface allocateIface(@Iface.IfaceType int type) {
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, "IfaceManager#allocateIface: type=" + type + ", pre-map=" + mIfaces);
+            }
             Iface iface = new Iface(mNextId, type);
             mIfaces.put(mNextId, iface);
             mNextId++;
@@ -312,6 +326,9 @@ public class WifiNative {
 
         /** Remove the iface using the provided id */
         private Iface removeIface(int id) {
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, "IfaceManager#removeIface: id=" + id + ", pre-map=" + mIfaces);
+            }
             return mIfaces.remove(id);
         }
 
@@ -388,6 +405,10 @@ public class WifiNative {
 
         /** Removes the existing iface that does not match the provided id. */
         public Iface removeExistingIface(int newIfaceId) {
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, "IfaceManager#removeExistingIface: newIfaceId=" + newIfaceId
+                        + ", pre-map=" + mIfaces);
+            }
             Iface removedIface = null;
             // The number of ifaces in the database could be 1 existing & 1 new at the max.
             if (mIfaces.size() > 2) {
@@ -402,6 +423,11 @@ public class WifiNative {
                 }
             }
             return removedIface;
+        }
+
+        @Override
+        public String toString() {
+            return mIfaces.toString();
         }
     }
 
@@ -830,6 +856,11 @@ public class WifiNative {
             // This is invoked from the main system_server thread. Post to our handler.
             mHandler.post(() -> {
                 synchronized (mLock) {
+                    if (mVerboseLoggingEnabled) {
+                        Log.d(TAG, "interfaceLinkStateChanged: ifaceName=" + ifaceName
+                                + ", mInterfaceId = " + mInterfaceId
+                                + ", mIfaceMgr=" + mIfaceMgr.toString());
+                    }
                     final Iface ifaceWithId = mIfaceMgr.getIface(mInterfaceId);
                     if (ifaceWithId == null) {
                         if (mVerboseLoggingEnabled) {
@@ -1091,7 +1122,9 @@ public class WifiNative {
      * @param listener StatusListener listener object.
      */
     public void registerStatusListener(@NonNull StatusListener listener) {
-        mStatusListeners.add(listener);
+        synchronized (mLock) {
+            mStatusListeners.add(listener);
+        }
     }
 
     /**
@@ -1978,28 +2011,28 @@ public class WifiNative {
      * @param ifaceName Name of the interface.
      * @param config Configuration to use for the soft ap created.
      * @param isMetered Indicates the network is metered or not.
-     * @param listener Callback for AP events.
+     * @param callback Callback for AP events.
      * @return true on success, false otherwise.
      */
     public boolean startSoftAp(
             @NonNull String ifaceName, SoftApConfiguration config, boolean isMetered,
-            SoftApListener listener) {
+            SoftApHalCallback callback) {
         if (mHostapdHal.isApInfoCallbackSupported()) {
-            if (!mHostapdHal.registerApCallback(ifaceName, listener)) {
-                Log.e(TAG, "Failed to register ap listener");
+            if (!mHostapdHal.registerApCallback(ifaceName, callback)) {
+                Log.e(TAG, "Failed to register ap hal event callback");
                 return false;
             }
         } else {
-            SoftApListenerFromWificond softApListenerFromWificond =
-                    new SoftApListenerFromWificond(ifaceName, listener);
+            SoftApHalCallbackFromWificond softApHalCallbackFromWificond =
+                    new SoftApHalCallbackFromWificond(ifaceName, callback);
             if (!mWifiCondManager.registerApCallback(ifaceName,
-                    Runnable::run, softApListenerFromWificond)) {
-                Log.e(TAG, "Failed to register ap listener from wificond");
+                    Runnable::run, softApHalCallbackFromWificond)) {
+                Log.e(TAG, "Failed to register ap hal event callback from wificond");
                 return false;
             }
         }
 
-        if (!addAccessPoint(ifaceName, config, isMetered, listener)) {
+        if (!addAccessPoint(ifaceName, config, isMetered, callback)) {
             Log.e(TAG, "Failed to add acccess point");
             mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHostapd();
             return false;
@@ -4245,7 +4278,7 @@ public class WifiNative {
          return ret1 && ret2;
     }
 
-    private boolean setupOweSap(SoftApConfiguration config, SoftApListener listener) {
+    private boolean setupOweSap(SoftApConfiguration config, SoftApHalCallback callback) {
         SoftApConfiguration.Builder openConfigBuilder = new SoftApConfiguration.Builder(config);
         SoftApConfiguration.Builder oweConfigBuilder = new SoftApConfiguration.Builder(config);
 
@@ -4262,7 +4295,7 @@ public class WifiNative {
         Log.d(TAG, "Generated OWE SSID: " + localConfig.getSsid());
 
         if (!mHostapdHal.addVendorAccessPoint(
-               mdualApInterfaces[0], localConfig, listener::onFailure)) {
+               mdualApInterfaces[0], localConfig, callback::onFailure)) {
             Log.e(TAG, "Failed to addVendorAP[0] - " + mdualApInterfaces[0]);
             return false;
         }
@@ -4273,7 +4306,7 @@ public class WifiNative {
                          .build();
 
         if (!mHostapdHal.addVendorAccessPoint(
-               mdualApInterfaces[1], localConfig, listener::onFailure)) {
+               mdualApInterfaces[1], localConfig, callback::onFailure)) {
             Log.e(TAG, "Failed to addVendorAP[1] - " + mdualApInterfaces[1]);
             return false;
         }
@@ -4282,11 +4315,11 @@ public class WifiNative {
     }
 
     private boolean addAccessPoint(@NonNull String ifaceName,
-          @NonNull SoftApConfiguration config, boolean isMetered, SoftApListener listener) {
+          @NonNull SoftApConfiguration config, boolean isMetered, SoftApHalCallback callback) {
         if (isVendorBridgeModeActive()) {
             if (config != null && config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_OWE) {
                 Log.d(TAG, "Setup for OWE mode Softap");
-                if (!setupOweSap(config, listener))
+                if (!setupOweSap(config, callback))
                     return false;
             } else {
                 // AP + AP UP
@@ -4305,7 +4338,7 @@ public class WifiNative {
                          localConfig = localConfigBuilder.setChannel(channel, band).build();
                     }
                     if (!mHostapdHal.addVendorAccessPoint(
-                          mdualApInterfaces[i], localConfig, listener::onFailure)) {
+                          mdualApInterfaces[i], localConfig, callback::onFailure)) {
                         Log.e(TAG, "Failed to addVendorAP["+ i + "] - " + mdualApInterfaces[i]);
                         return false;
                     }
@@ -4321,12 +4354,12 @@ public class WifiNative {
         } else if (mHostapdHal.useVendorHostapdHal()
                    || (config != null && config.getSecurityType()
                               == SoftApConfiguration.SECURITY_TYPE_OWE)) {
-            if (!mHostapdHal.addVendorAccessPoint(ifaceName, config, listener::onFailure)) {
+            if (!mHostapdHal.addVendorAccessPoint(ifaceName, config, callback::onFailure)) {
                 Log.e(TAG, "Failed to addVendorAP - " + ifaceName);
                 return false;
             }
         } else {
-            if (!mHostapdHal.addAccessPoint(ifaceName, config, isMetered, listener::onFailure)) {
+            if (!mHostapdHal.addAccessPoint(ifaceName, config, isMetered, callback::onFailure)) {
                 return false;
             }
         }

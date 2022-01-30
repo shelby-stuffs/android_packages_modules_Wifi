@@ -19,6 +19,7 @@ package android.net.wifi;
 import static android.Manifest.permission.ACCESS_FINE_LOCATION;
 import static android.Manifest.permission.ACCESS_WIFI_STATE;
 import static android.Manifest.permission.CHANGE_WIFI_STATE;
+import static android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN;
 import static android.Manifest.permission.NEARBY_WIFI_DEVICES;
 import static android.Manifest.permission.READ_WIFI_CREDENTIAL;
 
@@ -313,6 +314,28 @@ public class WifiManager {
             })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SuggestionUserApprovalStatus {}
+
+    /**
+     * If one of the removed suggestions is currently connected, that network will be disconnected
+     * after a short delay as opposed to immediately (which will be done by
+     * {@link #ACTION_REMOVE_SUGGESTION_DISCONNECT}). The {@link ConnectivityManager} may call the
+     * {@link NetworkCallback#onLosing(Network, int)} on such networks.
+     */
+    public static final int ACTION_REMOVE_SUGGESTION_LINGER = 1;
+
+    /**
+     * If one of the removed suggestions is currently connected, trigger an immediate disconnect
+     * after suggestions removal
+     */
+    public static final int ACTION_REMOVE_SUGGESTION_DISCONNECT = 2;
+
+    /** @hide */
+    @IntDef(prefix = {"ACTION_REMOVE_SUGGESTION_"},
+            value = {ACTION_REMOVE_SUGGESTION_LINGER,
+                    ACTION_REMOVE_SUGGESTION_DISCONNECT
+            })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ActionAfterRemovingSuggestion {}
 
     /**
      * Only available on Android S or later.
@@ -1526,6 +1549,8 @@ public class WifiManager {
      * following permissions: {@link android.Manifest.permission#ACCESS_FINE_LOCATION},
      * {@link android.Manifest.permission#CHANGE_WIFI_STATE} and
      * {@link android.Manifest.permission#READ_WIFI_CREDENTIAL}.
+     * <p> See {@link #getPrivilegedConnectedNetwork()} to get the WifiConfiguration for only the
+     * connected network that's providing internet by default.
      *
      * @hide
      **/
@@ -1546,6 +1571,47 @@ public class WifiManager {
                 return Collections.emptyList();
             }
             return parceledList.getList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the {@link WifiConfiguration} with credentials of the connected wifi network
+     * that's providing internet by default.
+     * <p>
+     * On {@link android.os.Build.VERSION_CODES#TIRAMISU} or later SDKs, the caller need to have
+     * the following permissions: {@link android.Manifest.permission#NEARBY_WIFI_DEVICES} with
+     * android:usesPermissionFlags="neverForLocation",
+     * {@link android.Manifest.permission#ACCESS_WIFI_STATE} and
+     * {@link android.Manifest.permission#READ_WIFI_CREDENTIAL}. If the app does not have
+     * android:usesPermissionFlags="neverForLocation", then it must also have
+     * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
+     * <p>
+     * On {@link Build.VERSION_CODES#S} or prior SDKs, the caller need to have the
+     * following permissions: {@link android.Manifest.permission#ACCESS_FINE_LOCATION},
+     * {@link android.Manifest.permission#CHANGE_WIFI_STATE} and
+     * {@link android.Manifest.permission#READ_WIFI_CREDENTIAL}.
+     *
+     * @return The WifiConfiguration representation of the connected wifi network providing
+     * internet, or null if wifi is not connected.
+     *
+     * @throws {@link SecurityException} if caller does not have the required permissions
+     * @hide
+     **/
+    @SystemApi
+    @RequiresPermission(allOf = {NEARBY_WIFI_DEVICES, ACCESS_WIFI_STATE, READ_WIFI_CREDENTIAL},
+            conditional = true)
+    @Nullable
+    public WifiConfiguration getPrivilegedConnectedNetwork() {
+        try {
+            Bundle extras = new Bundle();
+            if (SdkLevel.isAtLeastS()) {
+                extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                        mContext.getAttributionSource());
+            }
+            return mService.getPrivilegedConnectedNetwork(mContext.getOpPackageName(),
+                    mContext.getAttributionTag(), extras);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1593,6 +1659,45 @@ public class WifiManager {
         }
 
         return configs;
+    }
+
+
+    /**
+     * Allows a privileged app to customize the screen-on scan behavior. When a non-null schedule
+     * is set via this API, it will always get used instead of the scan schedules defined in the
+     * overlay. When a null schedule is set via this API, the wifi subsystem will go back to using
+     * the scan schedules defined in the overlay.
+     * <p>
+     * Example usage:
+     * The following call specifies that first scheduled scan should be in 20 seconds using
+     * {@link WifiScanner#SCAN_TYPE_HIGH_ACCURACY}, and all
+     * scheduled scans later should happen every 40 seconds using
+     * {@link WifiScanner#SCAN_TYPE_LOW_POWER}.
+     * setScreenOnScanSchedule(new int[] {20, 40},
+     * new int[] {WifiScanner.SCAN_TYPE_HIGH_ACCURACY, WifiScanner.SCAN_TYPE_LOW_POWER})
+     * @param scanSchedule defines the screen-on scan schedule in seconds, or null to unset the
+     *                     customized scan schedule.
+     * @param scanType defines the screen-on scan type. Each value must be one of
+     *                 {@link WifiAnnotations#ScanType}. Set to null to unset the customized scan
+     *                 type.
+     *
+     * @throws IllegalStateException if input is invalid
+     * @throws UnsupportedOperationException if the API is not supported on this SDK version.
+     * @throws SecurityException if the caller does not have permission.
+     * @hide
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            MANAGE_WIFI_AUTO_JOIN
+    })
+    @SystemApi
+    public void setScreenOnScanSchedule(@Nullable int[] scanSchedule, @Nullable int[] scanType) {
+        try {
+            mService.setScreenOnScanSchedule(scanSchedule, scanType);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -2292,23 +2397,52 @@ public class WifiManager {
     /**
      * Remove some or all of the network suggestions that were previously provided by the app.
      * If one of the suggestions being removed was used to establish connection to the current
-     * network, then the device will immediately disconnect from that network.
+     * network, then the device will immediately disconnect from that network. This method is same
+     * as {@link #removeNetworkSuggestions(List, int)} with
+     * {@link #ACTION_REMOVE_SUGGESTION_DISCONNECT}
      *
      * See {@link WifiNetworkSuggestion} for a detailed explanation of the parameters.
      * See {@link WifiNetworkSuggestion#equals(Object)} for the equivalence evaluation used.
      *
      * @param networkSuggestions List of network suggestions to be removed. Pass an empty list
      *                           to remove all the previous suggestions provided by the app.
-     * @return Status code for the operation. One of the STATUS_NETWORK_SUGGESTIONS_ values.
-     * Any matching suggestions are removed from the device and will not be considered for any
+     * @return Status code for the operation. One of the {@code STATUS_NETWORK_SUGGESTIONS_*}
+     * values. Any matching suggestions are removed from the device and will not be considered for
+     * any further connection attempts.
+     *
+     * @deprecated Use {@link #removeNetworkSuggestions(List, int)}. An {@code action} of
+     * {@link #ACTION_REMOVE_SUGGESTION_DISCONNECT} is equivalent to the current behavior.
+     */
+    @Deprecated
+    @RequiresPermission(CHANGE_WIFI_STATE)
+    public @NetworkSuggestionsStatusCode int removeNetworkSuggestions(
+            @NonNull List<WifiNetworkSuggestion> networkSuggestions) {
+        return removeNetworkSuggestions(networkSuggestions, ACTION_REMOVE_SUGGESTION_DISCONNECT);
+    }
+
+    /**
+     * Remove some or all of the network suggestions that were previously provided by the app.
+     * If one of the suggestions being removed was used to establish connection to the current
+     * network, then the specified action will be executed.
+     *
+     * See {@link WifiNetworkSuggestion} for a detailed explanation of the parameters.
+     * See {@link WifiNetworkSuggestion#equals(Object)} for the equivalence evaluation used.
+     *
+     * @param networkSuggestions List of network suggestions to be removed. Pass an empty list
+     *                           to remove all the previous suggestions provided by the app.
+     * @param action Desired action to execute after removing the suggestion. One of
+     *               {@code ACTION_REMOVE_SUGGESTION_*}
+     * @return Status code for the operation. One of the {@code STATUS_NETWORK_SUGGESTIONS_*}
+     * values. Any matching suggestions are removed from the device and will not be considered for
      * further connection attempts.
      */
     @RequiresPermission(CHANGE_WIFI_STATE)
     public @NetworkSuggestionsStatusCode int removeNetworkSuggestions(
-            @NonNull List<WifiNetworkSuggestion> networkSuggestions) {
+            @NonNull List<WifiNetworkSuggestion> networkSuggestions,
+            @ActionAfterRemovingSuggestion int action) {
         try {
-            return mService.removeNetworkSuggestions(
-                    networkSuggestions, mContext.getOpPackageName());
+            return mService.removeNetworkSuggestions(networkSuggestions,
+                    mContext.getOpPackageName(), action);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

@@ -608,6 +608,7 @@ public class WifiMetricsTest extends WifiBaseTest {
         NetworkDetail mockNetworkDetail = mock(NetworkDetail.class);
         ScanResult scanResult = new ScanResult();
         scanResult.SSID = ssid;
+        scanResult.setWifiSsid(WifiSsid.fromUtf8Text(ssid));
         scanResult.BSSID = bssid;
         when(mockScanDetail.getNetworkDetail()).thenReturn(mockNetworkDetail);
         when(mockScanDetail.getScanResult()).thenReturn(scanResult);
@@ -633,6 +634,7 @@ public class WifiMetricsTest extends WifiBaseTest {
         NetworkDetail mockNetworkDetail = mock(NetworkDetail.class);
         ScanResult scanResult = new ScanResult();
         scanResult.SSID = ssid;
+        scanResult.setWifiSsid(WifiSsid.fromUtf8Text(ssid));
         scanResult.BSSID = bssid;
         scanResult.hessid = hessid;
         scanResult.capabilities = "PSK";
@@ -2619,7 +2621,7 @@ public class WifiMetricsTest extends WifiBaseTest {
         new AssocRejectEventInfo(sSSID, sBSSID, ASSOC_STATUS, ASSOC_TIMEOUT),
         null,
         null,
-        new DisconnectEventInfo(sSSID, sBSSID, DEAUTH_REASON, LOCAL_GEN),
+        new DisconnectEventInfo(sSSID, sBSSID, DEAUTH_REASON, LOCAL_GEN, TEST_NETWORK_ID),
         mStateDisconnected,
         null,
         null,

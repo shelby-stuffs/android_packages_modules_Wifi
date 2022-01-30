@@ -36,8 +36,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.hardware.wifi.supplicant.V1_0.ISupplicantStaIfaceCallback.ReasonCode;
-import android.hardware.wifi.supplicant.V1_0.ISupplicantStaIfaceCallback.StatusCode;
 import android.net.CaptivePortalData;
 import android.net.ConnectivityManager;
 import android.net.DhcpResultsParcelable;
@@ -118,6 +116,8 @@ import com.android.net.module.util.MacAddressUtils;
 import com.android.net.module.util.NetUtils;
 import com.android.server.wifi.ActiveModeManager.ClientRole;
 import com.android.server.wifi.MboOceController.BtmFrameData;
+import com.android.server.wifi.SupplicantStaIfaceHal.StaIfaceReasonCode;
+import com.android.server.wifi.SupplicantStaIfaceHal.StaIfaceStatusCode;
 import com.android.server.wifi.WifiCarrierInfoManager.SimAuthRequestData;
 import com.android.server.wifi.WifiCarrierInfoManager.SimAuthResponseData;
 import com.android.server.wifi.WifiNative.RxFateReport;
@@ -264,6 +264,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private byte[] mCachedPacketFilter;
     @Nullable
     private WifiNative.ConnectionCapabilities mLastConnectionCapabilities;
+    private int mPowerSaveDisableRequests = 0; // mask based on @PowerSaveClientType
 
     /* if set to true then disconnect due to IP Reachability lost only
      * when obtained for the first 10 seconds of L2 connection */
@@ -1708,6 +1709,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         pw.println("mSuspendOptimizationsEnabled " + mContext.getResources().getBoolean(
                 R.bool.config_wifiSuspendOptimizationsEnabled));
         pw.println("mSuspendOptNeedsDisabled " + mSuspendOptNeedsDisabled);
+        pw.println("mPowerSaveDisableRequests " + mPowerSaveDisableRequests);
         dumpIpClient(fd, pw, args);
         pw.println("WifiScoreReport:");
         mWifiScoreReport.dump(fd, pw, args);
@@ -2713,7 +2715,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         // DISASSOC_AP_BUSY could be received in both after L3 connection is successful or right
         // after BSSID association if the AP can't accept more stations.
-        if (disconnectReason == ReasonCode.DISASSOC_AP_BUSY) {
+        if (disconnectReason == StaIfaceReasonCode.DISASSOC_AP_BUSY) {
             mWifiConfigManager.setRecentFailureAssociationStatus(
                     mWifiInfo.getNetworkId(),
                     WifiConfiguration.RECENT_FAILURE_DISCONNECTION_AP_BUSY);
@@ -2774,7 +2776,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         // power settings when we control suspend mode optimizations.
         // TODO: Remove this comment when the driver is fixed.
         setSuspendOptimizationsNative(SUSPEND_DUE_TO_DHCP, false);
-        setPowerSave(false);
+        setPowerSave(POWER_SAVE_CLIENT_DHCP, false);
 
         // Update link layer stats
         getWifiLinkLayerStats();
@@ -2815,7 +2817,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     void handlePostDhcpSetup() {
         /* Restore power save and suspend optimizations */
         setSuspendOptimizationsNative(SUSPEND_DUE_TO_DHCP, true);
-        setPowerSave(true);
+        setPowerSave(POWER_SAVE_CLIENT_DHCP, true);
 
         mWifiP2pConnection.sendMessage(
                 WifiP2pServiceImpl.BLOCK_DISCOVERY, WifiP2pServiceImpl.DISABLED);
@@ -2832,17 +2834,39 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      *           false to disable power save.
      * @return true for success, false for failure
      */
-    public boolean setPowerSave(boolean ps) {
+    public boolean setPowerSave(@PowerSaveClientType int client, boolean ps) {
         if (mInterfaceName != null) {
             if (mVerboseLoggingEnabled) {
-                Log.d(getTag(), "Setting power save for: " + mInterfaceName + " to: " + ps);
+                Log.d(getTag(), "Request to set power save for: " + mInterfaceName + " to: " + ps
+                        + " requested by: " + client + ", mPowerSaveDisableRequests = "
+                        + mPowerSaveDisableRequests);
             }
-            mWifiNative.setPowerSave(mInterfaceName, ps);
+            if (ps) {
+                mPowerSaveDisableRequests &= ~client;
+            } else {
+                mPowerSaveDisableRequests |= client;
+            }
+            boolean actualPs = mPowerSaveDisableRequests == 0;
+            if (mVerboseLoggingEnabled) {
+                Log.d(getTag(), "Setting power save to: " + actualPs
+                        + ", mPowerSaveDisableRequests = " + mPowerSaveDisableRequests);
+            }
+
+            mWifiNative.setPowerSave(mInterfaceName, actualPs);
         } else {
             Log.e(getTag(), "Failed to setPowerSave, interfaceName is null");
             return false;
         }
         return true;
+    }
+
+    /**
+     * Enable power save.
+     *
+     * @return true for success, false for failure.
+     */
+    public boolean enablePowerSave() {
+        return setPowerSave(~0, true);
     }
 
     /**
@@ -2993,8 +3017,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (config == null) return;
 
         switch(reason) {
-            case ReasonCode.UNSPECIFIED:
-            case ReasonCode.DEAUTH_LEAVING:
+            case StaIfaceReasonCode.UNSPECIFIED:
+            case StaIfaceReasonCode.DEAUTH_LEAVING:
                 logi("Keep PMK cache for network disconnection reason " + reason);
                 break;
             default:
@@ -3331,7 +3355,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 && mContext.getResources().getBoolean(
                         R.bool.config_wifiSuspendOptimizationsEnabled));
 
-        setPowerSave(true);
+        enablePowerSave();
 
         // Disable wpa_supplicant from auto reconnecting.
         mWifiNative.enableStaAutoReconnect(mInterfaceName, false);
@@ -4531,7 +4555,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     if (mVerboseLoggingEnabled) {
                         log("ConnectingOrConnectedState: Network disconnection " + eventInfo);
                     }
-                    if (eventInfo.reasonCode == ReasonCode.FOURWAY_HANDSHAKE_TIMEOUT) {
+                    if (eventInfo.reasonCode
+                            == StaIfaceReasonCode.FOURWAY_HANDSHAKE_TIMEOUT) {
                         String bssid = !isValidBssid(eventInfo.bssid)
                                 ? mTargetBssid : eventInfo.bssid;
                         mWifiLastResortWatchdog.noteConnectionFailureAndTriggerIfNeeded(
@@ -4543,8 +4568,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             getConnectingWifiConfigurationInternal(), eventInfo.reasonCode);
                     String targetSsid = getConnectingSsidInternal();
                     // If network is removed while connecting, targetSsid can be null.
-                    boolean newConnectionInProgress =
-                            targetSsid != null && !eventInfo.ssid.equals(targetSsid);
+                    boolean newConnectionInProgress = eventInfo.networkId != mTargetNetworkId;
                     if (!newConnectionInProgress) {
                         int level2FailureReason = eventInfo.locallyGenerated
                                 ? WifiMetricsProto.ConnectionEvent.FAILURE_REASON_UNKNOWN :
@@ -4688,9 +4712,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     setAssociationRejectionStatusInConfig(mTargetNetworkId, assocRejectEventInfo);
                     int level2FailureReason =
                             WifiMetricsProto.ConnectionEvent.FAILURE_REASON_UNKNOWN;
-                    if (statusCode == StatusCode.AP_UNABLE_TO_HANDLE_NEW_STA
-                            || statusCode == StatusCode.ASSOC_REJECTED_TEMPORARILY
-                            || statusCode == StatusCode.DENIED_INSUFFICIENT_BANDWIDTH) {
+                    if (statusCode == StaIfaceStatusCode.AP_UNABLE_TO_HANDLE_NEW_STA
+                            || statusCode == StaIfaceStatusCode.ASSOC_REJECTED_TEMPORARILY
+                            || statusCode == StaIfaceStatusCode.DENIED_INSUFFICIENT_BANDWIDTH) {
                         level2FailureReason = WifiMetricsProto.ConnectionEvent
                                 .ASSOCIATION_REJECTION_AP_UNABLE_TO_HANDLE_NEW_STA;
                     }
@@ -4853,7 +4877,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     }
 
                     if (!identitySent) {
-                        // Supplicant lacks credentials to connect to that network, hence black list
+                        // Supplicant lacks credentials to connect to that network, hence block list
                         String ssid = (String) message.obj;
                         if (mTargetWifiConfiguration != null && ssid != null
                                 && mTargetWifiConfiguration.SSID != null
@@ -6073,18 +6097,18 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * @return true if this is a suspicious disconnect
      */
     static boolean unexpectedDisconnectedReason(int reason) {
-        return reason == ReasonCode.PREV_AUTH_NOT_VALID
-                || reason == ReasonCode.CLASS2_FRAME_FROM_NONAUTH_STA
-                || reason == ReasonCode.CLASS3_FRAME_FROM_NONASSOC_STA
-                || reason == ReasonCode.DISASSOC_STA_HAS_LEFT
-                || reason == ReasonCode.STA_REQ_ASSOC_WITHOUT_AUTH
-                || reason == ReasonCode.MICHAEL_MIC_FAILURE
-                || reason == ReasonCode.FOURWAY_HANDSHAKE_TIMEOUT
-                || reason == ReasonCode.GROUP_KEY_UPDATE_TIMEOUT
-                || reason == ReasonCode.GROUP_CIPHER_NOT_VALID
-                || reason == ReasonCode.PAIRWISE_CIPHER_NOT_VALID
-                || reason == ReasonCode.IEEE_802_1X_AUTH_FAILED
-                || reason == ReasonCode.DISASSOC_LOW_ACK;
+        return reason == StaIfaceReasonCode.PREV_AUTH_NOT_VALID
+                || reason == StaIfaceReasonCode.CLASS2_FRAME_FROM_NONAUTH_STA
+                || reason == StaIfaceReasonCode.CLASS3_FRAME_FROM_NONASSOC_STA
+                || reason == StaIfaceReasonCode.DISASSOC_STA_HAS_LEFT
+                || reason == StaIfaceReasonCode.STA_REQ_ASSOC_WITHOUT_AUTH
+                || reason == StaIfaceReasonCode.MICHAEL_MIC_FAILURE
+                || reason == StaIfaceReasonCode.FOURWAY_HANDSHAKE_TIMEOUT
+                || reason == StaIfaceReasonCode.GROUP_KEY_UPDATE_TIMEOUT
+                || reason == StaIfaceReasonCode.GROUP_CIPHER_NOT_VALID
+                || reason == StaIfaceReasonCode.PAIRWISE_CIPHER_NOT_VALID
+                || reason == StaIfaceReasonCode.IEEE_802_1X_AUTH_FAILED
+                || reason == StaIfaceReasonCode.DISASSOC_LOW_ACK;
     }
 
     private static String getLinkPropertiesSummary(LinkProperties lp) {
@@ -6453,10 +6477,14 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     new ProvisioningConfiguration.Builder()
                     .withPreDhcpAction()
                     .withPreconnection()
-                    .withApfCapabilities(
-                    mWifiNative.getApfCapabilities(mInterfaceName))
                     .withDisplayName(config.SSID)
                     .withLayer2Information(layer2Info);
+            if (mContext.getResources().getBoolean(R.bool.config_wifiEnableApfOnNonPrimarySta)
+                    || isPrimary()) {
+                // unclear if the native layer will return the correct non-capabilities if APF is
+                // not supported on secondary interfaces.
+                prov.withApfCapabilities(mWifiNative.getApfCapabilities(mInterfaceName));
+            }
             if (isUsingMacRandomization) {
                 // Use EUI64 address generation for link-local IPv6 addresses.
                 prov.withRandomMacAddress();
@@ -6512,7 +6540,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             if (!isUsingStaticIp) {
                 prov = new ProvisioningConfiguration.Builder()
                     .withPreDhcpAction()
-                    .withApfCapabilities(mWifiNative.getApfCapabilities(mInterfaceName))
                     .withNetwork(getCurrentNetwork())
                     .withDisplayName(config.SSID)
                     .withScanResultInfo(scanResultInfo)
@@ -6521,10 +6548,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 StaticIpConfiguration staticIpConfig = config.getStaticIpConfiguration();
                 prov = new ProvisioningConfiguration.Builder()
                         .withStaticConfiguration(staticIpConfig)
-                        .withApfCapabilities(mWifiNative.getApfCapabilities(mInterfaceName))
                         .withNetwork(getCurrentNetwork())
                         .withDisplayName(config.SSID)
                         .withLayer2Information(layer2Info);
+            }
+            if (mContext.getResources().getBoolean(R.bool.config_wifiEnableApfOnNonPrimarySta)
+                    || isPrimary()) {
+                // unclear if the native layer will return the correct non-capabilities if APF is
+                // not supported on secondary interfaces.
+                prov.withApfCapabilities(mWifiNative.getApfCapabilities(mInterfaceName));
             }
             if (isUsingMacRandomization) {
                 // Use EUI64 address generation for link-local IPv6 addresses.
@@ -6874,13 +6906,13 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         @WifiConfiguration.RecentFailureReason int reason;
 
         switch (statusCode) {
-            case StatusCode.AP_UNABLE_TO_HANDLE_NEW_STA:
+            case StaIfaceStatusCode.AP_UNABLE_TO_HANDLE_NEW_STA:
                 reason = WifiConfiguration.RECENT_FAILURE_AP_UNABLE_TO_HANDLE_NEW_STA;
                 break;
-            case StatusCode.ASSOC_REJECTED_TEMPORARILY:
+            case StaIfaceStatusCode.ASSOC_REJECTED_TEMPORARILY:
                 reason = WifiConfiguration.RECENT_FAILURE_REFUSED_TEMPORARILY;
                 break;
-            case StatusCode.DENIED_POOR_CHANNEL_CONDITIONS:
+            case StaIfaceStatusCode.DENIED_POOR_CHANNEL_CONDITIONS:
                 reason = WifiConfiguration.RECENT_FAILURE_POOR_CHANNEL_CONDITIONS;
                 break;
             default:

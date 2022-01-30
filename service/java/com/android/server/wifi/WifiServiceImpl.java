@@ -54,6 +54,7 @@ import android.content.pm.ResolveInfo;
 import android.net.DhcpInfo;
 import android.net.DhcpResultsParcelable;
 import android.net.InetAddresses;
+import android.net.MacAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkStack;
@@ -1019,7 +1020,8 @@ public class WifiServiceImpl extends BaseWifiService {
     private boolean isTargetSdkLessThanQOrPrivileged(String packageName, int pid, int uid) {
         return mWifiPermissionsUtil.isTargetSdkLessThan(packageName, Build.VERSION_CODES.Q, uid)
                 || isPrivileged(pid, uid)
-                || isDeviceOrProfileOwner(uid, packageName)
+                || ((SdkLevel.isAtLeastT()) ? mWifiPermissionsUtil.isAdmin(uid, packageName)
+                        : isDeviceOrProfileOwner(uid, packageName))
                 || mWifiPermissionsUtil.isSystem(packageName, uid)
                 // TODO(b/140540984): Remove this bypass.
                 || mWifiPermissionsUtil.checkSystemAlertWindowPermission(uid, packageName);
@@ -1367,9 +1369,7 @@ public class WifiServiceImpl extends BaseWifiService {
         enforceNetworkStackPermission();
 
         // If user restriction is set, cannot start softap
-        if (SdkLevel.isAtLeastT() && mUserManager.hasUserRestrictionForUser(
-                UserManager.DISALLOW_WIFI_TETHERING,
-                UserHandle.getUserHandleForUid(Binder.getCallingUid()))) {
+        if (mWifiTetheringDisallowed) {
             mLog.err("startTetheredHotspot with user restriction: not permitted").flush();
             return false;
         }
@@ -2404,7 +2404,8 @@ public class WifiServiceImpl extends BaseWifiService {
 
         // now create the new LOHS request info object
         LocalOnlyHotspotRequestInfo request = new LocalOnlyHotspotRequestInfo(
-                requestorWs, callback, new LocalOnlyRequestorCallback(), customConfig);
+                mWifiHandlerThread.getLooper(), requestorWs, callback,
+                new LocalOnlyRequestorCallback(), customConfig);
 
         return mLohsSoftApTracker.start(pid, request);
     }
@@ -2947,6 +2948,92 @@ public class WifiServiceImpl extends BaseWifiService {
                 Collections.emptyList());
         return new ParceledListSlice<>(
                 WifiConfigurationUtil.convertMultiTypeConfigsToLegacyConfigs(configs));
+    }
+
+    /**
+     * See {@link WifiManager#getPrivilegedConnectedNetwork()}
+     */
+    public WifiConfiguration getPrivilegedConnectedNetwork(String packageName, String featureId,
+            Bundle extras) {
+        enforceReadCredentialPermission();
+        enforceAccessPermission();
+        int callingUid = Binder.getCallingUid();
+        if (isPlatformOrTargetSdkLessThanT(packageName, callingUid)) {
+            mWifiPermissionsUtil.enforceCanAccessScanResults(packageName, featureId, callingUid,
+                    null);
+        } else {
+            mWifiPermissionsUtil.enforceNearbyDevicesPermission(
+                    extras.getParcelable(WifiManager.EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE),
+                    true, TAG + " getPrivilegedConnectedNetwork");
+        }
+        if (isVerboseLoggingEnabled()) {
+            mLog.info("getPrivilegedConnectedNetwork uid=%").c(callingUid).flush();
+        }
+
+        WifiInfo wifiInfo = mWifiThreadRunner.call(
+                () -> mActiveModeWarden.getPrimaryClientModeManager().syncRequestConnectionInfo(),
+                new WifiInfo());
+        int networkId = wifiInfo.getNetworkId();
+        if (networkId < 0) {
+            if (isVerboseLoggingEnabled()) {
+                mLog.info("getPrivilegedConnectedNetwork primary wifi not connected")
+                        .flush();
+            }
+            return null;
+        }
+        WifiConfiguration config = mWifiThreadRunner.call(
+                () -> mWifiConfigManager.getConfiguredNetworkWithPassword(networkId), null);
+        if (config == null) {
+            if (isVerboseLoggingEnabled()) {
+                mLog.info("getPrivilegedConnectedNetwork failed to get config").flush();
+            }
+            return null;
+        }
+        // mask out the randomized MAC address
+        config.setRandomizedMacAddress(MacAddress.fromString(WifiInfo.DEFAULT_MAC_ADDRESS));
+        return config;
+    }
+
+    /**
+     * See {@link WifiManager#setScreenOnScanSchedule(int[], int[])}
+     */
+    @Override
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    public void setScreenOnScanSchedule(int[] scanSchedule, int[] scanType) {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        if ((scanSchedule == null && scanType != null)
+                || (scanSchedule != null && scanType == null)) {
+            throw new IllegalArgumentException("scanSchedule and scanType should be either both"
+                    + " non-null or both null");
+        }
+        if (scanSchedule != null && scanSchedule.length < 1) {
+            throw new IllegalArgumentException("scanSchedule should have length > 0, or be null");
+        }
+        if (scanType != null) {
+            if (scanType.length < 1) {
+                throw new IllegalArgumentException("scanType should have length > 0, or be null");
+            }
+            for (int type : scanType) {
+                if (type < 0 || type > WifiScanner.SCAN_TYPE_MAX) {
+                    throw new IllegalArgumentException("scanType=" + type
+                            + " is not a valid value");
+                }
+            }
+        }
+        int uid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkManageWifiAutoJoinPermission(uid)
+                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) {
+            throw new SecurityException("Uid=" + uid + ", is not allowed to set scan schedule");
+        }
+        mLog.info("scanSchedule=% scanType=% uid=%").c(Arrays.toString(scanSchedule))
+                .c(Arrays.toString(scanType)).c(uid).flush();
+        mWifiThreadRunner.post(() -> mWifiConnectivityManager.setExternalScreenOnScanSchedule(
+                scanSchedule, scanType));
+        mLastCallerInfoManager.put(LastCallerInfoManager.SET_SCAN_SCHEDULE, Process.myTid(),
+                uid, Binder.getCallingPid(), "<unknown>",
+                scanSchedule != null);
     }
 
     /**
@@ -4994,18 +5081,23 @@ public class WifiServiceImpl extends BaseWifiService {
      */
     @Override
     public int removeNetworkSuggestions(
-            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName) {
+            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName,
+            @WifiManager.ActionAfterRemovingSuggestion int action) {
         if (enforceChangePermission(callingPackageName) != MODE_ALLOWED) {
             return WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_APP_DISALLOWED;
         }
         if (isVerboseLoggingEnabled()) {
             mLog.info("removeNetworkSuggestions uid=%").c(Binder.getCallingUid()).flush();
         }
+        if (action != WifiManager.ACTION_REMOVE_SUGGESTION_DISCONNECT
+                && action != WifiManager.ACTION_REMOVE_SUGGESTION_LINGER) {
+            return WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_REMOVE_INVALID;
+        }
         int callingUid = Binder.getCallingUid();
 
         int success = mWifiThreadRunner.call(() -> mWifiNetworkSuggestionsManager.remove(
-                networkSuggestions, callingUid, callingPackageName),
-                WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL);
+                networkSuggestions, callingUid, callingPackageName,
+                action), WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_INTERNAL);
         if (success != WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
             Log.e(TAG, "Failed to remove network suggestions");
         }

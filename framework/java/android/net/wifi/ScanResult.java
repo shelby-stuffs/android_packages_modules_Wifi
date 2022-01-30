@@ -48,14 +48,40 @@ import java.util.Objects;
 public final class ScanResult implements Parcelable {
     /**
      * The network name.
+     *
+     * @deprecated Use {@link #getWifiSsid()} instead.
      */
+    @Deprecated
     public String SSID;
 
     /**
      * Ascii encoded SSID. This will replace SSID when we deprecate it. @hide
+     *
+     * @deprecated Use {@link #getWifiSsid()} instead.
      */
-    @UnsupportedAppUsage
+    @Deprecated
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.S,
+            publicAlternatives = "{@link #getWifiSsid()}")
     public WifiSsid wifiSsid;
+
+    /**
+     * Set the SSID of the access point.
+     * @hide
+     */
+    @SystemApi
+    public void setWifiSsid(@NonNull WifiSsid ssid) {
+        wifiSsid = ssid;
+        CharSequence utf8Text = wifiSsid.getUtf8Text();
+        SSID = utf8Text != null ? utf8Text.toString() : WifiManager.UNKNOWN_SSID;
+    }
+
+    /**
+     * The SSID of the access point.
+     */
+    @Nullable
+    public WifiSsid getWifiSsid() {
+        return wifiSsid;
+    }
 
     /**
      * The address of the access point.
@@ -333,6 +359,23 @@ public final class ScanResult implements Parcelable {
     * AP Channel bandwidth is 160 MHZ, but 80MHZ + 80MHZ
     */
     public static final int CHANNEL_WIDTH_80MHZ_PLUS_MHZ = 4;
+
+    /**
+     * Preamble type: Legacy.
+     */
+    public static final int PREAMBLE_LEGACY = 0;
+    /**
+     * Preamble type: HT.
+     */
+    public static final int PREAMBLE_HT = 1;
+    /**
+     * Preamble type: VHT.
+     */
+    public static final int PREAMBLE_VHT = 2;
+    /**
+     * Preamble type: HE.
+     */
+    public static final int PREAMBLE_HE = 3;
 
     /**
      * Wi-Fi unknown standard

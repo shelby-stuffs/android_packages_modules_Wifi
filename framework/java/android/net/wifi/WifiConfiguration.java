@@ -32,6 +32,7 @@ import android.net.StaticIpConfiguration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Parcel;
+import android.os.ParcelUuid;
 import android.os.Parcelable;
 import android.os.SystemClock;
 import android.os.UserHandle;
@@ -1359,6 +1360,9 @@ public class WifiConfiguration implements Parcelable {
     @SystemApi
     public int subscriptionId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
 
+    @Nullable
+    private ParcelUuid mSubscriptionGroup = null;
+
     /**
      * Auto-join is allowed by user for this network.
      * Default true.
@@ -1690,30 +1694,23 @@ public class WifiConfiguration implements Parcelable {
 
     /**
      * Use factory MAC when connecting to this network
-     * @hide
      */
-    @SystemApi
     public static final int RANDOMIZATION_NONE = 0;
+
     /**
      * Generate a randomized MAC once and reuse it for all connections to this network
-     * @hide
      */
-    @SystemApi
     public static final int RANDOMIZATION_PERSISTENT = 1;
 
     /**
      * Use a randomly generated MAC address for connections to this network.
      * This option does not persist the randomized MAC address.
-     * @hide
      */
-    @SystemApi
     public static final int RANDOMIZATION_NON_PERSISTENT = 2;
 
     /**
      * Let the wifi framework automatically decide the MAC randomization strategy.
-     * @hide
      */
-    @SystemApi
     public static final int RANDOMIZATION_AUTO = 3;
 
     /**
@@ -1726,6 +1723,20 @@ public class WifiConfiguration implements Parcelable {
     @SystemApi
     @MacRandomizationSetting
     public int macRandomizationSetting = RANDOMIZATION_AUTO;
+
+    /**
+     * Set the MAC randomization setting for this network.
+     */
+    public void setMacRandomizationSetting(@MacRandomizationSetting int macRandomizationSetting) {
+        this.macRandomizationSetting = macRandomizationSetting;
+    }
+
+    /**
+     * Get the MAC randomization setting for this network.
+     */
+    public @MacRandomizationSetting int getMacRandomizationSetting() {
+        return this.macRandomizationSetting;
+    }
 
     /**
      * Randomized MAC address to use with this particular network
@@ -2999,6 +3010,7 @@ public class WifiConfiguration implements Parcelable {
                 .append(" PMF: ").append(this.requirePmf)
                 .append(" CarrierId: ").append(this.carrierId)
                 .append(" SubscriptionId: ").append(this.subscriptionId)
+                .append(" SubscriptionGroup: ").append(this.mSubscriptionGroup)
                 .append('\n');
 
 
@@ -3514,8 +3526,12 @@ public class WifiConfiguration implements Parcelable {
         } else {
             proxySettingCopy = IpConfiguration.ProxySettings.STATIC;
             // Construct a new HTTP Proxy
+            String[] exclusionList = httpProxy.getExclusionList();
+            if (exclusionList == null) {
+                exclusionList = new String[0];
+            }
             httpProxyCopy = ProxyInfo.buildDirectProxy(httpProxy.getHost(), httpProxy.getPort(),
-                    Arrays.asList(httpProxy.getExclusionList()));
+                    Arrays.asList(exclusionList));
         }
         if (!httpProxyCopy.isValid()) {
             throw new IllegalArgumentException("Invalid ProxyInfo: " + httpProxyCopy.toString());
@@ -3640,6 +3656,7 @@ public class WifiConfiguration implements Parcelable {
             carrierId = source.carrierId;
             subscriptionId = source.subscriptionId;
             mPasspointUniqueId = source.mPasspointUniqueId;
+            mSubscriptionGroup = source.mSubscriptionGroup;
         }
     }
 
@@ -3725,6 +3742,7 @@ public class WifiConfiguration implements Parcelable {
         dest.writeString(mPasspointUniqueId);
         dest.writeInt(subscriptionId);
         dest.writeBoolean(restricted);
+        dest.writeParcelable(mSubscriptionGroup, flags);
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -3812,6 +3830,7 @@ public class WifiConfiguration implements Parcelable {
                 config.mPasspointUniqueId = in.readString();
                 config.subscriptionId = in.readInt();
                 config.restricted = in.readBoolean();
+                config.mSubscriptionGroup = in.readParcelable(null);
                 return config;
             }
 
@@ -4001,5 +4020,21 @@ public class WifiConfiguration implements Parcelable {
             keys.add(getNetworkKeyFromSecurityType(securityParam.getSecurityType()));
         }
         return keys;
+    }
+
+    /**
+     * Set the subscription group uuid associated with current configuration.
+     * @hide
+     */
+    public void setSubscriptionGroup(@Nullable ParcelUuid subscriptionGroup) {
+        this.mSubscriptionGroup = subscriptionGroup;
+    }
+
+    /**
+     * Get the subscription group uuid associated with current configuration.
+     * @hide
+     */
+    public @Nullable ParcelUuid getSubscriptionGroup() {
+        return this.mSubscriptionGroup;
     }
 }

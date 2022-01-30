@@ -65,9 +65,13 @@ interface IWifiManager
 
     oneway void getWifiActivityEnergyInfoAsync(in IOnWifiActivityEnergyInfoListener listener);
 
+    void setScreenOnScanSchedule(in int[] scanSchedule, in int[] scanType);
+
     ParceledListSlice getConfiguredNetworks(String packageName, String featureId, boolean callerNetworksOnly);
 
     ParceledListSlice getPrivilegedConfiguredNetworks(String packageName, String featureId, in Bundle extras);
+
+    WifiConfiguration getPrivilegedConnectedNetwork(String packageName, String featureId, in Bundle extras);
 
     Map getAllMatchingFqdnsForScanResults(in List<ScanResult> scanResult);
 
@@ -267,7 +271,7 @@ interface IWifiManager
     int addNetworkSuggestions(in List<WifiNetworkSuggestion> networkSuggestions, in String packageName,
         in String featureId);
 
-    int removeNetworkSuggestions(in List<WifiNetworkSuggestion> networkSuggestions, in String packageName);
+    int removeNetworkSuggestions(in List<WifiNetworkSuggestion> networkSuggestions, in String packageName, int action);
 
     List<WifiNetworkSuggestion> getNetworkSuggestions(in String packageName);
 

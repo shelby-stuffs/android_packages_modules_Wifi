@@ -22,6 +22,7 @@ import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_VERBOSE_LOGGI
 
 import android.annotation.Nullable;
 import android.app.AlertDialog;
+import android.app.BroadcastOptions;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -90,6 +91,8 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.TextView;
+
+import androidx.annotation.RequiresApi;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.AsyncChannel;
@@ -195,6 +198,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     // This will only be null if SdkLevel is not at least S
     @Nullable private CoexManager mCoexManager;
     private WifiGlobals mWifiGlobals;
+    private UserManager mUserManager;
 
     private static final Boolean JOIN_GROUP = true;
     private static final Boolean FORM_GROUP = false;
@@ -318,6 +322,9 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
 
     // remember if we were in a scan when it had to be stopped
     private boolean mDiscoveryPostponed = false;
+
+    // Track whether DISALLOW_WIFI_DIRECT user restriction has been set
+    private boolean mIsP2pDisallowedByAdmin = false;
 
     private NetworkInfo.DetailedState mDetailedState;
 
@@ -571,6 +578,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
         mCoexManager = mWifiInjector.getCoexManager();
         mWifiGlobals = mWifiInjector.getWifiGlobals();
         mBuildProperties = mWifiInjector.getBuildProperties();
+        mUserManager = mWifiInjector.getUserManager();
 
         mDetailedState = NetworkInfo.DetailedState.IDLE;
 
@@ -989,7 +997,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                          * - service discovery
                          * - group joining scan in native service
                          */
-                        if (!mWifiPermissionsUtil.isLocationModeEnabled()) {
+                        if (!mWifiPermissionsUtil.isLocationModeEnabled()
+                                && !SdkLevel.isAtLeastT()) {
                             sendMessage(WifiP2pManager.STOP_DISCOVERY);
                         }
                     }
@@ -1016,6 +1025,37 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         }
                     });
                 }
+                if (SdkLevel.isAtLeastT()) {
+                    mContext.registerReceiver(
+                            new BroadcastReceiver() {
+                                @Override
+                                public void onReceive(Context context, Intent intent) {
+                                    Log.d(TAG, "user restrictions changed");
+                                    onUserRestrictionsChanged();
+                                }
+                            },
+                            new IntentFilter(UserManager.ACTION_USER_RESTRICTIONS_CHANGED));
+                    mIsP2pDisallowedByAdmin = mUserManager.getUserRestrictions()
+                            .getBoolean(UserManager.DISALLOW_WIFI_DIRECT);
+                }
+            }
+        }
+
+        /**
+         * Find which user restrictions have changed and take corresponding actions
+         */
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        private void onUserRestrictionsChanged() {
+            final Bundle restrictions = mUserManager.getUserRestrictions();
+            final boolean newIsP2pDisallowedByAdmin =
+                    restrictions.getBoolean(UserManager.DISALLOW_WIFI_DIRECT);
+
+            if (newIsP2pDisallowedByAdmin != mIsP2pDisallowedByAdmin) {
+                if (newIsP2pDisallowedByAdmin) {
+                    Log.i(TAG, "Disable P2P: DISALLOW_WIFI_DIRECT set");
+                    sendMessage(DISABLE_P2P);
+                }
+                mIsP2pDisallowedByAdmin = newIsP2pDisallowedByAdmin;
             }
         }
 
@@ -1202,7 +1242,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
         // data should be cleared because the caller might not clear them, ex. WFD app
         // enables WFD, but does not disable it after leaving the app.
         private void clearP2pInternalDataIfNecessary() {
-            if (mIsWifiEnabled && !mDeathDataByBinder.isEmpty()) return;
+            if (isWifiP2pAvailable() && !mDeathDataByBinder.isEmpty()) return;
 
             mThisDevice.wfdInfo = null;
         }
@@ -1400,7 +1440,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                 WifiP2pManager.BUSY);
                         break;
                     case WifiP2pManager.STOP_DISCOVERY:
-                        if (mIsWifiEnabled) {
+                        if (isWifiP2pAvailable()) {
                             replyToMessage(message, WifiP2pManager.STOP_DISCOVERY_SUCCEEDED);
                         } else {
                             replyToMessage(message, WifiP2pManager.STOP_DISCOVERY_FAILED,
@@ -1428,7 +1468,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                 WifiP2pManager.BUSY);
                         break;
                     case WifiP2pManager.STOP_LISTEN:
-                        if (mIsWifiEnabled) {
+                        if (isWifiP2pAvailable()) {
                             replyToMessage(message, WifiP2pManager.STOP_LISTEN_SUCCEEDED);
                         }
                         break;
@@ -1460,7 +1500,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         break;
                     case WifiP2pManager.SET_DEVICE_NAME:
                     {
-                        if (!mIsWifiEnabled) {
+                        if (!isWifiP2pAvailable()) {
                             replyToMessage(message, WifiP2pManager.SET_DEVICE_NAME_FAILED,
                                     WifiP2pManager.BUSY);
                             break;
@@ -1555,7 +1595,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         break;
                     case WifiP2pManager.REQUEST_P2P_STATE:
                         replyToMessage(message, WifiP2pManager.RESPONSE_P2P_STATE,
-                                mIsWifiEnabled
+                                isWifiP2pAvailable()
                                 ? WifiP2pManager.WIFI_P2P_STATE_ENABLED
                                 : WifiP2pManager.WIFI_P2P_STATE_DISABLED);
                         break;
@@ -1877,8 +1917,9 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             }
 
             private boolean setupInterface() {
-                if (!mIsWifiEnabled) {
-                    Log.e(TAG, "Ignore P2P enable since wifi is " + mIsWifiEnabled);
+                if (!isWifiP2pAvailable()) {
+                    Log.e(TAG, "Ignore P2P enable since wifi is " + mIsWifiEnabled
+                            + ", P2P disallowed by admin=" + mIsP2pDisallowedByAdmin);
                     return false;
                 }
                 WorkSource requestorWs = createMergedRequestorWs();
@@ -1942,10 +1983,11 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         // a) Wifi is enabled.
                         // b) There is at least 1 client app which invoked initialize().
                         if (isVerboseLoggingEnabled()) {
-                            Log.d(TAG, "Wifi enabled=" + mIsWifiEnabled + ", Number of clients="
-                                    + mDeathDataByBinder.size());
+                            Log.d(TAG, "Wifi enabled=" + mIsWifiEnabled
+                                    + ", P2P disallowed by admin=" + mIsP2pDisallowedByAdmin
+                                    + ", Number of clients=" + mDeathDataByBinder.size());
                         }
-                        if (!mIsWifiEnabled) return NOT_HANDLED;
+                        if (!isWifiP2pAvailable()) return NOT_HANDLED;
                         if (mDeathDataByBinder.isEmpty()) return NOT_HANDLED;
                         if (!setupInterface()) return NOT_HANDLED;
                         deferMessage(message);
@@ -3720,9 +3762,14 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             pw.println();
         }
 
+        private boolean isWifiP2pAvailable() {
+            return mIsWifiEnabled && !mIsP2pDisallowedByAdmin;
+        }
+
         private void checkAndSendP2pStateChangedBroadcast() {
-            Log.d(TAG, "Wifi enabled=" + mIsWifiEnabled);
-            sendP2pStateChangedBroadcast(mIsWifiEnabled);
+            Log.d(TAG, "Wifi enabled=" + mIsWifiEnabled + ", P2P disallowed by admin="
+                    + mIsP2pDisallowedByAdmin);
+            sendP2pStateChangedBroadcast(isWifiP2pAvailable());
         }
 
         private void sendP2pStateChangedBroadcast(boolean enabled) {
@@ -3760,6 +3807,20 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             }
             context.sendBroadcastWithMultiplePermissions(
                     intent, permissions);
+            if (SdkLevel.isAtLeastT()) {
+                // on Android T or later, also send broadcasts to apps that have NEARBY_WIFI_DEVICES
+                String[] requiredPermissions = new String[] {
+                        android.Manifest.permission.NEARBY_WIFI_DEVICES,
+                        android.Manifest.permission.ACCESS_WIFI_STATE
+                };
+                String[] excludedPermissions = new String[] {
+                        android.Manifest.permission.ACCESS_FINE_LOCATION
+                };
+                BroadcastOptions broadcastOptions = mWifiInjector.makeBroadcastOptions();
+                broadcastOptions.setRequireAllOfPermissions(requiredPermissions);
+                broadcastOptions.setRequireNoneOfPermissions(excludedPermissions);
+                context.sendBroadcast(intent, null, broadcastOptions.toBundle());
+            }
         }
 
         private void sendThisDeviceChangedBroadcast() {
@@ -5012,13 +5073,12 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
          */
         private boolean factoryReset(int uid) {
             String pkgName = mContext.getPackageManager().getNameForUid(uid);
-            UserManager userManager = mWifiInjector.getUserManager();
 
             if (!mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) return false;
 
-            if (userManager.hasUserRestrictionForUser(
+            if (mUserManager.hasUserRestrictionForUser(
                     UserManager.DISALLOW_NETWORK_RESET, UserHandle.getUserHandleForUid(uid))
-                    || userManager.hasUserRestrictionForUser(
+                    || mUserManager.hasUserRestrictionForUser(
                     UserManager.DISALLOW_CONFIG_WIFI, UserHandle.getUserHandleForUid(uid))) {
                 return false;
             }

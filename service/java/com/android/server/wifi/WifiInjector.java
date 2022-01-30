@@ -21,6 +21,7 @@ import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.AppOpsManager;
+import android.app.BroadcastOptions;
 import android.content.Context;
 import android.net.IpMemoryStore;
 import android.net.LinkProperties;
@@ -506,7 +507,8 @@ public class WifiInjector {
         mLockManager = new WifiLockManager(mContext, mBatteryStats, mActiveModeWarden,
                 mFrameworkFacade, wifiHandler, mClock, mWifiMetrics);
         mSelfRecovery = new SelfRecovery(mContext, mActiveModeWarden, mClock, mWifiNative);
-        mWifiMulticastLockManager = new WifiMulticastLockManager(mActiveModeWarden, mBatteryStats);
+        mWifiMulticastLockManager = new WifiMulticastLockManager(mActiveModeWarden, mBatteryStats,
+                wifiLooper);
 
         // Register the various network Nominators with the network selector.
         mWifiNetworkSelector.registerNetworkNominator(mSavedNetworkNominator);
@@ -760,7 +762,8 @@ public class WifiInjector {
                 new WifiScoreReport(mScoringParams, mClock, mWifiMetrics, wifiInfo,
                         mWifiNative, mWifiBlocklistMonitor, mWifiThreadRunner, mWifiScoreCard,
                         mDeviceConfigFacade, mContext, mAdaptiveConnectivityEnabledSettingObserver,
-                        ifaceName, mExternalScoreUpdateObserverProxy, mSettingsStore),
+                        ifaceName, mExternalScoreUpdateObserverProxy, mSettingsStore, mWifiGlobals,
+                        mActiveModeWarden, mWifiConnectivityManager),
                 mWifiP2pConnection, mWifiGlobals, ifaceName, clientModeManager,
                 mCmiMonitor, mBroadcastQueue, mWifiNetworkSelector, makeTelephonyManager(),
                 this, mSettingsConfigStore, verboseLoggingEnabled);
@@ -1047,6 +1050,13 @@ public class WifiInjector {
     public AdaptiveConnectivityEnabledSettingObserver
             getAdaptiveConnectivityEnabledSettingObserver() {
         return mAdaptiveConnectivityEnabledSettingObserver;
+    }
+
+    /**
+     * Creates a BroadcastOptions.
+     */
+    public BroadcastOptions makeBroadcastOptions() {
+        return BroadcastOptions.makeBasic();
     }
 
     public MakeBeforeBreakManager getMakeBeforeBreakManager() {

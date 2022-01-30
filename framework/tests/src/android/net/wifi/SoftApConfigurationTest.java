@@ -74,11 +74,13 @@ public class SoftApConfigurationTest {
     @Test
     public void testBasicSettings() {
         MacAddress testBssid = MacAddress.fromString(TEST_BSSID);
+        String utf8Ssid = "ssid";
         SoftApConfiguration original = new SoftApConfiguration.Builder()
-                .setSsid("ssid")
+                .setSsid(utf8Ssid)
                 .setBssid(testBssid)
                 .build();
-        assertThat(original.getSsid()).isEqualTo("ssid");
+        assertThat(original.getSsid()).isEqualTo(utf8Ssid);
+        assertThat(original.getWifiSsid()).isEqualTo(WifiSsid.fromUtf8Text(utf8Ssid));
         assertThat(original.getBssid()).isEqualTo(testBssid);
         assertThat(original.getPassphrase()).isNull();
         assertThat(original.getSecurityType()).isEqualTo(SoftApConfiguration.SECURITY_TYPE_OPEN);
@@ -97,6 +99,10 @@ public class SoftApConfigurationTest {
                     .isEqualTo(true);
         }
 
+        if (SdkLevel.isAtLeastT()) {
+            assertThat(original.getBridgedModeOpportunisticShutdownTimeoutMillis())
+                    .isEqualTo(0);
+        }
         SoftApConfiguration unparceled = parcelUnparcel(original);
         assertThat(unparceled).isNotSameInstanceAs(original);
         assertThat(unparceled).isEqualTo(original);
@@ -110,6 +116,8 @@ public class SoftApConfigurationTest {
 
     @Test
     public void testSetWifiSsid() {
+        assumeTrue(SdkLevel.isAtLeastT());
+
         // UTF-8
         WifiSsid wifiSsidUtf8 = WifiSsid.fromUtf8Text("ssid");
         SoftApConfiguration utf8Config = new SoftApConfiguration.Builder()
@@ -186,6 +194,10 @@ public class SoftApConfigurationTest {
             originalBuilder.setUserConfiguration(false);
         }
 
+        if (SdkLevel.isAtLeastT()) {
+            originalBuilder.setBridgedModeOpportunisticShutdownTimeoutMillis(300_000);
+        }
+
         SoftApConfiguration original = originalBuilder.build();
         assertThat(original.getPassphrase()).isEqualTo("secretsecret");
         assertThat(original.getSecurityType()).isEqualTo(
@@ -209,7 +221,10 @@ public class SoftApConfigurationTest {
             assertThat(original.isUserConfiguration())
                     .isEqualTo(false);
         }
-
+        if (SdkLevel.isAtLeastT()) {
+            assertThat(original.getBridgedModeOpportunisticShutdownTimeoutMillis())
+                    .isEqualTo(300_000);
+        }
         SoftApConfiguration unparceled = parcelUnparcel(original);
         assertThat(unparceled).isNotSameInstanceAs(original);
         assertThat(unparceled).isEqualTo(original);

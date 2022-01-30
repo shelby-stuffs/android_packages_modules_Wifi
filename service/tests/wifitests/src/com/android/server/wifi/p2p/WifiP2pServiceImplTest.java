@@ -53,6 +53,7 @@ import static org.mockito.Mockito.when;
 
 import android.annotation.Nullable;
 import android.app.AlarmManager;
+import android.app.BroadcastOptions;
 import android.app.test.MockAnswerUtil.AnswerWithArguments;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -143,6 +144,15 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     private static final String ANONYMIZED_DEVICE_ADDRESS = "02:00:00:00:00:00";
     private static final String TEST_PACKAGE_NAME = "com.p2p.test";
     private static final String TEST_ANDROID_ID = "314Deadbeef";
+    private static final String[] TEST_REQUIRED_PERMISSIONS_T =
+            new String[] {
+                    android.Manifest.permission.NEARBY_WIFI_DEVICES,
+                    android.Manifest.permission.ACCESS_WIFI_STATE
+            };
+    private static final String[] TEST_EXCLUDED_PERMISSIONS_T =
+            new String[] {
+                    android.Manifest.permission.ACCESS_FINE_LOCATION
+            };
 
     private ArgumentCaptor<BroadcastReceiver> mBcastRxCaptor = ArgumentCaptor.forClass(
             BroadcastReceiver.class);
@@ -152,6 +162,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     private BroadcastReceiver mLocationModeReceiver;
     private BroadcastReceiver mWifiStateChangedReceiver;
     private BroadcastReceiver mTetherStateReceiver;
+    private BroadcastReceiver mUserRestrictionReceiver;
     private Handler mClientHandler;
     private Messenger mP2pStateMachineMessenger;
     private Messenger mClientMessenger;
@@ -168,6 +179,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     private ArgumentCaptor<Message> mMessageCaptor = ArgumentCaptor.forClass(Message.class);
     private MockitoSession mStaticMockSession = null;
 
+    @Mock Bundle mBundle;
     @Mock Context mContext;
     @Mock FrameworkFacade mFrameworkFacade;
     @Mock HandlerThread mHandlerThread;
@@ -176,6 +188,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     @Mock Resources mResources;
     @Mock NetworkInterface mP2pNetworkInterface;
     @Mock WifiInjector mWifiInjector;
+    @Mock BroadcastOptions mBroadcastOptions;
     @Mock WifiManager mMockWifiManager;
     @Mock WifiPermissionsUtil mWifiPermissionsUtil;
     @Mock WifiSettingsConfigStore mWifiSettingsConfigStore;
@@ -707,6 +720,15 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         verify(mContext, never()).sendBroadcastWithMultiplePermissions(
                 argThat(new WifiP2pServiceImplTest
                         .P2pConnectionChangedIntentMatcherForNetworkState(FAILED)), any());
+        if (SdkLevel.isAtLeastT()) {
+            verify(mContext).sendBroadcast(
+                    argThat(new WifiP2pServiceImplTest
+                            .P2pConnectionChangedIntentMatcherForNetworkState(IDLE)), any(), any());
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireAllOfPermissions(TEST_REQUIRED_PERMISSIONS_T);
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireNoneOfPermissions(TEST_EXCLUDED_PERMISSIONS_T);
+        }
     }
 
     /**
@@ -767,21 +789,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         }
     }
 
-    /**
-     * Check the broadcast of WIFI_P2P_THIS_DEVICE_CHANGED_ACTION is sent as expected.
-     */
-    private void checkSendThisDeviceChangedBroadcast() {
-        ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
-        String[] permission_gold = new String[] {android.Manifest.permission.ACCESS_FINE_LOCATION,
-                                                 android.Manifest.permission.ACCESS_WIFI_STATE};
-        ArgumentCaptor<String []> permissionCaptor = ArgumentCaptor.forClass(String[].class);
-        verify(mContext, atLeastOnce()).sendBroadcastWithMultiplePermissions(
-                intentCaptor.capture(), permissionCaptor.capture());
-        String [] permission = permissionCaptor.getValue();
-        Arrays.sort(permission);
-        Arrays.sort(permission_gold);
-        assertEquals(permission_gold, permission);
-        Intent intent = intentCaptor.getValue();
+    private void verifyDeviceChangedBroadcastIntent(Intent intent) {
         WifiP2pDevice device = intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE);
         assertEquals(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION, intent.getAction());
         assertEquals(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT, intent.getFlags());
@@ -804,6 +812,35 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
                     device.wfdInfo.getMaxThroughput());
         } else {
             assertEquals(mTestThisDevice.wfdInfo, device.wfdInfo);
+        }
+    }
+
+    /**
+     * Check the broadcast of WIFI_P2P_THIS_DEVICE_CHANGED_ACTION is sent as expected.
+     */
+    private void checkSendThisDeviceChangedBroadcast() {
+        ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
+        String[] permission_gold = new String[] {
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_WIFI_STATE};
+        ArgumentCaptor<String []> permissionCaptor = ArgumentCaptor.forClass(String[].class);
+        verify(mContext, atLeastOnce()).sendBroadcastWithMultiplePermissions(
+                intentCaptor.capture(), permissionCaptor.capture());
+        String [] permission = permissionCaptor.getValue();
+        Arrays.sort(permission);
+        Arrays.sort(permission_gold);
+        assertEquals(permission_gold, permission);
+        verifyDeviceChangedBroadcastIntent(intentCaptor.getValue());
+        if (SdkLevel.isAtLeastT()) {
+            // verify the same broadcast is also sent to apps with NEARBY_WIFI_DEVICES permission
+            // but without ACCESS_FINE_LOCATION.
+            verify(mContext, atLeastOnce()).sendBroadcast(
+                    intentCaptor.capture(), any(), any());
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireAllOfPermissions(TEST_REQUIRED_PERMISSIONS_T);
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireNoneOfPermissions(TEST_EXCLUDED_PERMISSIONS_T);
+            verifyDeviceChangedBroadcastIntent(intentCaptor.getValue());
         }
     }
 
@@ -878,6 +915,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         when(mWifiInjector.getSettingsConfigStore()).thenReturn(mWifiSettingsConfigStore);
         when(mWifiInjector.getCoexManager()).thenReturn(mCoexManager);
         when(mWifiInjector.getWifiGlobals()).thenReturn(mWifiGlobals);
+        when(mWifiInjector.makeBroadcastOptions()).thenReturn(mBroadcastOptions);
         // enable all permissions, disable specific permissions in tests
         when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
         when(mWifiPermissionsUtil.checkNetworkStackPermission(anyInt())).thenReturn(true);
@@ -894,6 +932,10 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         }
         when(mWifiNative.setupInterface(any(), any(), any())).thenReturn(IFACE_NAME_P2P);
         when(mWifiNative.p2pGetDeviceAddress()).thenReturn(thisDeviceMac);
+        when(mUserManager.getUserRestrictions()).thenReturn(mBundle);
+        if (SdkLevel.isAtLeastT()) {
+            when(mBundle.getBoolean(UserManager.DISALLOW_WIFI_DIRECT)).thenReturn(false);
+        }
         doAnswer(new AnswerWithArguments() {
             public boolean answer(WifiP2pGroupList groups) {
                 groups.clear();
@@ -925,8 +967,15 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
             // * WifiManager.WIFI_STATE_CHANGED_ACTION
             // * LocationManager.MODE_CHANGED_ACTION
             // * TetheringManager.ACTION_TETHER_STATE_CHANGED
-            verify(mContext, times(3)).registerReceiver(mBcastRxCaptor.capture(),
-                    any(IntentFilter.class));
+            // * UserManager.ACTION_USER_RESTRICTIONS_CHANGED
+            if (SdkLevel.isAtLeastT()) {
+                verify(mContext, times(4)).registerReceiver(mBcastRxCaptor.capture(),
+                        any(IntentFilter.class));
+                mUserRestrictionReceiver = mBcastRxCaptor.getAllValues().get(3);
+            } else {
+                verify(mContext, times(3)).registerReceiver(mBcastRxCaptor.capture(),
+                        any(IntentFilter.class));
+            }
             mWifiStateChangedReceiver = mBcastRxCaptor.getAllValues().get(0);
             mLocationModeReceiver = mBcastRxCaptor.getAllValues().get(1);
             mTetherStateReceiver = mBcastRxCaptor.getAllValues().get(2);
@@ -1047,6 +1096,30 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         sendSimpleMsg(mClientMessenger, WifiP2pManager.DISCOVER_PEERS);
         verify(mWifiNative, times(2)).setupInterface(any(), any(), any());
         verify(mNetdWrapper, times(2)).setInterfaceUp(anyString());
+    }
+
+    /**
+     * Verify that p2p will teardown /won't init when DISALLOW_WIFI_DIRECT user restriction is set
+     */
+    @Test
+    public void checkIsP2pInitForUserRestrictionChanges() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        forceP2pEnabled(mClient1);
+
+        // p2p interface disabled when user restriction is set
+        when(mBundle.getBoolean(UserManager.DISALLOW_WIFI_DIRECT)).thenReturn(true);
+        Intent intent = new Intent(UserManager.ACTION_USER_RESTRICTIONS_CHANGED);
+        mUserRestrictionReceiver.onReceive(mContext, intent);
+        mLooper.dispatchAll();
+        verify(mWifiNative).teardownInterface();
+        verify(mWifiMonitor).stopMonitoring(anyString());
+        // Force to back disable state for next test
+        mockEnterDisabledState();
+
+        // p2p interface won't initialize when user restriction is set
+        sendSimpleMsg(mClientMessenger, WifiP2pManager.DISCOVER_PEERS);
+        verify(mWifiNative, times(1)).setupInterface(any(), any(), any());
+        verify(mNetdWrapper, times(1)).setInterfaceUp(anyString());
     }
 
     /**
@@ -2596,9 +2669,18 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         verify(mContext).sendBroadcastWithMultiplePermissions(
                 argThat(new WifiP2pServiceImplTest
                         .P2pConnectionChangedIntentMatcherForNetworkState(FAILED)), any());
+        if (SdkLevel.isAtLeastT()) {
+            verify(mContext).sendBroadcast(
+                    argThat(new WifiP2pServiceImplTest
+                            .P2pConnectionChangedIntentMatcherForNetworkState(FAILED)), any(),
+                    any());
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireAllOfPermissions(TEST_REQUIRED_PERMISSIONS_T);
+            verify(mBroadcastOptions, atLeastOnce())
+                    .setRequireNoneOfPermissions(TEST_EXCLUDED_PERMISSIONS_T);
+        }
 
-        verify(mWifiP2pMetrics).endConnectionEvent(
-                eq(P2pConnectionEvent.CLF_UNKNOWN));
+        verify(mWifiP2pMetrics).endConnectionEvent(eq(P2pConnectionEvent.CLF_UNKNOWN));
     }
 
     /**
@@ -3886,7 +3968,6 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         // Move to enabled state
         when(mWifiSettingsConfigStore.get(eq(WIFI_P2P_PENDING_FACTORY_RESET))).thenReturn(true);
         forceP2pEnabled(mClient1);
-        verify(mWifiInjector, times(2)).getUserManager();
         verify(mPackageManager, times(2)).getNameForUid(anyInt());
         verify(mWifiPermissionsUtil, times(2)).checkNetworkSettingsPermission(anyInt());
         verify(mUserManager, times(2)).hasUserRestrictionForUser(
@@ -4601,14 +4682,19 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     }
 
     /**
-     * Verify stopping discovery is executed when location mode is turned off.
+     * Verify when prior to Android T, stopping discovery is executed when location mode is
+     * turned off.
      */
     @Test
     public void testStopDiscoveryWhenLocationModeIsDisabled() throws Exception {
         forceP2pEnabled(mClient1);
         simulateLocationModeChange(false);
         mLooper.dispatchAll();
-        verify(mWifiNative).p2pStopFind();
+        if (SdkLevel.isAtLeastT()) {
+            verify(mWifiNative, never()).p2pStopFind();
+        } else {
+            verify(mWifiNative).p2pStopFind();
+        }
     }
 
     /**

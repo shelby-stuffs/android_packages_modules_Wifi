@@ -288,6 +288,11 @@ public final class SoftApConfiguration implements Parcelable {
      */
     private boolean mIsUserConfiguration;
 
+    /**
+     * Delay in milliseconds before shutting down an instance in bridged AP.
+     */
+    private final long mBridgedModeOpportunisticShutdownTimeoutMillis;
+
 
     /**
      * THe definition of security type OPEN.
@@ -336,6 +341,7 @@ public final class SoftApConfiguration implements Parcelable {
             @NonNull List<MacAddress> blockedList, @NonNull List<MacAddress> allowedList,
             int macRandomizationSetting, boolean bridgedModeOpportunisticShutdownEnabled,
             boolean ieee80211axEnabled, boolean isUserConfiguration,
+            long bridgedModeOpportunisticShutdownTimeoutMillis,
             @Nullable String oweTransIfaceName) {
         mWifiSsid = ssid;
         mBssid = bssid;
@@ -358,6 +364,8 @@ public final class SoftApConfiguration implements Parcelable {
         mBridgedModeOpportunisticShutdownEnabled = bridgedModeOpportunisticShutdownEnabled;
         mIeee80211axEnabled = ieee80211axEnabled;
         mIsUserConfiguration = isUserConfiguration;
+        mBridgedModeOpportunisticShutdownTimeoutMillis =
+                bridgedModeOpportunisticShutdownTimeoutMillis;
         mOweTransIfaceName = oweTransIfaceName;
     }
 
@@ -384,9 +392,11 @@ public final class SoftApConfiguration implements Parcelable {
                 && Objects.equals(mAllowedClientList, other.mAllowedClientList)
                 && mMacRandomizationSetting == other.mMacRandomizationSetting
                 && mBridgedModeOpportunisticShutdownEnabled
-                == other.mBridgedModeOpportunisticShutdownEnabled
+                        == other.mBridgedModeOpportunisticShutdownEnabled
                 && mIeee80211axEnabled == other.mIeee80211axEnabled
                 && mIsUserConfiguration == other.mIsUserConfiguration
+                && mBridgedModeOpportunisticShutdownTimeoutMillis
+                        == other.mBridgedModeOpportunisticShutdownTimeoutMillis
                 && mOweTransIfaceName == other.mOweTransIfaceName;
     }
 
@@ -397,7 +407,8 @@ public final class SoftApConfiguration implements Parcelable {
                 mShutdownTimeoutMillis, mClientControlByUser, mBlockedClientList,
                 mAllowedClientList, mMacRandomizationSetting,
                 mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
-                mIsUserConfiguration, mOweTransIfaceName);
+                mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
+                mOweTransIfaceName);
     }
 
     @Override
@@ -419,6 +430,8 @@ public final class SoftApConfiguration implements Parcelable {
         sbuf.append(" \n MacRandomizationSetting = ").append(mMacRandomizationSetting);
         sbuf.append(" \n BridgedModeInstanceOpportunisticEnabled = ")
                 .append(mBridgedModeOpportunisticShutdownEnabled);
+        sbuf.append(" \n BridgedModeOpportunisticShutdownTimeoutMillis = ")
+                .append(mBridgedModeOpportunisticShutdownTimeoutMillis);
         sbuf.append(" \n Ieee80211axEnabled = ").append(mIeee80211axEnabled);
         sbuf.append(" \n isUserConfiguration = ").append(mIsUserConfiguration);
         sbuf.append(" \n OWE Transition mode Iface =").append(mOweTransIfaceName);
@@ -443,6 +456,7 @@ public final class SoftApConfiguration implements Parcelable {
         dest.writeBoolean(mBridgedModeOpportunisticShutdownEnabled);
         dest.writeBoolean(mIeee80211axEnabled);
         dest.writeBoolean(mIsUserConfiguration);
+        dest.writeLong(mBridgedModeOpportunisticShutdownTimeoutMillis);
         dest.writeString(mOweTransIfaceName);
     }
 
@@ -498,7 +512,7 @@ public final class SoftApConfiguration implements Parcelable {
                     in.readInt(), in.readBoolean(), in.readLong(), in.readBoolean(),
                     in.createTypedArrayList(MacAddress.CREATOR),
                     in.createTypedArrayList(MacAddress.CREATOR), in.readInt(), in.readBoolean(),
-                    in.readBoolean(), in.readBoolean(), in.readString());
+                    in.readBoolean(), in.readBoolean(), in.readLong(), in.readString());
         }
 
         @Override
@@ -822,6 +836,31 @@ public final class SoftApConfiguration implements Parcelable {
     }
 
     /**
+     * Returns the bridged mode opportunistic shutdown timeout in milliseconds.
+     * An instance in bridged AP will shutdown when there is no device associated to it for
+     * the timeout duration. See also
+     * {@link Builder#setBridgedModeOpportunisticShutdownTimeoutMillis(long)}.
+     *
+     * @hide
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @SystemApi
+    public long getBridgedModeOpportunisticShutdownTimeoutMillis() {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        return mBridgedModeOpportunisticShutdownTimeoutMillis;
+    }
+
+
+    /**
+     * @hide
+     */
+    public long getBridgedModeOpportunisticShutdownTimeoutMillisInternal() {
+        return mBridgedModeOpportunisticShutdownTimeoutMillis;
+    }
+
+    /**
      * Returns a {@link WifiConfiguration} representation of this {@link SoftApConfiguration}.
      * Note that SoftApConfiguration may contain configuration which is cannot be represented
      * by the legacy WifiConfiguration, in such cases a null will be returned.
@@ -918,6 +957,7 @@ public final class SoftApConfiguration implements Parcelable {
         private boolean mBridgedModeOpportunisticShutdownEnabled;
         private boolean mIeee80211axEnabled;
         private boolean mIsUserConfiguration;
+        private long mBridgedModeOpportunisticShutdownTimeoutMillis;
         private String mOweTransIfaceName;
 
         /**
@@ -941,6 +981,7 @@ public final class SoftApConfiguration implements Parcelable {
             mBridgedModeOpportunisticShutdownEnabled = true;
             mIeee80211axEnabled = true;
             mIsUserConfiguration = true;
+            mBridgedModeOpportunisticShutdownTimeoutMillis = 0;
             mOweTransIfaceName = null;
         }
 
@@ -967,6 +1008,8 @@ public final class SoftApConfiguration implements Parcelable {
                     other.mBridgedModeOpportunisticShutdownEnabled;
             mIeee80211axEnabled = other.mIeee80211axEnabled;
             mIsUserConfiguration = other.mIsUserConfiguration;
+            mBridgedModeOpportunisticShutdownTimeoutMillis =
+                    other.mBridgedModeOpportunisticShutdownTimeoutMillis;
             mOweTransIfaceName = other.mOweTransIfaceName;
         }
 
@@ -987,7 +1030,8 @@ public final class SoftApConfiguration implements Parcelable {
                     mAutoShutdownEnabled, mShutdownTimeoutMillis, mClientControlByUser,
                     mBlockedClientList, mAllowedClientList, mMacRandomizationSetting,
                     mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
-                    mIsUserConfiguration, mOweTransIfaceName);
+                    mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
+                    mOweTransIfaceName);
         }
 
         /**
@@ -1000,7 +1044,8 @@ public final class SoftApConfiguration implements Parcelable {
          * @param ssid SSID of valid Unicode characters, or null to have the SSID automatically
          *             chosen by the framework.
          * @return Builder for chaining.
-         * @throws IllegalArgumentException when the SSID is empty or not valid Unicode.
+         * @throws IllegalArgumentException when the SSID is empty, not unicode, or if the byte
+         *                                  representation is longer than 32 bytes.
          *
          * @deprecated Use {@link #setWifiSsid(WifiSsid)} instead.
          */
@@ -1029,7 +1074,11 @@ public final class SoftApConfiguration implements Parcelable {
          * @return Builder for chaining.
          */
         @NonNull
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
         public Builder setWifiSsid(@Nullable WifiSsid wifiSsid) {
+            if (!SdkLevel.isAtLeastT()) {
+                throw new UnsupportedOperationException();
+            }
             mWifiSsid = wifiSsid;
             return this;
         }
@@ -1595,6 +1644,36 @@ public final class SoftApConfiguration implements Parcelable {
         @NonNull
         public Builder setUserConfiguration(boolean isUserConfigured) {
             mIsUserConfiguration = isUserConfigured;
+            return this;
+        }
+
+        /**
+         * Specifies bridged mode opportunistic shutdown timeout in milliseconds.
+         * An instance of bridged Soft AP will shut down when there is no device connected to it
+         * for this timeout duration.
+         *
+         * Specify a value of 0 to have the framework automatically use default timeout
+         * setting defined by
+         * {@link
+         * R.integer.config_wifiFrameworkSoftApShutDownIdleInstanceInBridgedModeTimeoutMillisecond}
+         *
+         * <p>
+         * <li>If not set, defaults to 0</li>
+         * <li>The shut down timeout will apply when
+         * {@link #setBridgedModeOpportunisticShutdownEnabled(boolean)} is set to true</li>
+         *
+         * @param timeoutMillis milliseconds of the timeout delay.
+         * @return Builder for chaining.
+         *
+         * @see #setBridgedModeOpportunisticShutdownEnabled(boolean)
+         */
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        @NonNull
+        public Builder setBridgedModeOpportunisticShutdownTimeoutMillis(long timeoutMillis) {
+            if (!SdkLevel.isAtLeastT()) {
+                throw new UnsupportedOperationException();
+            }
+            mBridgedModeOpportunisticShutdownTimeoutMillis = timeoutMillis;
             return this;
         }
 
