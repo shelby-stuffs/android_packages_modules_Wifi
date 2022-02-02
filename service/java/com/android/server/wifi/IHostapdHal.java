@@ -128,4 +128,26 @@ interface IHostapdHal {
      * Dump information about the specific implementation.
      */
     void dump(PrintWriter pw);
+
+    /**
+     * Check if needs to use hostapd vendor service.
+     * @return
+     */
+    default boolean useVendorHostapdHal() {
+        return false;
+    }
+
+    /**
+     * Add and start a new vendor access point.
+     *
+     * @param ifaceName Name of the softap interface.
+     * @param config Configuration to use for the AP.
+     * @param onFailureListener A runnable to be triggered on failure.
+     * @return true on success, false otherwise.
+     */
+    default boolean addVendorAccessPoint(@NonNull String ifaceName,
+            @NonNull SoftApConfiguration config,
+            Runnable onFailureListener) {
+        return false;
+    }
 }
