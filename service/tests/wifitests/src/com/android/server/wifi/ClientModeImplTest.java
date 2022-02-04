@@ -288,10 +288,10 @@ public class ClientModeImplTest extends WifiBaseTest {
         return facade;
     }
 
-    private Context getContext() throws Exception {
+    private WifiContext getContext() throws Exception {
         when(mPackageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)).thenReturn(true);
 
-        Context context = mock(Context.class);
+        WifiContext context = mock(WifiContext.class);
         when(context.getPackageManager()).thenReturn(mPackageManager);
 
         MockContentResolver mockContentResolver = new MockContentResolver();
@@ -396,6 +396,17 @@ public class ClientModeImplTest extends WifiBaseTest {
         mIpClientCallback.onProvisioningSuccess(new LinkProperties());
     }
 
+    private void injectDhcpSuccess() {
+        DhcpResultsParcelable dhcpResults = new DhcpResultsParcelable();
+        dhcpResults.baseConfiguration = new StaticIpConfiguration();
+        dhcpResults.baseConfiguration.gateway = InetAddresses.parseNumericAddress("1.2.3.4");
+        dhcpResults.baseConfiguration.ipAddress =
+                new LinkAddress(InetAddresses.parseNumericAddress("192.168.1.100"), 0);
+        dhcpResults.baseConfiguration.dnsServers.add(InetAddresses.parseNumericAddress("8.8.8.8"));
+        dhcpResults.leaseDuration = 3600;
+        injectDhcpSuccess(dhcpResults);
+    }
+
     private void injectDhcpFailure() {
         mIpClientCallback.onNewDhcpResults((DhcpResultsParcelable) null);
         mIpClientCallback.onProvisioningFailure(new LinkProperties());
@@ -422,12 +433,13 @@ public class ClientModeImplTest extends WifiBaseTest {
     TestAlarmManager mAlarmManager;
     MockWifiMonitor mWifiMonitor;
     TestLooper mLooper;
-    Context mContext;
+    WifiContext mContext;
     MockResources mResources;
     FrameworkFacade mFrameworkFacade;
     IpClientCallbacks mIpClientCallback;
     OsuProvider mOsuProvider;
     WifiConfiguration mConnectedNetwork;
+    WifiConfiguration mTestConfig;
     ExtendedWifiInfo mWifiInfo;
     ConnectionCapabilities mConnectionCapabilities = new ConnectionCapabilities();
 
@@ -464,6 +476,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     @Mock UntrustedWifiNetworkFactory mUntrustedWifiNetworkFactory;
     @Mock OemWifiNetworkFactory mOemWifiNetworkFactory;
     @Mock RestrictedWifiNetworkFactory mRestrictedWifiNetworkFactory;
+    @Mock MultiInternetManager mMultiInternetManager;
     @Mock WifiNetworkSuggestionsManager mWifiNetworkSuggestionsManager;
     @Mock LinkProbeManager mLinkProbeManager;
     @Mock PackageManager mPackageManager;
@@ -492,6 +505,8 @@ public class ClientModeImplTest extends WifiBaseTest {
     @Mock WifiSettingsConfigStore mSettingsConfigStore;
     @Mock Uri mMockUri;
     @Mock WifiCarrierInfoManager mWifiCarrierInfoManager;
+    @Mock WifiNotificationManager mWifiNotificationManager;
+    @Mock InsecureEapNetworkHandler mInsecureEapNetworkHandler;
 
     @Captor ArgumentCaptor<WifiConfigManager.OnNetworkUpdateListener> mConfigUpdateListenerCaptor;
     @Captor ArgumentCaptor<WifiNetworkAgent.Callback> mWifiNetworkAgentCallbackCaptor;
@@ -560,6 +575,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNetworkFactory.hasConnectionRequests()).thenReturn(true);
         when(mUntrustedWifiNetworkFactory.hasConnectionRequests()).thenReturn(true);
         when(mOemWifiNetworkFactory.hasConnectionRequests()).thenReturn(true);
+        when(mMultiInternetManager.hasPendingConnectionRequests()).thenReturn(true);
 
         mFrameworkFacade = getFrameworkFacade();
         mContext = getContext();
@@ -700,7 +716,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 mWifiBlocklistMonitor, mConnectionFailureNotifier,
                 WifiInjector.REGULAR_NETWORK_CAPABILITIES_FILTER, mWifiNetworkFactory,
                 mUntrustedWifiNetworkFactory, mOemWifiNetworkFactory, mRestrictedWifiNetworkFactory,
-                mWifiLastResortWatchdog, mWakeupController,
+                mMultiInternetManager, mWifiLastResortWatchdog, mWakeupController,
                 mWifiLockManager, mFrameworkFacade, mLooper.getLooper(),
                 mWifiNative, mWrongPasswordNotifier, mWifiTrafficPoller, mLinkProbeManager,
                 1, mBatteryStatsManager, mSupplicantStateTracker, mMboOceController,
@@ -708,7 +724,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 mWifiScoreReport, mWifiP2pConnection, mWifiGlobals,
                 WIFI_IFACE_NAME, mClientModeManager, mCmiMonitor, mBroadcastQueue,
                 mWifiNetworkSelector, mTelephonyManager, mWifiInjector, mSettingsConfigStore,
-                false);
+                false, mWifiNotificationManager);
 
         mWifiCoreThread = getCmiHandlerThread(mCmi);
 
@@ -815,12 +831,20 @@ public class ClientModeImplTest extends WifiBaseTest {
         return config;
     }
 
-    private void initializeMocksForAddedNetwork(boolean isHidden) throws Exception {
-        WifiConfiguration config = createTestNetwork(isHidden);
-
+    private void initializeMocksForAddedNetwork(WifiConfiguration config) throws Exception {
         when(mWifiConfigManager.getSavedNetworks(anyInt())).thenReturn(Arrays.asList(config));
         when(mWifiConfigManager.getConfiguredNetwork(0)).thenReturn(config);
         when(mWifiConfigManager.getConfiguredNetworkWithoutMasking(0)).thenReturn(config);
+    }
+
+    private void initializeMocksForAddedNetwork(boolean isHidden) throws Exception {
+        mTestConfig = createTestNetwork(isHidden);
+        initializeMocksForAddedNetwork(mTestConfig);
+    }
+
+    private void initializeAndAddNetworkAndVerifySuccess(WifiConfiguration config)
+            throws Exception {
+        initializeMocksForAddedNetwork(config);
     }
 
     private void initializeAndAddNetworkAndVerifySuccess() throws Exception {
@@ -959,6 +983,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mUntrustedWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mOemWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
+        when(mMultiInternetManager.hasPendingConnectionRequests()).thenReturn(false);
 
         WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
         config.networkId = FRAMEWORK_NETWORK_ID;
@@ -1695,7 +1720,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Disconnect and verify WifiInfo.getHiddenSsid is false.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -1731,6 +1756,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mUntrustedWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mOemWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
+        when(mMultiInternetManager.hasPendingConnectionRequests()).thenReturn(false);
 
         WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork();
         config.networkId = FRAMEWORK_NETWORK_ID + 1;
@@ -1757,6 +1783,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mUntrustedWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
         when(mOemWifiNetworkFactory.hasConnectionRequests()).thenReturn(false);
+        when(mMultiInternetManager.hasPendingConnectionRequests()).thenReturn(false);
 
         when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(false);
 
@@ -1767,7 +1794,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiConfigManager, never())
                 .getConfiguredNetworkWithoutMasking(eq(config.networkId));
         verify(mWifiNative, never()).connectToNetwork(eq(WIFI_IFACE_NAME), eq(config));
-        verify(mWifiPermissionsUtil, times(2)).checkNetworkSettingsPermission(anyInt());
+        // These are called from connectToUserSelectNetwork() and L2ConnectedState::enter()
+        verify(mWifiPermissionsUtil, times(4)).checkNetworkSettingsPermission(anyInt());
     }
 
     /**
@@ -1920,8 +1948,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // fail the connection.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -1968,7 +1995,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Disconnection from previous network.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
                 new StateChangeResult(0, TEST_WIFI_SSID, TEST_BSSID_STR,
@@ -2019,7 +2046,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         when(mWifiConfigManager.getConfiguredNetwork(FRAMEWORK_NETWORK_ID)).thenReturn(null);
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -2097,9 +2124,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(TEST_SSID), eq(TEST_BSSID_STR),
                 eq(WifiLastResortWatchdog.FAILURE_CODE_DHCP), anyBoolean());
         verify(mWifiBlocklistMonitor, times(2)).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_DHCP_FAILURE), anyInt());
-        verify(mWifiBlocklistMonitor, times(2)).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_DHCP_FAILURE), anyInt());
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_DHCP_FAILURE), anyInt());
         verify(mWifiBlocklistMonitor, never()).handleDhcpProvisioningSuccess(
                 TEST_BSSID_STR, TEST_SSID);
         verify(mWifiBlocklistMonitor, never()).handleNetworkValidationSuccess(
@@ -2137,7 +2162,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT,
                 WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD);
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -2165,7 +2190,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mWifiConfigManager.getConfiguredNetwork(anyInt())).thenReturn(config);
 
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -2207,7 +2232,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT,
                 WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD);
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -2316,7 +2341,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         startConnectSuccess();
 
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -2347,8 +2372,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 .updateWifiClientConnected(mClientModeManager, true);
 
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
@@ -2382,8 +2406,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Disconnected from network
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
@@ -2409,8 +2432,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Disconnected from network
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
@@ -2897,8 +2919,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT, 0, 0, null);
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false,
-                        FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         verify(mWifiConfigManager).clearRecentFailureReason(eq(0));
@@ -3389,8 +3410,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         assertEquals(TEST_LOCAL_MAC_ADDRESS.toString(), mWifiInfo.getMacAddress());
 
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
@@ -3558,13 +3578,13 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiConnectivityManager).handleConnectionAttemptEnded(
                 mClientModeManager,
                 WifiMetrics.ConnectionEvent.FAILURE_ASSOCIATION_REJECTION, TEST_BSSID_STR,
-                TEST_SSID);
+                mTestConfig);
         verify(mWifiNetworkFactory).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_ASSOCIATION_REJECTION),
-                any(WifiConfiguration.class), eq(TEST_BSSID_STR));
+                eq(mTestConfig), eq(TEST_BSSID_STR));
         verify(mWifiNetworkSuggestionsManager).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_ASSOCIATION_REJECTION),
-                any(WifiConfiguration.class), eq(null));
+                eq(mTestConfig), eq(null));
         verify(mWifiMetrics, never())
                 .incrementNumBssidDifferentSelectionBetweenFrameworkAndFirmware();
         verifyConnectionEventTimeoutDoesNotOccur();
@@ -3575,8 +3595,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Now trigger a disconnect event from supplicant, this should be ignored since the
         // connection tracking should have already ended.
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT,
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false,
-                        FRAMEWORK_NETWORK_ID));
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false));
         mLooper.dispatchAll();
 
         verifyNoMoreInteractions(mWifiDiagnostics, mWifiConfigManager, mWifiNetworkFactory,
@@ -3605,13 +3624,13 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiConnectivityManager).handleConnectionAttemptEnded(
                 mClientModeManager,
                 WifiMetrics.ConnectionEvent.FAILURE_AUTHENTICATION_FAILURE, TEST_BSSID_STR,
-                TEST_SSID);
+                mTestConfig);
         verify(mWifiNetworkFactory).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_AUTHENTICATION_FAILURE),
-                any(WifiConfiguration.class), eq(TEST_BSSID_STR));
+                eq(mTestConfig), eq(TEST_BSSID_STR));
         verify(mWifiNetworkSuggestionsManager).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_AUTHENTICATION_FAILURE),
-                any(WifiConfiguration.class), eq(null));
+                eq(mTestConfig), eq(null));
         verify(mWifiMetrics, never())
                 .incrementNumBssidDifferentSelectionBetweenFrameworkAndFirmware();
         verifyConnectionEventTimeoutDoesNotOccur();
@@ -3622,7 +3641,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Now trigger a disconnect event from supplicant, this should be ignored since the
         // connection tracking should have already ended.
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT,
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID));
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false));
         mLooper.dispatchAll();
 
         verifyNoMoreInteractions(mWifiDiagnostics, mWifiConfigManager, mWifiNetworkFactory,
@@ -3648,12 +3667,13 @@ public class ClientModeImplTest extends WifiBaseTest {
         connect();
         mLooper.dispatchAll();
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_ABNORMAL_DISCONNECT), anyInt());
+                eq(mConnectedNetwork), eq(WifiBlocklistMonitor.REASON_ABNORMAL_DISCONNECT),
+                anyInt());
     }
 
     /**
@@ -3678,7 +3698,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 getGoogleGuestScanDetail(testLowRssi, TEST_BSSID_STR, sFreq).getScanResult());
         mLooper.dispatchAll();
 
-        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(TEST_BSSID_STR, TEST_SSID,
+        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(TEST_BSSID_STR, mTestConfig,
                 WifiBlocklistMonitor.REASON_ASSOCIATION_TIMEOUT, testLowRssi);
     }
 
@@ -3711,13 +3731,13 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT,
                 new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR,
                         ISupplicantStaIfaceCallback.ReasonCode.FOURWAY_HANDSHAKE_TIMEOUT,
-                        false, FRAMEWORK_NETWORK_ID));
+                        false));
         mLooper.dispatchAll();
         verify(mWifiScoreCard).noteConnectionFailure(any(), anyInt(), anyString(), anyInt());
         verify(mWifiScoreCard).resetConnectionState(WIFI_IFACE_NAME);
         // Verify that the WifiBlocklistMonitor is notified of a non-locally generated disconnect
         // that occurred mid connection attempt.
-        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(anyString(), anyString(),
+        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(anyString(), eq(mTestConfig),
                 eq(WifiBlocklistMonitor.REASON_NONLOCAL_DISCONNECT_CONNECTING), anyInt());
         verify(mWifiConfigManager, never()).updateNetworkSelectionStatus(anyInt(),
                 eq(WifiConfiguration.NetworkSelectionStatus.DISABLED_CONSECUTIVE_FAILURES));
@@ -3736,11 +3756,11 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT,
                 new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR,
                         ISupplicantStaIfaceCallback.ReasonCode.FOURWAY_HANDSHAKE_TIMEOUT,
-                        false, FRAMEWORK_NETWORK_ID));
+                        false));
         mLooper.dispatchAll();
         verify(mWifiScoreCard).noteConnectionFailure(any(), anyInt(), anyString(), anyInt());
         verify(mWifiScoreCard).resetConnectionState(WIFI_IFACE_NAME);
-        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(anyString(), anyString(),
+        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(anyString(), eq(mTestConfig),
                 eq(WifiBlocklistMonitor.REASON_NONLOCAL_DISCONNECT_CONNECTING), anyInt());
         verify(mWifiConfigManager).updateNetworkSelectionStatus(FRAMEWORK_NETWORK_ID,
                 WifiConfiguration.NetworkSelectionStatus.DISABLED_CONSECUTIVE_FAILURES);
@@ -3769,7 +3789,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT,
                 WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD);
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -3821,7 +3841,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         connect();
         // Disconnection with reason = DISASSOC_AP_BUSY
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 5, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 5, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         verify(mWifiConfigManager).setRecentFailureAssociationStatus(anyInt(),
@@ -3841,7 +3861,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Disconnection with reason = DISASSOC_AP_BUSY
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 5, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 5, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         verify(mWifiConfigManager).setRecentFailureAssociationStatus(anyInt(),
@@ -3915,7 +3935,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog, never()).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_AP_UNABLE_TO_HANDLE_NEW_STA),
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_AP_UNABLE_TO_HANDLE_NEW_STA),
                 anyInt());
     }
 
@@ -3936,7 +3956,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog, never()).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_AP_UNABLE_TO_HANDLE_NEW_STA),
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_AP_UNABLE_TO_HANDLE_NEW_STA),
                 anyInt());
     }
 
@@ -3957,7 +3977,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_ASSOCIATION_REJECTION), anyInt());
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_ASSOCIATION_REJECTION), anyInt());
         verify(mWifiMetrics).incrementNumOfCarrierWifiConnectionNonAuthFailure();
     }
 
@@ -3980,7 +4000,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog, never()).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_WRONG_PASSWORD), anyInt());
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_WRONG_PASSWORD), anyInt());
     }
 
     /**
@@ -4002,7 +4022,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog, never()).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_EAP_FAILURE), anyInt());
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_EAP_FAILURE), anyInt());
     }
 
     /**
@@ -4023,7 +4043,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiLastResortWatchdog).noteConnectionFailureAndTriggerIfNeeded(
                 anyString(), anyString(), anyInt(), anyBoolean());
         verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(WifiBlocklistMonitor.REASON_AUTHENTICATION_FAILURE), anyInt());
+                eq(mTestConfig), eq(WifiBlocklistMonitor.REASON_AUTHENTICATION_FAILURE), anyInt());
     }
 
     /**
@@ -4060,7 +4080,8 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(WifiDiagnostics.CONNECTION_EVENT_FAILED), any());
         verify(mWifiConnectivityManager, atLeastOnce()).handleConnectionAttemptEnded(
                 mClientModeManager,
-                WifiMetrics.ConnectionEvent.FAILURE_DHCP, TEST_BSSID_STR, TEST_SSID);
+                WifiMetrics.ConnectionEvent.FAILURE_DHCP, TEST_BSSID_STR,
+                mTestConfig);
         verify(mWifiNetworkFactory, atLeastOnce()).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_DHCP), any(WifiConfiguration.class),
                 eq(TEST_BSSID_STR));
@@ -4093,12 +4114,13 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(WifiDiagnostics.CONNECTION_EVENT_SUCCEEDED), any());
         verify(mWifiConnectivityManager).handleConnectionAttemptEnded(
                 mClientModeManager,
-                WifiMetrics.ConnectionEvent.FAILURE_NONE, TEST_BSSID_STR, TEST_SSID);
+                WifiMetrics.ConnectionEvent.FAILURE_NONE, TEST_BSSID_STR,
+                mConnectedNetwork);
         verify(mWifiNetworkFactory).handleConnectionAttemptEnded(
-                eq(WifiMetrics.ConnectionEvent.FAILURE_NONE), any(WifiConfiguration.class),
+                eq(WifiMetrics.ConnectionEvent.FAILURE_NONE), eq(mConnectedNetwork),
                 eq(TEST_BSSID_STR));
         verify(mWifiNetworkSuggestionsManager).handleConnectionAttemptEnded(
-                eq(WifiMetrics.ConnectionEvent.FAILURE_NONE), any(WifiConfiguration.class),
+                eq(WifiMetrics.ConnectionEvent.FAILURE_NONE), eq(mConnectedNetwork),
                 any(String.class));
         verify(mCmiMonitor).onInternetValidated(mClientModeManager);
         // BSSID different, record this connection.
@@ -4266,8 +4288,9 @@ public class ClientModeImplTest extends WifiBaseTest {
         // expect temporarily disabled
         verify(mWifiConfigManager).updateNetworkSelectionStatus(
                 FRAMEWORK_NETWORK_ID, DISABLED_NO_INTERNET_TEMPORARY);
-        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(TEST_BSSID_STR, TEST_SSID,
-                WifiBlocklistMonitor.REASON_NETWORK_VALIDATION_FAILURE, RSSI_THRESHOLD_BREACH_MIN);
+        verify(mWifiBlocklistMonitor).handleBssidConnectionFailure(TEST_BSSID_STR,
+                currentNetwork, WifiBlocklistMonitor.REASON_NETWORK_VALIDATION_FAILURE,
+                RSSI_THRESHOLD_BREACH_MIN);
         verify(mWifiScoreCard).noteValidationFailure(any());
     }
 
@@ -4280,13 +4303,32 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Make Before Break CMM
         when(mClientModeManager.getRole()).thenReturn(ROLE_CLIENT_SECONDARY_TRANSIENT);
 
-        // internet validation failure
+        // internet validation failure without detecting captive portal
         mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
                 NetworkAgent.VALIDATION_STATUS_NOT_VALID, null /* captivePortalUr; */);
         mLooper.dispatchAll();
 
         // expect disconnection
         verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
+    }
+
+    @Test
+    public void mbb_internetValidationError_captivePortalNoDisconnect() throws Exception {
+        connect();
+        verify(mWifiInjector).makeWifiNetworkAgent(any(), any(), any(), any(),
+                mWifiNetworkAgentCallbackCaptor.capture());
+
+        // Make Before Break CMM
+        when(mClientModeManager.getRole()).thenReturn(ROLE_CLIENT_SECONDARY_TRANSIENT);
+
+        // mock internet validation failure with captive portal detected
+        when(mMockUri.toString()).thenReturn("TEST_URI");
+        mWifiNetworkAgentCallbackCaptor.getValue().onValidationStatus(
+                NetworkAgent.VALIDATION_STATUS_NOT_VALID, mMockUri);
+        mLooper.dispatchAll();
+
+        // expect no disconnection
+        verify(mWifiNative, never()).disconnect(WIFI_IFACE_NAME);
     }
 
     @Test
@@ -5033,7 +5075,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Verifies that WifiLastResortWatchdog won't be notified
         // by other reason code
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 2, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 2, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5046,8 +5088,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         // Verifies that WifiLastResortWatchdog be notified
         // for FOURWAY_HANDSHAKE_TIMEOUT.
-        disconnectEventInfo = new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false,
-                FRAMEWORK_NETWORK_ID);
+        disconnectEventInfo = new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5167,7 +5208,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Verifies that WifiLastResortWatchdog be notified.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5349,7 +5390,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiMetrics, times(1)).incrementSteeringRequestCountIncludingMboAssocRetryDelay();
-        verify(mWifiBlocklistMonitor).blockBssidForDurationMs(eq(TEST_BSSID_STR), eq(TEST_SSID),
+        verify(mWifiBlocklistMonitor).blockBssidForDurationMs(eq(TEST_BSSID_STR), any(),
                 eq(btmFrmData.mBlockListDurationMs), anyInt(), anyInt());
     }
 
@@ -5372,7 +5413,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiMetrics, never()).incrementSteeringRequestCountIncludingMboAssocRetryDelay();
-        verify(mWifiBlocklistMonitor).blockBssidForDurationMs(eq(TEST_BSSID_STR), eq(TEST_SSID),
+        verify(mWifiBlocklistMonitor).blockBssidForDurationMs(eq(TEST_BSSID_STR), any(),
                 eq(MboOceConstants.DEFAULT_BLOCKLIST_DURATION_MS), anyInt(), anyInt());
     }
 
@@ -5397,7 +5438,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiBlocklistMonitor, never()).blockBssidForDurationMs(eq(TEST_BSSID_STR),
-                eq(TEST_SSID), eq(btmFrmData.mBlockListDurationMs), anyInt(), anyInt());
+                any(), eq(btmFrmData.mBlockListDurationMs), anyInt(), anyInt());
         verify(mWifiConnectivityManager).forceConnectivityScan(ClientModeImpl.WIFI_WORK_SOURCE);
         verify(mWifiMetrics, times(1)).incrementMboCellularSwitchRequestCount();
         verify(mWifiMetrics, times(1))
@@ -5844,7 +5885,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // got UNSPECIFIED during this connection attempt
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 1, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 1, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5854,8 +5895,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(ClientModeImpl.CMD_START_CONNECT, 0, 0, TEST_BSSID_STR);
         mLooper.dispatchAll();
         // got 4WAY_HANDSHAKE_TIMEOUT during this connection attempt
-        disconnectEventInfo = new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false,
-                FRAMEWORK_NETWORK_ID);
+        disconnectEventInfo = new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5888,7 +5928,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // got 4WAY_HANDSHAKE_TIMEOUT during this connection attempt
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5909,7 +5949,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // got 4WAY_HANDSHAKE_TIMEOUT
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 15, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         verify(mWifiNative, never()).removeNetworkCachedData(anyInt());
@@ -5986,7 +6026,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Send disconnect event for the old network.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(oldSsid, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(oldSsid, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -5999,8 +6039,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Send disconnect event for the new network.
         disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -6031,7 +6070,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // Now send the disconnect event and ensure that we transition to "DisconnectedState".
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         assertEquals("DisconnectedState", getCurrentState().getName());
@@ -6059,8 +6098,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Now trigger the disconnect event for the previous disconnect and ensure we handle it
         // correctly and remain in ConnectingState.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         assertEquals("L2ConnectingState", mCmi.getCurrentState().getName());
@@ -6153,8 +6191,7 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // fail the connection.
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false,
-                        mConnectedNetwork.networkId);
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
 
@@ -6530,13 +6567,14 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(WifiDiagnostics.CONNECTION_EVENT_FAILED), any());
         verify(mWifiConnectivityManager).handleConnectionAttemptEnded(
                 mClientModeManager,
-                WifiMetrics.ConnectionEvent.FAILURE_NETWORK_NOT_FOUND, TEST_BSSID_STR, TEST_SSID);
+                WifiMetrics.ConnectionEvent.FAILURE_NETWORK_NOT_FOUND, TEST_BSSID_STR,
+                mTestConfig);
         verify(mWifiNetworkFactory).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_NETWORK_NOT_FOUND),
-                any(WifiConfiguration.class), eq(TEST_BSSID_STR));
+                eq(mTestConfig), eq(TEST_BSSID_STR));
         verify(mWifiNetworkSuggestionsManager).handleConnectionAttemptEnded(
                 eq(WifiMetrics.ConnectionEvent.FAILURE_NETWORK_NOT_FOUND),
-                any(WifiConfiguration.class), eq(null));
+                eq(mTestConfig), eq(null));
         verify(mWifiMetrics, never())
                 .incrementNumBssidDifferentSelectionBetweenFrameworkAndFirmware();
         verifyConnectionEventTimeoutDoesNotOccur();
@@ -6547,7 +6585,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // Now trigger a disconnect event from supplicant, this should be ignored since the
         // connection tracking should have already ended.
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT,
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID));
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false));
         mLooper.dispatchAll();
 
         verifyNoMoreInteractions(mWifiDiagnostics, mWifiConfigManager, mWifiNetworkFactory,
@@ -6616,7 +6654,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiMetrics).logStaEvent(anyString(), eq(StaEvent.TYPE_FRAMEWORK_DISCONNECT),
                 eq(StaEvent.DISCONNECT_VCN_REQUEST));
         DisconnectEventInfo disconnectEventInfo =
-                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false, FRAMEWORK_NETWORK_ID);
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         assertEquals("DisconnectedState", getCurrentState().getName());
@@ -7457,5 +7495,262 @@ public class ClientModeImplTest extends WifiBaseTest {
         assumeFalse(SdkLevel.isAtLeastS());
 
         verifyUpdateAutoUpgradeFlagForSaeOnR(false, false, true, true, false);
+    }
+
+    private WifiConfiguration setupLegacyEapNetworkTest(boolean isUserSelected) throws Exception {
+        return setupTrustOnFirstUse(false, false, isUserSelected);
+    }
+
+    private WifiConfiguration setupTrustOnFirstUse(
+            boolean isAtLeastT, boolean isTrustOnFirstUseSupported, boolean isUserSelected)
+            throws Exception {
+        if (isTrustOnFirstUseSupported) {
+            when(mWifiNative.getSupportedFeatureSet(WIFI_IFACE_NAME)).thenReturn(
+                    WifiManager.WIFI_FEATURE_TRUST_ON_FIRST_USE);
+        }
+        mCmi.mInsecureEapNetworkHandler = mInsecureEapNetworkHandler;
+        when(mInsecureEapNetworkHandler.startUserApprovalIfNecessary(anyBoolean()))
+                .thenReturn(true);
+
+        WifiConfiguration eapTlsConfig = spy(WifiConfigurationTestUtil.createEapNetwork(
+                WifiEnterpriseConfig.Eap.TLS, WifiEnterpriseConfig.Phase2.NONE));
+        eapTlsConfig.networkId = FRAMEWORK_NETWORK_ID;
+        eapTlsConfig.SSID = TEST_SSID;
+        if (isAtLeastT) {
+            eapTlsConfig.enterpriseConfig.enableTrustOnFirstUse(true);
+        }
+        eapTlsConfig.enterpriseConfig.setCaPath("");
+        eapTlsConfig.enterpriseConfig.setDomainSuffixMatch("");
+
+        initializeAndAddNetworkAndVerifySuccess(eapTlsConfig);
+
+        if (isUserSelected) {
+            startConnectSuccess();
+        } else {
+            mCmi.startConnectToNetwork(
+                    eapTlsConfig.networkId,
+                    Process.SYSTEM_UID,
+                    ClientModeImpl.SUPPLICANT_BSSID_ANY);
+            mLooper.dispatchAll();
+        }
+        verify(mInsecureEapNetworkHandler).prepareConnection(eq(eapTlsConfig));
+
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(0, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+
+        if (isTrustOnFirstUseSupported) {
+            mCmi.sendMessage(WifiMonitor.TOFU_ROOT_CA_CERTIFICATE,
+                    FRAMEWORK_NETWORK_ID, 0, FakeKeys.CA_CERT0);
+            mLooper.dispatchAll();
+            verify(mInsecureEapNetworkHandler).setPendingCaCertificate(
+                    eq(eapTlsConfig.SSID), eq(FakeKeys.CA_CERT0));
+        }
+
+        mCmi.sendMessage(WifiMonitor.NETWORK_CONNECTION_EVENT,
+                new NetworkConnectionEventInfo(0, TEST_WIFI_SSID, TEST_BSSID_STR, false));
+        mLooper.dispatchAll();
+
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(0, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.COMPLETED));
+        mLooper.dispatchAll();
+
+        verify(mInsecureEapNetworkHandler).startUserApprovalIfNecessary(eq(isUserSelected));
+        assertEquals("L3ProvisioningState", getCurrentState().getName());
+
+        return eapTlsConfig;
+    }
+
+    /**
+     * Verify Trust On First Use support.
+     * - This network is selected by a user.
+     * - Accept the connection.
+     */
+    @Test
+    public void verifyTrustOnFirstUseAcceptWhenConnectByUser() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mLooper.dispatchAll();
+        injectDhcpSuccess();
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+    }
+
+    /**
+     * Verify Trust On First Use support.
+     * - This network is selected by a user.
+     * - Reject the connection.
+     */
+    @Test
+    public void verifyTrustOnFirstUseRejectWhenConnectByUser() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onReject(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify Trust On First Use support.
+     * - This network is selected by a user.
+     * - Errors occur in InsecureEapNetworkHandler.
+     */
+    @Test
+    public void verifyTrustOnFirstUseErrorWhenConnectByUser() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+   /**
+     * Verify Trust On First Use support.
+     * - this network is automatically connected.
+     * - Tap the notification.
+     * - Accept the connection.
+     */
+    @Test
+    public void verifyTrustOnFirstUseAcceptWhenAutoConnect() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mLooper.dispatchAll();
+        injectDhcpSuccess();
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+    }
+
+    /**
+     * Verify Trust On First Use support.
+     * - this network is automatically connected.
+     * - Tap the notification
+     * - Reject the connection.
+     */
+    @Test
+    public void verifyTrustOnFirstUseRejectWhenAutoConnect() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onReject(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify Trust On First Use support.
+     * - This network is automatically connected.
+     * - Errors occur in InsecureEapNetworkHandler.
+     */
+    @Test
+    public void verifyTrustOnFirstUseErrorWhenAutoConnect() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is selected by a user.
+     * - Accept the connection.
+     */
+    @Test
+    public void verifyLegacyEapNetworkAcceptWhenConnectByUser() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mLooper.dispatchAll();
+        injectDhcpSuccess();
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is selected by a user.
+     * - Reject the connection.
+     */
+    @Test
+    public void verifyLegacyEapNetworkRejectWhenConnectByUser() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onReject(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is automatically connected.
+     * - Errors occur in InsecureEapNetworkHandler.
+     */
+    @Test
+    public void verifyLegacyEapNetworkErrorWhenConnectByUser() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(true);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is automatically connected.
+     * - Tap "connect anyway" on the notification.
+     */
+    @Test
+    public void verifyLegacyEapNetworkAcceptOnNotificationWhenAutoConnect() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        injectDhcpSuccess();
+        mLooper.dispatchAll();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is automatically connected.
+     * - Tap "Don't connect" on the notification
+     */
+    @Test
+    public void verifyLegacyEapNetworkRejectOnNotificationWhenAutoConnect() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onReject(testConfig.SSID);
+        mLooper.dispatchAll();
+
+        verify(mFrameworkFacade, never()).makeAlertDialogBuilder(any());
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify legacy EAP network handling.
+     * - This network is automatically connected.
+     * - Errors occur in InsecureEapNetworkHandler.
+     */
+    @Test
+    public void verifyLegacyEapNetworkErrorWhenAutoConnect() throws Exception {
+        assumeFalse(SdkLevel.isAtLeastT());
+        WifiConfiguration testConfig = setupLegacyEapNetworkTest(false);
+
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
+        mLooper.dispatchAll();
+        verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
     }
 }

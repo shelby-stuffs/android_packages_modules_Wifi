@@ -665,6 +665,9 @@
     <!-- Enable concurrent restricted connectivity + internet connectivity
          Note: this is conditional on the device supporting dual concurrent STAs. -->
     <bool translatable="false" name="config_wifiMultiStaRestrictedConcurrencyEnabled">false</bool>
+    <!-- Enable concurrent internet connectivity + internet connectivity
+         Note: this is conditional on the device supporting dual concurrent STAs. -->
+    <bool translatable="false" name="config_wifiMultiStaMultiInternetConcurrencyEnabled">false</bool>
     <!-- Enable the default coex channel avoidance algorithm and disable the functionality of
          WifiManager#setCoexUnsafeChannels. -->
     <bool translatable="false" name="config_wifiDefaultCoexAlgorithmEnabled">false</bool>
@@ -685,6 +688,11 @@
      Enabling this configuration will restore legacy behavior but may result in incorrect behavior.
      -->
     <bool translatable="false" name="config_wifiAllowMultipleNetworksOnSameAwareNdi">false</bool>
+
+    <!-- A boolean indicate if device supports ser channel on the Aware data-path setup. If the
+    value is false, channel setting on the data-path request will be ignored.
+    -->
+    <bool translatable="false" name="config_wifiSupportChannelOnDataPath">false</bool>
 
     <!-- Integer threshold for minimum packets required to notify clients of data activity -->
     <integer translatable="false" name="config_wifiTrafficPollerTxPacketThreshold">0</integer>
@@ -755,4 +763,7 @@
 
     <!-- Indicate IP Reachability lost to be ignored after 10 sec of connection/roam -->
     <bool translatable="false" name="config_disconnectOnlyOnInitialIpReachability">true</bool>
+
+    <!-- Indicate the help page link for the Root CA certifiate installation. -->
+    <string translatable="false" name="config_wifiCertInstallationHelpLink">https://support.google.com/pixelphone/answer/2844832</string>
 </resources>

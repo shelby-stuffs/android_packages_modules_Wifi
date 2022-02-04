@@ -226,6 +226,7 @@ public class WifiInjector {
     private final UntrustedWifiNetworkFactory mUntrustedWifiNetworkFactory;
     private final OemWifiNetworkFactory mOemWifiNetworkFactory;
     private final RestrictedWifiNetworkFactory mRestrictedWifiNetworkFactory;
+    private final MultiInternetWifiNetworkFactory mMultiInternetWifiNetworkFactory;
     private final WifiP2pConnection mWifiP2pConnection;
     private final WifiGlobals mWifiGlobals;
     private final SimRequiredNotifier mSimRequiredNotifier;
@@ -233,6 +234,7 @@ public class WifiInjector {
     private final AdaptiveConnectivityEnabledSettingObserver
             mAdaptiveConnectivityEnabledSettingObserver;
     private final MakeBeforeBreakManager mMakeBeforeBreakManager;
+    private final MultiInternetManager mMultiInternetManager;
     private final ClientModeImplMonitor mCmiMonitor = new ClientModeImplMonitor();
     private final ExternalScoreUpdateObserverProxy mExternalScoreUpdateObserverProxy;
     private final WifiNotificationManager mWifiNotificationManager;
@@ -360,7 +362,7 @@ public class WifiInjector {
         mWifiBlocklistMonitor = new WifiBlocklistMonitor(mContext, mWifiConnectivityHelper,
                 mWifiLastResortWatchdog, mClock, new LocalLog(
                 mContext.getSystemService(ActivityManager.class).isLowRamDevice() ? 128 : 256),
-                mWifiScoreCard, mScoringParams, mWifiMetrics);
+                mWifiScoreCard, mScoringParams, mWifiMetrics, mWifiPermissionsUtil);
         mWifiMetrics.setWifiBlocklistMonitor(mWifiBlocklistMonitor);
         // Config Manager
         mWifiConfigManager = new WifiConfigManager(mContext, mClock,
@@ -452,14 +454,16 @@ public class WifiInjector {
                 mWifiConfigManager, mWifiConfigStore, mConnectHelper,
                 new ConnectToNetworkNotificationBuilder(mContext, mFrameworkFacade),
                 mMakeBeforeBreakManager, mWifiNotificationManager);
+        mMultiInternetManager = new MultiInternetManager(mActiveModeWarden, mFrameworkFacade,
+                mContext, mCmiMonitor, mSettingsStore, wifiHandler, mClock);
         mWifiConnectivityManager = new WifiConnectivityManager(
                 mContext, mScoringParams, mWifiConfigManager,
                 mWifiNetworkSuggestionsManager, mWifiNetworkSelector,
                 mWifiConnectivityHelper, mWifiLastResortWatchdog, mOpenNetworkNotifier,
                 mWifiMetrics, wifiHandler,
                 mClock, mConnectivityLocalLog, mWifiScoreCard, mWifiBlocklistMonitor,
-                mWifiChannelUtilizationScan, mPasspointManager, mDeviceConfigFacade,
-                mActiveModeWarden, mWifiGlobals);
+                mWifiChannelUtilizationScan, mPasspointManager, mMultiInternetManager,
+                mDeviceConfigFacade, mActiveModeWarden, mFrameworkFacade, mWifiGlobals);
         mMboOceController = new MboOceController(makeTelephonyManager(), mActiveModeWarden);
         mCountryCode = new WifiCountryCode(mContext, mActiveModeWarden,
                 mCmiMonitor, mWifiNative, mSettingsConfigStore);
@@ -473,8 +477,9 @@ public class WifiInjector {
                 (AlarmManager) mContext.getSystemService(Context.ALARM_SERVICE),
                 (AppOpsManager) mContext.getSystemService(Context.APP_OPS_SERVICE),
                 mClock, this, mWifiConnectivityManager, mWifiConfigManager,
-                mWifiConfigStore, mWifiPermissionsUtil, mWifiMetrics, mActiveModeWarden,
-                mConnectHelper, mCmiMonitor);
+                mWifiConfigStore, mWifiPermissionsUtil, mWifiMetrics, mWifiNative,
+                mActiveModeWarden, mConnectHelper, mCmiMonitor, mFrameworkFacade,
+                mMultiInternetManager);
         // We can't filter untrusted network in the capabilities filter because a trusted
         // network would still satisfy a request that accepts untrusted ones.
         // We need a second network factory for untrusted network requests because we need a
@@ -488,7 +493,11 @@ public class WifiInjector {
         mRestrictedWifiNetworkFactory = new RestrictedWifiNetworkFactory(
                 wifiLooper, mContext, RESTRICTED_NETWORK_CAPABILITIES_FILTER,
                 mWifiConnectivityManager);
-
+        mMultiInternetWifiNetworkFactory = new MultiInternetWifiNetworkFactory(
+                wifiLooper, mContext, REGULAR_NETWORK_CAPABILITIES_FILTER,
+                mFrameworkFacade, mContext.getSystemService(AlarmManager.class),
+                mWifiPermissionsUtil, mMultiInternetManager, mWifiConnectivityManager,
+                mConnectivityLocalLog);
         mWifiScanAlwaysAvailableSettingsCompatibility =
                 new WifiScanAlwaysAvailableSettingsCompatibility(mContext, wifiHandler,
                         mSettingsStore, mActiveModeWarden, mFrameworkFacade);
@@ -564,6 +573,7 @@ public class WifiInjector {
         mWifiConnectivityManager.enableVerboseLogging(verboseEnabled);
         mWifiNetworkSelector.enableVerboseLogging(verboseEnabled);
         mMakeBeforeBreakManager.setVerboseLoggingEnabled(verboseEnabled);
+        mMultiInternetManager.setVerboseLoggingEnabled(verboseEnabled);
         mBroadcastQueue.setVerboseLoggingEnabled(verboseEnabled);
         if (SdkLevel.isAtLeastS()) {
             mCoexManager.enableVerboseLogging(verboseEnabled);
@@ -750,7 +760,7 @@ public class WifiInjector {
                 mWifiBlocklistMonitor, mConnectionFailureNotifier,
                 REGULAR_NETWORK_CAPABILITIES_FILTER, mWifiNetworkFactory,
                 mUntrustedWifiNetworkFactory, mOemWifiNetworkFactory, mRestrictedWifiNetworkFactory,
-                mWifiLastResortWatchdog, mWakeupController,
+                mMultiInternetManager, mWifiLastResortWatchdog, mWakeupController,
                 mLockManager, mFrameworkFacade, mWifiHandlerThread.getLooper(),
                 mWifiNative, new WrongPasswordNotifier(mContext, mFrameworkFacade,
                 mWifiNotificationManager),
@@ -763,10 +773,10 @@ public class WifiInjector {
                         mWifiNative, mWifiBlocklistMonitor, mWifiThreadRunner, mWifiScoreCard,
                         mDeviceConfigFacade, mContext, mAdaptiveConnectivityEnabledSettingObserver,
                         ifaceName, mExternalScoreUpdateObserverProxy, mSettingsStore, mWifiGlobals,
-                        mActiveModeWarden, mWifiConnectivityManager),
+                        mActiveModeWarden, mWifiConnectivityManager, mWifiConfigManager),
                 mWifiP2pConnection, mWifiGlobals, ifaceName, clientModeManager,
                 mCmiMonitor, mBroadcastQueue, mWifiNetworkSelector, makeTelephonyManager(),
-                this, mSettingsConfigStore, verboseLoggingEnabled);
+                this, mSettingsConfigStore, verboseLoggingEnabled, mWifiNotificationManager);
     }
 
     public WifiNetworkAgent makeWifiNetworkAgent(
@@ -1023,6 +1033,10 @@ public class WifiInjector {
         return mRestrictedWifiNetworkFactory;
     }
 
+    public MultiInternetWifiNetworkFactory getMultiInternetWifiNetworkFactory() {
+        return mMultiInternetWifiNetworkFactory;
+    }
+
     public WifiDiagnostics getWifiDiagnostics() {
         return mWifiDiagnostics;
     }
@@ -1085,6 +1099,10 @@ public class WifiInjector {
 
     public LinkProbeManager getLinkProbeManager() {
         return mLinkProbeManager;
+    }
+
+    public MultiInternetManager getMultiInternetManager() {
+        return mMultiInternetManager;
     }
 
     /**

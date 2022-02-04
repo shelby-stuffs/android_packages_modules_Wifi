@@ -22,6 +22,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SystemApi;
 import android.net.MacAddress;
+import android.net.wifi.util.HexEncoding;
 import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -39,6 +40,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -185,6 +187,11 @@ public final class SoftApConfiguration implements Parcelable {
     private final @Nullable MacAddress mBssid;
 
     /**
+     * Vendor elements for the AP, structured as dd+len+elements
+     */
+    private final @NonNull List<ScanResult.InformationElement> mVendorElements;
+
+    /**
      * Pre-shared key for WPA2-PSK or WPA3-SAE-Transition or WPA3-SAE encryption which depends on
      * the security type.
      */
@@ -250,21 +257,36 @@ public final class SoftApConfiguration implements Parcelable {
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = {"RANDOMIZATION_"}, value = {
             RANDOMIZATION_NONE,
-            RANDOMIZATION_PERSISTENT})
+            RANDOMIZATION_PERSISTENT,
+            RANDOMIZATION_NON_PERSISTENT})
     public @interface MacRandomizationSetting {}
 
     /**
-     * Use factory MAC as BSSID for the AP
+     * Use the factory MAC address as the BSSID of the AP.
+     *
      * @hide
      */
     @SystemApi
     public static final int RANDOMIZATION_NONE = 0;
+
     /**
-     * Generate a randomized MAC as BSSID for the AP
+     * Generate a persistent randomized MAC address as the BSSID of the AP.
+     * The MAC address is persisted per SSID - i.e. as long as the SSID of the AP doesn't change
+     * then it will have a persistent MAC address (which is initially random and is not the factory
+     * MAC address).
+     *
      * @hide
      */
     @SystemApi
     public static final int RANDOMIZATION_PERSISTENT = 1;
+
+    /**
+     * Generate a randomized MAC address as the BSSID of the AP. The MAC address is not persisted
+     * - it is re-generated every time the AP is re-enabled.
+     * @hide
+     */
+    @SystemApi
+    public static final int RANDOMIZATION_NON_PERSISTENT = 2;
 
     /**
      * Level of MAC randomization for the AP BSSID.
@@ -342,6 +364,7 @@ public final class SoftApConfiguration implements Parcelable {
             int macRandomizationSetting, boolean bridgedModeOpportunisticShutdownEnabled,
             boolean ieee80211axEnabled, boolean isUserConfiguration,
             long bridgedModeOpportunisticShutdownTimeoutMillis,
+            @NonNull List<ScanResult.InformationElement> vendorElements,
             @Nullable String oweTransIfaceName) {
         mWifiSsid = ssid;
         mBssid = bssid;
@@ -366,6 +389,7 @@ public final class SoftApConfiguration implements Parcelable {
         mIsUserConfiguration = isUserConfiguration;
         mBridgedModeOpportunisticShutdownTimeoutMillis =
                 bridgedModeOpportunisticShutdownTimeoutMillis;
+        mVendorElements = new ArrayList<>(vendorElements);
         mOweTransIfaceName = oweTransIfaceName;
     }
 
@@ -397,6 +421,7 @@ public final class SoftApConfiguration implements Parcelable {
                 && mIsUserConfiguration == other.mIsUserConfiguration
                 && mBridgedModeOpportunisticShutdownTimeoutMillis
                         == other.mBridgedModeOpportunisticShutdownTimeoutMillis
+                && Objects.equals(mVendorElements, other.mVendorElements)
                 && mOweTransIfaceName == other.mOweTransIfaceName;
     }
 
@@ -408,7 +433,7 @@ public final class SoftApConfiguration implements Parcelable {
                 mAllowedClientList, mMacRandomizationSetting,
                 mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
                 mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
-                mOweTransIfaceName);
+                mVendorElements, mOweTransIfaceName);
     }
 
     @Override
@@ -434,6 +459,7 @@ public final class SoftApConfiguration implements Parcelable {
                 .append(mBridgedModeOpportunisticShutdownTimeoutMillis);
         sbuf.append(" \n Ieee80211axEnabled = ").append(mIeee80211axEnabled);
         sbuf.append(" \n isUserConfiguration = ").append(mIsUserConfiguration);
+        sbuf.append(" \n vendorElements = ").append(mVendorElements);
         sbuf.append(" \n OWE Transition mode Iface =").append(mOweTransIfaceName);
         return sbuf.toString();
     }
@@ -457,6 +483,7 @@ public final class SoftApConfiguration implements Parcelable {
         dest.writeBoolean(mIeee80211axEnabled);
         dest.writeBoolean(mIsUserConfiguration);
         dest.writeLong(mBridgedModeOpportunisticShutdownTimeoutMillis);
+        dest.writeTypedList(mVendorElements);
         dest.writeString(mOweTransIfaceName);
     }
 
@@ -512,7 +539,9 @@ public final class SoftApConfiguration implements Parcelable {
                     in.readInt(), in.readBoolean(), in.readLong(), in.readBoolean(),
                     in.createTypedArrayList(MacAddress.CREATOR),
                     in.createTypedArrayList(MacAddress.CREATOR), in.readInt(), in.readBoolean(),
-                    in.readBoolean(), in.readBoolean(), in.readLong(), in.readString());
+                    in.readBoolean(), in.readBoolean(), in.readLong(),
+                    in.createTypedArrayList(ScanResult.InformationElement.CREATOR),
+                    in.readString());
         }
 
         @Override
@@ -545,6 +574,28 @@ public final class SoftApConfiguration implements Parcelable {
     @Nullable
     public WifiSsid getWifiSsid() {
         return mWifiSsid;
+    }
+
+    /**
+     * Return VendorElements for the AP.
+     * @hide
+     */
+    @NonNull
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @SystemApi
+    public List<ScanResult.InformationElement> getVendorElements() {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        return getVendorElementsInternal();
+    }
+
+    /**
+     * @see #getVendorElements()
+     * @hide
+     */
+    public List<ScanResult.InformationElement> getVendorElementsInternal() {
+        return new ArrayList<>(mVendorElements);
     }
 
     /**
@@ -958,6 +1009,7 @@ public final class SoftApConfiguration implements Parcelable {
         private boolean mIeee80211axEnabled;
         private boolean mIsUserConfiguration;
         private long mBridgedModeOpportunisticShutdownTimeoutMillis;
+        private List<ScanResult.InformationElement> mVendorElements;
         private String mOweTransIfaceName;
 
         /**
@@ -977,11 +1029,16 @@ public final class SoftApConfiguration implements Parcelable {
             mClientControlByUser = false;
             mBlockedClientList = new ArrayList<>();
             mAllowedClientList = new ArrayList<>();
-            mMacRandomizationSetting = RANDOMIZATION_PERSISTENT;
+            if (SdkLevel.isAtLeastT()) {
+                mMacRandomizationSetting = RANDOMIZATION_NON_PERSISTENT;
+            } else {
+                mMacRandomizationSetting = RANDOMIZATION_PERSISTENT;
+            }
             mBridgedModeOpportunisticShutdownEnabled = true;
             mIeee80211axEnabled = true;
             mIsUserConfiguration = true;
             mBridgedModeOpportunisticShutdownTimeoutMillis = 0;
+            mVendorElements = new ArrayList<>();
             mOweTransIfaceName = null;
         }
 
@@ -1010,6 +1067,7 @@ public final class SoftApConfiguration implements Parcelable {
             mIsUserConfiguration = other.mIsUserConfiguration;
             mBridgedModeOpportunisticShutdownTimeoutMillis =
                     other.mBridgedModeOpportunisticShutdownTimeoutMillis;
+            mVendorElements = new ArrayList<>(other.mVendorElements);
             mOweTransIfaceName = other.mOweTransIfaceName;
         }
 
@@ -1031,7 +1089,7 @@ public final class SoftApConfiguration implements Parcelable {
                     mBlockedClientList, mAllowedClientList, mMacRandomizationSetting,
                     mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
                     mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
-                    mOweTransIfaceName);
+                    mVendorElements, mOweTransIfaceName);
         }
 
         /**
@@ -1080,6 +1138,39 @@ public final class SoftApConfiguration implements Parcelable {
                 throw new UnsupportedOperationException();
             }
             mWifiSsid = wifiSsid;
+            return this;
+        }
+
+        /**
+         * Specify vendor-specific information elements for the (Soft) AP to transmit in its beacons
+         * and probe responses. Method also validates the structure and throws
+         * IllegalArgumentException in cases when ID of IE is not 0xDD (221) or incoming list
+         * contain duplicate elements.
+         *
+         * @param vendorElements VendorElements
+         * @return Builder for chaining.
+         */
+        @NonNull
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        public Builder setVendorElements(
+                @NonNull List<ScanResult.InformationElement> vendorElements) {
+            if (!SdkLevel.isAtLeastT()) {
+                throw new UnsupportedOperationException();
+            }
+            for (ScanResult.InformationElement e : vendorElements) {
+                if (e.id != ScanResult.InformationElement.EID_VSA) {
+                    throw new IllegalArgumentException("received InformationElement which is not "
+                            + "related to VendorElements. VendorElement block should start with "
+                            + HexEncoding.encodeToString(
+                                    new byte[]{ (byte) ScanResult.InformationElement.EID_VSA }));
+                }
+            }
+            final HashSet<ScanResult.InformationElement> set = new HashSet<>(vendorElements);
+            if (set.size() < vendorElements.size()) {
+                throw new IllegalArgumentException("vendor elements array contain duplicates. "
+                        + "Please avoid passing duplicated and keep structure clean.");
+            }
+            mVendorElements = new ArrayList<>(vendorElements);
             return this;
         }
 
@@ -1535,20 +1626,23 @@ public final class SoftApConfiguration implements Parcelable {
          * Specifies the level of MAC randomization for the AP BSSID.
          * The Soft AP BSSID will be randomized only if the BSSID isn't set
          * {@link #setBssid(MacAddress)} and this method is either uncalled
-         * or called with {@link #RANDOMIZATION_PERSISTENT}.
+         * or called with {@link #RANDOMIZATION_PERSISTENT} or
+         * {@link #RANDOMIZATION_NON_PERSISTENT}.
          *
          * <p>
-         * <li>If not set, defaults to {@link #RANDOMIZATION_PERSISTENT}</li>
+         * <li>If not set, defaults to {@link #RANDOMIZATION_NON_PERSISTENT}</li>
          *
          * <p>
-         * Requires HAL support when set to {@link #RANDOMIZATION_PERSISTENT}.
+         * Requires HAL support when set to {@link #RANDOMIZATION_PERSISTENT} or
+         * {@link #RANDOMIZATION_NON_PERSISTENT}.
          * Use {@link WifiManager.SoftApCallback#onCapabilityChanged(SoftApCapability)} and
          * {@link SoftApCapability#areFeaturesSupported(long)}
          * with {@link SoftApCapability.SOFTAP_FEATURE_MAC_ADDRESS_CUSTOMIZATION} to determine
          * whether or not this feature is supported.
          *
          * @param macRandomizationSetting One of the following setting:
-         * {@link #RANDOMIZATION_NONE} or {@link #RANDOMIZATION_PERSISTENT}.
+         * {@link #RANDOMIZATION_NONE}, {@link #RANDOMIZATION_PERSISTENT} or
+         * {@link #RANDOMIZATION_NON_PERSISTENT}.
          * @return Builder for chaining.
          *
          * @see #setBssid(MacAddress)

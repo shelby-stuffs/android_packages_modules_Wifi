@@ -220,6 +220,7 @@ package android.net.wifi {
   }
 
   public final class ScanResult implements android.os.Parcelable {
+    method public int getBand();
     method public void setWifiSsid(@NonNull android.net.wifi.WifiSsid);
     field public static final int CIPHER_BIP_CMAC_256 = 9; // 0x9
     field public static final int CIPHER_BIP_GMAC_128 = 7; // 0x7
@@ -281,6 +282,7 @@ package android.net.wifi {
     method public int getMacRandomizationSetting();
     method public int getMaxNumberOfClients();
     method public long getShutdownTimeoutMillis();
+    method @NonNull public java.util.List<android.net.wifi.ScanResult.InformationElement> getVendorElements();
     method public boolean isAutoShutdownEnabled();
     method public boolean isBridgedModeOpportunisticShutdownEnabled();
     method public boolean isClientControlByUserEnabled();
@@ -293,6 +295,7 @@ package android.net.wifi {
     field public static final int BAND_6GHZ = 4; // 0x4
     field @Deprecated public static final int BAND_ANY = 7; // 0x7
     field public static final int RANDOMIZATION_NONE = 0; // 0x0
+    field public static final int RANDOMIZATION_NON_PERSISTENT = 2; // 0x2
     field public static final int RANDOMIZATION_PERSISTENT = 1; // 0x1
   }
 
@@ -318,6 +321,7 @@ package android.net.wifi {
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setPassphrase(@Nullable String, int);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setShutdownTimeoutMillis(@IntRange(from=0) long);
     method @Deprecated @NonNull public android.net.wifi.SoftApConfiguration.Builder setSsid(@Nullable String);
+    method @NonNull public android.net.wifi.SoftApConfiguration.Builder setVendorElements(@NonNull java.util.List<android.net.wifi.ScanResult.InformationElement>);
     method @NonNull public android.net.wifi.SoftApConfiguration.Builder setWifiSsid(@Nullable android.net.wifi.WifiSsid);
   }
 
@@ -538,9 +542,10 @@ package android.net.wifi {
     method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_SETUP_WIZARD}) public java.util.Map<android.net.wifi.hotspot2.OsuProvider,java.util.List<android.net.wifi.ScanResult>> getMatchingOsuProviders(@Nullable java.util.List<android.net.wifi.ScanResult>);
     method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_SETUP_WIZARD}) public java.util.Map<android.net.wifi.hotspot2.OsuProvider,android.net.wifi.hotspot2.PasspointConfiguration> getMatchingPasspointConfigsForOsuProviders(@NonNull java.util.Set<android.net.wifi.hotspot2.OsuProvider>);
     method @NonNull @RequiresPermission(allOf={android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_WIFI_STATE}) public java.util.Map<android.net.wifi.WifiNetworkSuggestion,java.util.List<android.net.wifi.ScanResult>> getMatchingScanResults(@NonNull java.util.List<android.net.wifi.WifiNetworkSuggestion>, @Nullable java.util.List<android.net.wifi.ScanResult>);
-    method @RequiresPermission(allOf={android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_WIFI_STATE, android.Manifest.permission.READ_WIFI_CREDENTIAL}, conditional=true) public java.util.List<android.net.wifi.WifiConfiguration> getPrivilegedConfiguredNetworks();
+    method @RequiresPermission(allOf={android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_WIFI_STATE, android.Manifest.permission.READ_WIFI_CREDENTIAL}, conditional=true) public java.util.List<android.net.wifi.WifiConfiguration> getPrivilegedConfiguredNetworks();
     method @Nullable @RequiresPermission(allOf={android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_WIFI_STATE, android.Manifest.permission.READ_WIFI_CREDENTIAL}, conditional=true) public android.net.wifi.WifiConfiguration getPrivilegedConnectedNetwork();
     method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public android.net.wifi.SoftApConfiguration getSoftApConfiguration();
+    method @NonNull @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}, conditional=true) public java.util.Set<android.net.wifi.WifiSsid> getSsidsDoNotBlocklist();
     method @NonNull @RequiresPermission(android.Manifest.permission.LOCATION_HARDWARE) public java.util.List<android.net.wifi.WifiAvailableChannel> getUsableChannels(int, int);
     method public int getVerboseLoggingLevel();
     method @RequiresPermission(android.Manifest.permission.ACCESS_WIFI_STATE) public void getWifiActivityEnergyInfoAsync(@NonNull java.util.concurrent.Executor, @NonNull android.net.wifi.WifiManager.OnWifiActivityEnergyInfoListener);
@@ -583,6 +588,8 @@ package android.net.wifi {
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setScanThrottleEnabled(boolean);
     method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}) public void setScreenOnScanSchedule(@Nullable int[], @Nullable int[]);
     method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public boolean setSoftApConfiguration(@NonNull android.net.wifi.SoftApConfiguration);
+    method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}, conditional=true) public void setSsidsDoNotBlocklist(@NonNull java.util.Set<android.net.wifi.WifiSsid>);
+    method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_SETUP_WIZARD}) public boolean setStaConcurrencyForMultiInternetMode(int);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setVerboseLoggingEnabled(boolean);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void setVerboseLoggingLevel(int);
     method @Deprecated @RequiresPermission(android.Manifest.permission.CHANGE_WIFI_STATE) public boolean setWifiApConfiguration(android.net.wifi.WifiConfiguration);
@@ -1042,7 +1049,7 @@ package android.net.wifi.aware {
   }
 
   public class WifiAwareManager {
-    method public void enableInstantCommunicationMode(boolean);
+    method @RequiresPermission(android.Manifest.permission.CHANGE_WIFI_STATE) public void enableInstantCommunicationMode(boolean);
   }
 
   public class WifiAwareSession implements java.lang.AutoCloseable {
@@ -1122,7 +1129,7 @@ package android.net.wifi.p2p {
   public class WifiP2pManager {
     method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_STACK, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public void deletePersistentGroup(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, int, @Nullable android.net.wifi.p2p.WifiP2pManager.ActionListener);
     method @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS) public void factoryReset(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @Nullable android.net.wifi.p2p.WifiP2pManager.ActionListener);
-    method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_STACK, android.Manifest.permission.READ_WIFI_CREDENTIAL}) public void requestPersistentGroupInfo(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @Nullable android.net.wifi.p2p.WifiP2pManager.PersistentGroupInfoListener);
+    method @RequiresPermission(allOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_STACK, android.Manifest.permission.READ_WIFI_CREDENTIAL, android.Manifest.permission.NEARBY_WIFI_DEVICES, android.Manifest.permission.ACCESS_FINE_LOCATION}, conditional=true) public void requestPersistentGroupInfo(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @Nullable android.net.wifi.p2p.WifiP2pManager.PersistentGroupInfoListener);
     method @RequiresPermission(anyOf={android.Manifest.permission.NETWORK_SETTINGS, android.Manifest.permission.NETWORK_STACK, android.Manifest.permission.OVERRIDE_WIFI_CONFIG}) public void setDeviceName(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @NonNull String, @Nullable android.net.wifi.p2p.WifiP2pManager.ActionListener);
     method @RequiresPermission(android.Manifest.permission.CONFIGURE_WIFI_DISPLAY) public void setMiracastMode(int);
     method @RequiresPermission(android.Manifest.permission.CONFIGURE_WIFI_DISPLAY) public void setWfdInfo(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @NonNull android.net.wifi.p2p.WifiP2pWfdInfo, @Nullable android.net.wifi.p2p.WifiP2pManager.ActionListener);

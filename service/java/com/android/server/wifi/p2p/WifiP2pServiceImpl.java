@@ -1226,6 +1226,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     return "WifiP2pMonitor.SUP_CONNECTION_EVENT";
                 case WifiP2pMonitor.SUP_DISCONNECTION_EVENT:
                     return "WifiP2pMonitor.SUP_DISCONNECTION_EVENT";
+                case WifiP2pMonitor.P2P_FREQUENCY_CHANGED_EVENT:
+                    return "WifiP2pMonitor.P2P_FREQUENCY_CHANGED_EVENT";
                 case WpsInfo.DISPLAY:
                     return "WpsInfo.DISPLAY";
                 case WpsInfo.KEYPAD:
@@ -1345,6 +1347,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     WifiP2pMonitor.SUP_CONNECTION_EVENT, getHandler());
             mWifiMonitor.registerHandler(mInterfaceName,
                     WifiP2pMonitor.SUP_DISCONNECTION_EVENT, getHandler());
+            mWifiMonitor.registerHandler(mInterfaceName,
+                    WifiP2pMonitor.P2P_FREQUENCY_CHANGED_EVENT, getHandler());
 
             mWifiMonitor.startMonitoring(mInterfaceName);
         }
@@ -1578,11 +1582,27 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                 maybeEraseOwnDeviceAddress(mGroup, message.sendingUid));
                         break;
                     }
-                    case WifiP2pManager.REQUEST_PERSISTENT_GROUP_INFO:
+                    case WifiP2pManager.REQUEST_PERSISTENT_GROUP_INFO: {
                         if (!checkNetworkSettingsOrNetworkStackOrReadWifiCredentialPermission(
                                 message.sendingUid)) {
                             loge("Permission violation - none of NETWORK_SETTING, NETWORK_STACK,"
                                     + " or READ_WIFI_CREDENTIAL permission, uid = "
+                                    + message.sendingUid);
+                            replyToMessage(message, WifiP2pManager.RESPONSE_PERSISTENT_GROUP_INFO,
+                                    new WifiP2pGroupList());
+                            break;
+                        }
+                        String packageName = getCallingPkgName(message.sendingUid, message.replyTo);
+                        if (packageName == null) {
+                            replyToMessage(message, WifiP2pManager.RESPONSE_PERSISTENT_GROUP_INFO,
+                                    new WifiP2pGroupList());
+                            break;
+                        }
+                        Bundle extras = (Bundle) message.obj;
+                        if (!isPlatformOrTargetSdkLessThanT(packageName, message.sendingUid)
+                                && !checkNearbyDevicesPermission(message.sendingUid, packageName,
+                                        extras, "REQUEST_PERSISTENT_GROUP_INFO")) {
+                            loge("Permission violation - no NEARBY_WIFI_DEVICES permission, uid = "
                                     + message.sendingUid);
                             replyToMessage(message, WifiP2pManager.RESPONSE_PERSISTENT_GROUP_INFO,
                                     new WifiP2pGroupList());
@@ -1593,6 +1613,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                         maybeEraseOwnDeviceAddress(mGroups, message.sendingUid),
                                         null));
                         break;
+                    }
                     case WifiP2pManager.REQUEST_P2P_STATE:
                         replyToMessage(message, WifiP2pManager.RESPONSE_P2P_STATE,
                                 isWifiP2pAvailable()
@@ -3659,6 +3680,12 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         }
 
                         replyToMessage(message, WifiP2pManager.CANCEL_CONNECT_SUCCEEDED);
+                        break;
+                    case WifiP2pMonitor.P2P_FREQUENCY_CHANGED_EVENT:
+                        if (mGroup != null) {
+                            mGroup.setFrequency(message.arg1);
+                            sendP2pConnectionChangedBroadcast();
+                        }
                         break;
                     default:
                         return NOT_HANDLED;

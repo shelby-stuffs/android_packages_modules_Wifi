@@ -16,6 +16,8 @@
 
 package com.android.server.wifi;
 
+import static android.net.wifi.SoftApConfiguration.RANDOMIZATION_NON_PERSISTENT;
+import static android.net.wifi.SoftApConfiguration.RANDOMIZATION_PERSISTENT;
 import static android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA2_PSK;
 import static android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION;
 
@@ -217,7 +219,7 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         assertEquals(15, config.getPassphrase().length());
         if (isMacRandomizationSupport) {
             assertEquals(config.getMacRandomizationSettingInternal(),
-                    SoftApConfiguration.RANDOMIZATION_PERSISTENT);
+                    SoftApConfiguration.RANDOMIZATION_NON_PERSISTENT);
         } else {
             assertEquals(config.getMacRandomizationSettingInternal(),
                     SoftApConfiguration.RANDOMIZATION_NONE);
@@ -260,7 +262,7 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         assertFalse(config.isAutoShutdownEnabled());
         if (isMacRandomizationSupport) {
             assertEquals(config.getMacRandomizationSettingInternal(),
-                    SoftApConfiguration.RANDOMIZATION_PERSISTENT);
+                    SoftApConfiguration.RANDOMIZATION_NON_PERSISTENT);
         } else {
             assertEquals(config.getMacRandomizationSettingInternal(),
                     SoftApConfiguration.RANDOMIZATION_NONE);
@@ -588,14 +590,41 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
     }
 
     @Test
-    public void randomizeBssid_randomizesWhenEnabled() throws Exception {
+    public void randomizeBssid_randomizesPersistWhenEnabled() throws Exception {
         mResources.setBoolean(R.bool.config_wifi_ap_mac_randomization_supported, true);
-        SoftApConfiguration baseConfig = new SoftApConfiguration.Builder().build();
+        SoftApConfiguration baseConfig = new SoftApConfiguration.Builder()
+                .setMacRandomizationSetting(RANDOMIZATION_PERSISTENT).build();
 
         WifiApConfigStore store = createWifiApConfigStore();
         SoftApConfiguration config = store.randomizeBssidIfUnset(mContext, baseConfig);
 
         assertEquals(TEST_RANDOMIZED_MAC, config.getBssid());
+
+        // The MAC is persist when configuration doesn't be changed.
+        config = store.randomizeBssidIfUnset(mContext, baseConfig);
+
+        assertEquals(TEST_RANDOMIZED_MAC, config.getBssid());
+    }
+
+    @Test
+    public void randomizeBssid_randomizesNonPersistWhenEnabled() throws Exception {
+        mResources.setBoolean(R.bool.config_wifi_ap_mac_randomization_supported, true);
+        SoftApConfiguration baseConfig = new SoftApConfiguration.Builder()
+                .setMacRandomizationSetting(RANDOMIZATION_NON_PERSISTENT).build();
+
+        WifiApConfigStore store = createWifiApConfigStore();
+        SoftApConfiguration config = store.randomizeBssidIfUnset(mContext, baseConfig);
+
+        // Verify that some randomized MAC address is still generated
+        MacAddress firstRandomizedMAC = config.getBssid();
+        assertNotNull(config.getBssid());
+        assertNotEquals(WifiInfo.DEFAULT_MAC_ADDRESS, firstRandomizedMAC.toString());
+
+        // Call again and verify it will randomize again.
+        config = store.randomizeBssidIfUnset(mContext, baseConfig);
+        assertNotNull(config.getBssid());
+        assertNotEquals(firstRandomizedMAC, config.getBssid());
+        assertNotEquals(WifiInfo.DEFAULT_MAC_ADDRESS, config.getBssid().toString());
     }
 
     @Test
@@ -1083,24 +1112,41 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
                 SoftApConfiguration.BAND_5GHZ,    /* AP band */
                 0,                                /* AP channel */
                 true                              /* Hidden SSID */);
+        // Test 5G only band config will be appended 2.4G band into config
+        SoftApConfiguration.Builder testConfigBuilder =
+                new SoftApConfiguration.Builder(config5Gonly);
+        SoftApConfiguration.Builder expectedConfigBuilder =
+                new SoftApConfiguration.Builder(testConfigBuilder.build())
+                .setBand(SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ);
+        store.setApConfiguration(testConfigBuilder.build());
+        verifyApConfig(expectedConfigBuilder.build(), store.getApConfiguration());
 
-        SoftApConfiguration expectedConfig = new SoftApConfiguration.Builder(config5Gonly)
-                .setBand(SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ)
-                .build();
-        store.setApConfiguration(config5Gonly);
-        verifyApConfig(expectedConfig, store.getApConfiguration());
+        // Test 6G only band config will be appended 2.4G & 5G band into config.
+        testConfigBuilder.setBand(SoftApConfiguration.BAND_6GHZ);
 
+        expectedConfigBuilder.setBand(SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ
+                | SoftApConfiguration.BAND_6GHZ);
+        store.setApConfiguration(testConfigBuilder.build());
+        verifyApConfig(expectedConfigBuilder.build(), store.getApConfiguration());
+
+        // Dual bands test case
         if (SdkLevel.isAtLeastS()) {
-            SoftApConfiguration bridgedConfig2GAnd5G = new SoftApConfiguration.Builder(config5Gonly)
-                    .setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
-                            SoftApConfiguration.BAND_5GHZ})
-                    .build();
+            testConfigBuilder.setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
+                    SoftApConfiguration.BAND_5GHZ}).build();
 
-            SoftApConfiguration expectedBridgedConfig = new SoftApConfiguration
-                    .Builder(bridgedConfig2GAnd5G)
-                    .setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
-                            SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ})
-                    .build();
+            expectedConfigBuilder.setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
+                    SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ});
+            store.setApConfiguration(testConfigBuilder.build());
+            verifyApConfig(expectedConfigBuilder.build(), store.getApConfiguration());
+
+            testConfigBuilder.setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
+                    SoftApConfiguration.BAND_6GHZ}).build();
+
+            expectedConfigBuilder.setBands(new int[] {SoftApConfiguration.BAND_2GHZ,
+                    SoftApConfiguration.BAND_2GHZ | SoftApConfiguration.BAND_5GHZ
+                            | SoftApConfiguration.BAND_6GHZ});
+            store.setApConfiguration(testConfigBuilder.build());
+            verifyApConfig(expectedConfigBuilder.build(), store.getApConfiguration());
         }
     }
 

@@ -298,32 +298,34 @@ public class WifiApConfigStore {
         SoftApConfiguration.Builder convertedConfigBuilder =
                 new SoftApConfiguration.Builder(config);
         int[] bands = config.getBands();
+        SparseIntArray newChannels = new SparseIntArray();
         // The bands length should always 1 in R. Adding SdkLevel.isAtLeastS for lint check only.
-        if (bands.length > 1 && SdkLevel.isAtLeastS()) {
-            // Consider 2.4G instance may be shutdown, i.e. only left 5G instance. If the 5G
-            // configuration is 5G band only, it will cause that driver can't switch channel from
-            // 5G to 2.4G when coexistence happene. Always append 2.4G into band configuration to
-            // allow driver handle coexistence case after 2.4G instance shutdown.
-            SparseIntArray newChannels = new SparseIntArray();
-            for (int i = 0; i < bands.length; i++) {
-                int channel = config.getChannels().valueAt(i);
-                if (channel == 0 && (bands[i] & SoftApConfiguration.BAND_2GHZ) == 0
-                        && ApConfigUtil.isBandSupported(bands[i], mContext)) {
-                    newChannels.put(ApConfigUtil.append24GToBandIf24GSupported(bands[i], mContext),
-                            0);
-                } else {
-                    newChannels.put(bands[i], channel);
+        for (int i = 0; i < bands.length; i++) {
+            int channel = SdkLevel.isAtLeastS()
+                    ? config.getChannels().valueAt(i) : config.getChannel();
+            int newBand = bands[i];
+            if (channel == 0 && ApConfigUtil.isBandSupported(newBand, mContext)) {
+                // some countries are unable to support 5GHz only operation, always allow for 2GHz
+                // when config doesn't force channel
+                if ((newBand & SoftApConfiguration.BAND_2GHZ) == 0) {
+                    newBand = ApConfigUtil.append24GToBandIf24GSupported(newBand, mContext);
+                }
+                // If the 6G configuration doesn't includes 5G band (2.4G have appended because
+                // countries reason), it will cause that driver can't switch channel from 6G to
+                // 5G/2.4G when coexistence happened (For instance: wifi connected to 2.4G or 5G
+                // channel). Always append 5G into band configuration when configured band includes
+                // 6G.
+                if ((newBand & SoftApConfiguration.BAND_6GHZ) != 0
+                        && (newBand & SoftApConfiguration.BAND_5GHZ) == 0) {
+                    newBand = ApConfigUtil.append5GToBandIf5GSupported(newBand, mContext);
                 }
             }
+            newChannels.put(newBand, channel);
+        }
+        if (SdkLevel.isAtLeastS()) {
             convertedConfigBuilder.setChannels(newChannels);
-        } else if (config.getChannel() == 0 && (bands[0] & SoftApConfiguration.BAND_2GHZ) == 0) {
-            // some countries are unable to support 5GHz only operation, always allow for 2GHz when
-            // config doesn't force channel
-            if (ApConfigUtil.isBandSupported(bands[0], mContext)) {
-                Log.i(TAG, "Supplied ap config band without 2.4G, add allowing for 2.4GHz");
-                convertedConfigBuilder.setBand(
-                        ApConfigUtil.append24GToBandIf24GSupported(bands[0], mContext));
-            }
+        } else if (bands.length > 0 && newChannels.valueAt(0) == 0) {
+            convertedConfigBuilder.setBand(newChannels.keyAt(0));
         }
         return convertedConfigBuilder.build();
     }
@@ -446,19 +448,22 @@ public class WifiApConfigStore {
      */
     SoftApConfiguration randomizeBssidIfUnset(Context context, SoftApConfiguration config) {
         SoftApConfiguration.Builder configBuilder = new SoftApConfiguration.Builder(config);
-        if (config.getBssid() == null && ApConfigUtil.isApMacRandomizationSupported(mContext)) {
+        if (config.getBssid() == null && ApConfigUtil.isApMacRandomizationSupported(mContext)
+                && config.getMacRandomizationSettingInternal()
+                    != SoftApConfiguration.RANDOMIZATION_NONE) {
+            MacAddress macAddress = null;
             if (config.getMacRandomizationSettingInternal()
-                    == SoftApConfiguration.RANDOMIZATION_NONE) {
-                return configBuilder.build();
+                    == SoftApConfiguration.RANDOMIZATION_PERSISTENT) {
+                WifiSsid ssid = config.getWifiSsid();
+                macAddress = mMacAddressUtil.calculatePersistentMac(
+                        ssid != null ? ssid.toString() : null,
+                        mMacAddressUtil.obtainMacRandHashFunctionForSap(Process.WIFI_UID));
+                if (macAddress == null) {
+                    Log.e(TAG, "Failed to calculate MAC from SSID. "
+                            + "Generating new random MAC instead.");
+                }
             }
-
-            WifiSsid ssid = config.getWifiSsid();
-            MacAddress macAddress = mMacAddressUtil.calculatePersistentMac(
-                    ssid != null ? ssid.toString() : null,
-                    mMacAddressUtil.obtainMacRandHashFunctionForSap(Process.WIFI_UID));
             if (macAddress == null) {
-                Log.e(TAG, "Failed to calculate MAC from SSID. "
-                        + "Generating new random MAC instead.");
                 macAddress = MacAddressUtils.createRandomUnicastAddress();
             }
             configBuilder.setBssid(macAddress);
