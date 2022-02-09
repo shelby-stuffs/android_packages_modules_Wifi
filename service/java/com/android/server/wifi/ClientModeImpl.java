@@ -73,6 +73,7 @@ import android.net.wifi.SecurityParams;
 import android.net.wifi.SupplicantState;
 import android.net.wifi.WifiAnnotations.WifiStandard;
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiContext;
 import android.net.wifi.WifiEnterpriseConfig;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -4625,7 +4626,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         }
                     }
                     mIpReachabilityMonitorActive = true;
-                    mWifiInfo.setCurrentNetworkKey(config.getNetworkKeyFromSecurityType(
+                    mWifiInfo.setNetworkKey(config.getNetworkKeyFromSecurityType(
                             mWifiInfo.getCurrentSecurityType()));
                     transitionTo(mL3ProvisioningState);
                     break;
@@ -4938,7 +4939,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                 mWifiInfo.setOsuAp(true);
                             }
                             mWifiInfo.setProviderFriendlyName(config.providerFriendlyName);
-                            mWifiInfo.setCurrentNetworkKey(
+                            mWifiInfo.setNetworkKey(
                                     config.getNetworkKeyFromSecurityType(
                                             mWifiInfo.getCurrentSecurityType()));
                         }

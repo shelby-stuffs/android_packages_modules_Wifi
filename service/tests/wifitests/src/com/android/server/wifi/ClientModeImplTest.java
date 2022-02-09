@@ -114,6 +114,7 @@ import android.net.wifi.SecurityParams;
 import android.net.wifi.SupplicantState;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiConfiguration.KeyMgmt;
+import android.net.wifi.WifiContext;
 import android.net.wifi.WifiEnterpriseConfig;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -1101,7 +1102,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         }
         assertEquals(Arrays.asList(scanResult.informationElements),
                     wifiInfo.getInformationElements());
-        assertNotNull(wifiInfo.getCurrentNetworkKey());
+        assertNotNull(wifiInfo.getNetworkKey());
         expectRegisterNetworkAgent((na) -> {
             if (!mConnectedNetwork.carrierMerged) {
                 assertNull(na.subscriberId);
