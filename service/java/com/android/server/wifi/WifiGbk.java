@@ -495,6 +495,19 @@ public class WifiGbk {
         return ssid;
     }
 
+    public static String toGbkHexSsidOrException(String ssid)
+            throws IllegalArgumentException {
+        byte[] gbk_bytes = getSsidBytes(ssid, "GBK");
+        if (gbk_bytes == null) {
+            throw new IllegalArgumentException("ssid " + ssid  + " to gbk_bytes null");
+        }
+        if (isAllAscii(gbk_bytes)) {
+            throw new IllegalArgumentException("ssid " + ssid  + " is ascii");
+        }
+
+        return NativeUtil.hexStringFromByteArray(gbk_bytes);
+    }
+
     /**
      * BssCache reprents Bss with Chinese SSIDs, including UTF-8 and GBK.
      */
