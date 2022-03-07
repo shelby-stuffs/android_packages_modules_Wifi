@@ -120,12 +120,27 @@ public final class SoftApCapability implements Parcelable {
     public static final long SOFTAP_FEATURE_BAND_60G_SUPPORTED = 1 << 8;
 
     /**
-     * Support for WPA3 Opportunistic Wireless Encryption (WPA3-OWE).
+     * Support for 802.11be SAP.
+     * flag when {@code R.bool.config_wifiSoftapIeee80211beSupported} is true
      *
-     * flag when {@link config_wifi_softap_owe_supported)} is true.
-     * @hide
+     * <p>
+     * Use this flag with {@link #areFeaturesSupported(long)}
+     * to verify that 802.11be is supported before enabling it using
+     * {@link SoftApConfiguration.Builder#setIeee80211beEnabled(boolean)}
      */
-    public static final long SOFTAP_FEATURE_WPA3_OWE = 1 << 9;
+    public static final long SOFTAP_FEATURE_IEEE80211_BE = 1 << 9;
+
+    /*
+     * Support for WPA3-Opportunistic Wireless Encryption (OWE) transition.
+     * flag when {@code R.bool.config_wifiSoftapOweTransitionSupported} is true.
+     */
+    public static final long SOFTAP_FEATURE_WPA3_OWE_TRANSITION = 1 << 10;
+
+    /*
+     * Support for WPA3-Opportunistic Wireless Encryption (OWE).
+     * flag when {@code R.bool.config_wifiSoftapOweSupported} is true.
+     */
+    public static final long SOFTAP_FEATURE_WPA3_OWE = 1 << 11;
 
     /** @hide */
     @Retention(RetentionPolicy.SOURCE)
@@ -135,11 +150,13 @@ public final class SoftApCapability implements Parcelable {
             SOFTAP_FEATURE_WPA3_SAE,
             SOFTAP_FEATURE_MAC_ADDRESS_CUSTOMIZATION,
             SOFTAP_FEATURE_IEEE80211_AX,
+            SOFTAP_FEATURE_IEEE80211_BE,
             SOFTAP_FEATURE_BAND_24G_SUPPORTED,
             SOFTAP_FEATURE_BAND_5G_SUPPORTED,
             SOFTAP_FEATURE_BAND_6G_SUPPORTED,
             SOFTAP_FEATURE_BAND_60G_SUPPORTED,
-            SOFTAP_FEATURE_WPA3_OWE
+            SOFTAP_FEATURE_WPA3_OWE_TRANSITION,
+            SOFTAP_FEATURE_WPA3_OWE,
     })
     public @interface HotspotFeatures {}
 

@@ -36,11 +36,17 @@
     <!-- boolean indicating whether the WiFi chipset has 60GHz band support -->
     <bool translatable="false" name ="config_wifi60ghzSupport">false</bool>
 
-      <!-- Indicates that 11ax mode is supported on this device
+    <!-- Indicates that 11ax mode is supported on this device
            Note that if this flag is set to true, then 11ax is assumed to be supported.
            However, if it is left to the default value of false, the 11ax support will
            be checked via NL80211 interface -->
     <bool translatable="false" name="config_wifi11axSupportOverride">false</bool>
+
+    <!-- Indicates that 11be mode is supported on this device
+           Note that if this flag is set to true, then 11be is assumed to be supported.
+           However, if it is left to the default value of false, the 11be support will
+           be checked via NL80211 interface -->
+    <bool translatable="false" name="config_wifi11beSupportOverride">false</bool>
 
     <!-- Indicates whether to enable overriding the max number of spatial stream supported by the device
          If true, config_wifiFrameworkMaxNumSpatialStreamDeviceOverrideValue
@@ -269,6 +275,9 @@
 
     <!-- Wifi driver supports IEEE80211AX for softap -->
     <bool translatable="false" name="config_wifiSoftapIeee80211axSupported">false</bool>
+
+    <!-- Wifi driver supports IEEE80211BE for softap -->
+    <bool translatable="false" name="config_wifiSoftapIeee80211beSupported">false</bool>
 
     <!-- Wifi driver supports IEEE80211AX single user beamformer for softap -->
     <bool translatable="false" name="config_wifiSoftapHeSuBeamformerSupported">false</bool>
@@ -694,6 +703,11 @@
     -->
     <bool translatable="false" name="config_wifiSupportChannelOnDataPath">false</bool>
 
+    <!-- A value indicate the duration of Wi-Fi Aware Instant Communication Mode for a single
+    session. When duration is finished, framework will disable the Instant Communication Mode.
+    -->
+    <integer translatable="false" name="config_wifiAwareInstantCommunicationModeDurationMillis">30000</integer>
+
     <!-- Integer threshold for minimum packets required to notify clients of data activity -->
     <integer translatable="false" name="config_wifiTrafficPollerTxPacketThreshold">0</integer>
     <integer translatable="false" name="config_wifiTrafficPollerRxPacketThreshold">0</integer>
@@ -766,4 +780,23 @@
 
     <!-- Indicate the help page link for the Root CA certifiate installation. -->
     <string translatable="false" name="config_wifiCertInstallationHelpLink">https://support.google.com/pixelphone/answer/2844832</string>
+
+    <!-- Indicate the number of networks to restore in a batch. 0 : all networks in a batch -->
+    <integer translatable="false" name="config_wifiConfigurationRestoreNetworksBatchNum">50</integer>
+
+    <!-- Wifi driver supports Opportunistic Wireless Encryption (OWE) Transition
+         aka Enhanced Open for Soft-AP -->
+    <bool translatable="false" name="config_wifiSoftapOweTransitionSupported">false</bool>
+
+    <!-- Wifi driver supports Opportunistic Wireless Encryption (OWE)
+         aka Enhanced Open for Soft-AP -->
+    <bool translatable="false" name="config_wifiSoftapOweSupported">false</bool>
+
+    <!-- Indicate the gravity of Wifi dialogs. Must be an integer corresponding to a
+         android.view.Gravity.GravityFlags constant. Default = Gravity.NO_GRAVITY (0) -->
+    <integer translatable="false" name="config_wifiDialogGravity">0</integer>
+
+    <!-- Indicate the time in milliseconds to wait before auto-cancelling a P2P invitation received
+         dialog that the user has not responded to. A value of 0 indicates no timeout. -->
+    <integer translatable="false" name="config_p2pInvitationReceivedDialogTimeoutMs">0</integer>
 </resources>

@@ -142,6 +142,7 @@ public class WifiApConfigStore {
             Log.d(TAG, "persisted config was converted, need to resave it");
             persistConfigAndTriggerBackupManagerProxy(sanitizedPersistentconfig);
         }
+
         if (mForceApChannel) {
             Log.d(TAG, "getApConfiguration: Band force to " + mForcedApBand
                     + ", and channel force to " + mForcedApChannel);
@@ -151,7 +152,7 @@ public class WifiApConfigStore {
                     : new SoftApConfiguration.Builder(mPersistentWifiApConfig)
                             .setChannel(mForcedApChannel, mForcedApBand).build();
         }
-        return mPersistentWifiApConfig;
+        return updatePersistentRandomizedMacAddress(mPersistentWifiApConfig);
     }
 
     /**
@@ -440,12 +441,11 @@ public class WifiApConfigStore {
                 configBuilder.setBand(SoftApConfiguration.BAND_5GHZ);
             }
         }
-
         if (customConfig == null || customConfig.getSsid() == null) {
             configBuilder.setSsid(generateLohsSsid(context));
         }
 
-        return configBuilder.build();
+        return updatePersistentRandomizedMacAddress(configBuilder.build());
     }
 
     /**
@@ -473,6 +473,9 @@ public class WifiApConfigStore {
                 macAddress = MacAddressUtils.createRandomUnicastAddress();
             }
             configBuilder.setBssid(macAddress);
+            if (macAddress != null && SdkLevel.isAtLeastS()) {
+                configBuilder.setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE);
+            }
         }
         return configBuilder.build();
     }
@@ -533,8 +536,7 @@ public class WifiApConfigStore {
             return false;
         }
 
-        if (authType == SoftApConfiguration.SECURITY_TYPE_OPEN
-            || authType == SoftApConfiguration.SECURITY_TYPE_OWE) {
+        if (ApConfigUtil.isNonPasswordAP(authType)) {
             // open networks should not have a password
             if (hasPreSharedKey) {
                 Log.d(TAG, "open softap network should not have a password");
@@ -571,6 +573,27 @@ public class WifiApConfigStore {
 
         if (!isBandsSupported(apConfig.getBands(), context)) {
             return false;
+        }
+
+        if (ApConfigUtil.isSecurityTypeRestrictedFor6gBand(authType)) {
+            for (int band : apConfig.getBands()) {
+                // Only return failure if requested band is limitted to 6GHz only
+                if (band == SoftApConfiguration.BAND_6GHZ) {
+                    Log.d(TAG, "security type is not allowed for softap in 6GHz band");
+                    return false;
+                }
+            }
+        }
+
+        if (SdkLevel.isAtLeastT()
+                && authType == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION) {
+            if (!ApConfigUtil.isBridgedModeSupported(context)) {
+                Log.d(TAG, "softap owe transition needs bridge mode support");
+                return false;
+            } else if (apConfig.getBands().length > 1) {
+                Log.d(TAG, "softap owe transition must use single band");
+                return false;
+            }
         }
 
         return true;
@@ -632,5 +655,15 @@ public class WifiApConfigStore {
      */
     public void disableForceSoftApBandOrChannel() {
         mForceApChannel = false;
+    }
+
+    private SoftApConfiguration updatePersistentRandomizedMacAddress(SoftApConfiguration config) {
+        // Update randomized MacAddress
+        WifiSsid ssid = config.getWifiSsid();
+        MacAddress randomizedMacAddress = mMacAddressUtil.calculatePersistentMac(
+                ssid != null ? ssid.toString() : null,
+                mMacAddressUtil.obtainMacRandHashFunctionForSap(Process.WIFI_UID));
+        return new SoftApConfiguration.Builder(config)
+                .setRandomizedMacAddress(randomizedMacAddress).build();
     }
 }

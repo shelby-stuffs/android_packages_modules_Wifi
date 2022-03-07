@@ -88,6 +88,7 @@ import android.content.AttributionSource;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.net.DhcpInfo;
+import android.net.DhcpOption;
 import android.net.MacAddress;
 import android.net.wifi.WifiManager.ActiveCountryCodeChangedCallback;
 import android.net.wifi.WifiManager.CoexCallback;
@@ -165,6 +166,8 @@ public class WifiManagerTest {
             MacAddress.fromString("22:33:44:aa:aa:77"),
             MacAddress.fromString("aa:bb:cc:11:11:ff"),
             MacAddress.fromString("22:bb:cc:11:aa:ff")};
+    private static final String TEST_SSID = "\"Test WiFi Networks\"";
+    private static final byte[] TEST_OUI = new byte[]{0x01, 0x02, 0x03};
 
     @Mock Context mContext;
     @Mock android.net.wifi.IWifiManager mWifiService;
@@ -183,7 +186,6 @@ public class WifiManagerTest {
     @Mock WifiConnectedNetworkScorer mWifiConnectedNetworkScorer;
     @Mock SuggestionUserApprovalStatusListener mSuggestionUserApprovalStatusListener;
     @Mock ActiveCountryCodeChangedCallback mActiveCountryCodeChangedCallback;
-    @Mock AttributionSource mAttributionSource;
 
     private Handler mHandler;
     private TestLooper mLooper;
@@ -280,7 +282,6 @@ public class WifiManagerTest {
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.Q;
         when(mContext.getApplicationInfo()).thenReturn(mApplicationInfo);
         when(mContext.getOpPackageName()).thenReturn(TEST_PACKAGE_NAME);
-        when(mContext.getAttributionSource()).thenReturn(mAttributionSource);
         mWifiManager = new WifiManager(mContext, mWifiService, mLooper.getLooper());
         verify(mWifiService).getVerboseLoggingLevel();
         mWifiNetworkSuggestion = new WifiNetworkSuggestion();
@@ -298,6 +299,8 @@ public class WifiManagerTest {
                     mRunnable.run();
                 }
             };
+            AttributionSource attributionSource = mock(AttributionSource.class);
+            when(mContext.getAttributionSource()).thenReturn(attributionSource);
         }
         mRestartCallback = new SubsystemRestartTrackingCallback() {
             @Override
@@ -725,12 +728,12 @@ public class WifiManagerTest {
         // test non-empty set
         List<WifiSsid> expectedSsids = new ArrayList<>();
         expectedSsids.add(WifiSsid.fromString("\"TEST_SSID\""));
-        mWifiManager.setSsidsDoNotBlocklist(new ArraySet<>(expectedSsids));
-        verify(mWifiService).setSsidsDoNotBlocklist(any(), eq(expectedSsids));
+        mWifiManager.setSsidsAllowlist(new ArraySet<>(expectedSsids));
+        verify(mWifiService).setSsidsAllowlist(any(), eq(expectedSsids));
 
         // test empty set
-        mWifiManager.setSsidsDoNotBlocklist(Collections.EMPTY_SET);
-        verify(mWifiService).setSsidsDoNotBlocklist(any(),
+        mWifiManager.setSsidsAllowlist(Collections.EMPTY_SET);
+        verify(mWifiService).setSsidsAllowlist(any(),
                 eq(Collections.EMPTY_LIST));
     }
 
@@ -3212,6 +3215,28 @@ public class WifiManagerTest {
         verify(mWifiService).setWifiScoringEnabled(true);
     }
 
+    /**
+     * Verify the call to addCustomDhcpOptions goes to WifiServiceImpl.
+     */
+    @Test
+    public void addCustomDhcpOptionsGoesToWifiServiceImpl() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        mWifiManager.addCustomDhcpOptions(
+                WifiSsid.fromString(TEST_SSID), TEST_OUI, new ArrayList<DhcpOption>());
+        verify(mWifiService).addCustomDhcpOptions(
+                WifiSsid.fromString(TEST_SSID), TEST_OUI, new ArrayList<DhcpOption>());
+    }
+
+    /**
+     * Verify the call to removeCustomDhcpOptions goes to WifiServiceImpl.
+     */
+    @Test
+    public void removeCustomDhcpOptionsGoesToWifiServiceImpl() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        mWifiManager.removeCustomDhcpOptions(WifiSsid.fromString(TEST_SSID), TEST_OUI);
+        verify(mWifiService).removeCustomDhcpOptions(WifiSsid.fromString(TEST_SSID), TEST_OUI);
+    }
+
     @Test
     public void testScanThrottle() throws Exception {
         mWifiManager.setScanThrottleEnabled(true);
@@ -3335,6 +3360,15 @@ public class WifiManagerTest {
         callbackCaptor.getValue().onUserApprovalStatusChange(
                 WifiManager.STATUS_SUGGESTION_APPROVAL_APPROVED_BY_USER);
         verify(mExecutor).execute(any(Runnable.class));
+    }
+
+    @Test
+    public void testSetExternalPnoScanRequestNullFrequencies() throws Exception {
+        mWifiManager.setExternalPnoScanRequest(mock(Executor.class), Collections.EMPTY_LIST,
+                null, mock(WifiManager.PnoScanResultsCallback.class));
+        // null frequencies should get converted to empty array
+        verify(mWifiService).setExternalPnoScanRequest(any(), any(), eq(Collections.EMPTY_LIST),
+                eq(new int[0]), any(), any());
     }
 
     @Test

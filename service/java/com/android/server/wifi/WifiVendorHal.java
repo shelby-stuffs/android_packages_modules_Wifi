@@ -17,6 +17,9 @@ package com.android.server.wifi;
 
 import static android.net.wifi.CoexUnsafeChannel.POWER_CAP_NONE;
 
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_STA;
+
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
@@ -52,9 +55,9 @@ import android.hardware.wifi.V1_0.WifiStatus;
 import android.hardware.wifi.V1_0.WifiStatusCode;
 import android.hardware.wifi.V1_2.IWifiChipEventCallback.IfaceInfo;
 import android.hardware.wifi.V1_5.IWifiChip.MultiStaUseCase;
-import android.hardware.wifi.V1_5.IWifiChip.UsableChannelFilter;
 import android.hardware.wifi.V1_5.WifiBand;
 import android.hardware.wifi.V1_5.WifiIfaceMode;
+import android.hardware.wifi.V1_6.IWifiChip.UsableChannelFilter;
 import android.net.MacAddress;
 import android.net.apf.ApfCapabilities;
 import android.net.wifi.ScanResult;
@@ -3430,7 +3433,7 @@ public class WifiVendorHal {
      */
     public boolean isItPossibleToCreateApIface(@NonNull WorkSource requestorWs) {
         synchronized (sLock) {
-            return mHalDeviceManager.isItPossibleToCreateIface(IfaceType.AP, requestorWs);
+            return mHalDeviceManager.isItPossibleToCreateIface(HDM_CREATE_IFACE_AP, requestorWs);
         }
     }
 
@@ -3439,7 +3442,7 @@ public class WifiVendorHal {
      */
     public boolean isItPossibleToCreateStaIface(@NonNull WorkSource requestorWs) {
         synchronized (sLock) {
-            return mHalDeviceManager.isItPossibleToCreateIface(IfaceType.STA, requestorWs);
+            return mHalDeviceManager.isItPossibleToCreateIface(HDM_CREATE_IFACE_STA, requestorWs);
         }
 
     }
@@ -4063,6 +4066,26 @@ public class WifiVendorHal {
         if ((filter & WifiAvailableChannel.FILTER_CELLULAR_COEXISTENCE) != 0) {
             halFilter |= UsableChannelFilter.CELLULAR_COEXISTENCE;
         }
+
+        return halFilter;
+    }
+
+    /**
+     * Convert framework's WifiAvailableChannel.FILTER_* to HAL's UsableChannelFilter 1.6.
+     */
+    private int frameworkToHalUsableFilter_1_6(@WifiAvailableChannel.Filter int filter) {
+        int halFilter = 0;  // O implies no additional filter other than regulatory (default)
+
+        if ((filter & WifiAvailableChannel.FILTER_CONCURRENCY) != 0) {
+            halFilter |= UsableChannelFilter.CONCURRENCY;
+        }
+        if ((filter & WifiAvailableChannel.FILTER_CELLULAR_COEXISTENCE) != 0) {
+            halFilter |= UsableChannelFilter.CELLULAR_COEXISTENCE;
+        }
+        if ((filter & WifiAvailableChannel.FILTER_NAN_INSTANT_MODE) != 0) {
+            halFilter |= UsableChannelFilter.NAN_INSTANT_MODE;
+        }
+
         return halFilter;
     }
 
@@ -4090,7 +4113,7 @@ public class WifiVendorHal {
                     iWifiChipV16.getUsableChannels_1_6(
                             makeWifiBandFromFrameworkBand(band),
                             frameworkToHalIfaceMode(mode),
-                            frameworkToHalUsableFilter(filter), (status, channels) -> {
+                            frameworkToHalUsableFilter_1_6(filter), (status, channels) -> {
                                 if (!ok(status)) return;
                                 answer.value = new ArrayList<>();
                                 for (android.hardware.wifi.V1_6.WifiUsableChannel ch : channels) {

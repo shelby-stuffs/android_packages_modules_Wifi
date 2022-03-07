@@ -20,7 +20,10 @@ import static android.net.wifi.ScanResult.InformationElement.EID_VSA;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -95,17 +98,16 @@ public class SoftApConfigurationTest {
         String utf8Ssid = "ssid";
         SoftApConfiguration original = new SoftApConfiguration.Builder()
                 .setSsid(utf8Ssid)
-                .setBssid(testBssid)
                 .build();
         assertThat(original.getSsid()).isEqualTo(utf8Ssid);
         assertThat(original.getWifiSsid()).isEqualTo(WifiSsid.fromUtf8Text(utf8Ssid));
-        assertThat(original.getBssid()).isEqualTo(testBssid);
         assertThat(original.getPassphrase()).isNull();
         assertThat(original.getSecurityType()).isEqualTo(SoftApConfiguration.SECURITY_TYPE_OPEN);
         assertThat(original.getBand()).isEqualTo(SoftApConfiguration.BAND_2GHZ);
         assertThat(original.getChannel()).isEqualTo(0);
         assertThat(original.isHiddenSsid()).isEqualTo(false);
         assertThat(original.getMaxNumberOfClients()).isEqualTo(0);
+        assertThat(original.getPersistentRandomizedMacAddress()).isNull();
         if (SdkLevel.isAtLeastS()) {
             assertThat(original.isBridgedModeOpportunisticShutdownEnabled())
                     .isEqualTo(true);
@@ -195,6 +197,7 @@ public class SoftApConfigurationTest {
 
     @Test
     public void testWpa2WithAllFieldCustomized() {
+        MacAddress testRandomizedMacAddress = MacAddress.fromString(TEST_BSSID);
         List<MacAddress> testBlockedClientList = new ArrayList<>();
         List<MacAddress> testAllowedClientList = new ArrayList<>();
         testBlockedClientList.add(MacAddress.fromString("11:22:33:44:55:66"));
@@ -208,7 +211,8 @@ public class SoftApConfigurationTest {
                 .setShutdownTimeoutMillis(500000)
                 .setClientControlByUserEnabled(true)
                 .setBlockedClientList(testBlockedClientList)
-                .setAllowedClientList(testAllowedClientList);
+                .setAllowedClientList(testAllowedClientList)
+                .setRandomizedMacAddress(testRandomizedMacAddress);
         if (SdkLevel.isAtLeastS()) {
             originalBuilder.setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE);
             originalBuilder.setBridgedModeOpportunisticShutdownEnabled(false);
@@ -234,6 +238,8 @@ public class SoftApConfigurationTest {
         assertThat(original.isClientControlByUserEnabled()).isEqualTo(true);
         assertThat(original.getBlockedClientList()).isEqualTo(testBlockedClientList);
         assertThat(original.getAllowedClientList()).isEqualTo(testAllowedClientList);
+        assertThat(original.getPersistentRandomizedMacAddress())
+                .isEqualTo(testRandomizedMacAddress);
         if (SdkLevel.isAtLeastS()) {
             assertThat(original.getMacRandomizationSetting())
                     .isEqualTo(SoftApConfiguration.RANDOMIZATION_NONE);
@@ -313,6 +319,70 @@ public class SoftApConfigurationTest {
         assertThat(copy).isNotSameInstanceAs(original);
         assertThat(copy).isEqualTo(original);
         assertThat(copy.hashCode()).isEqualTo(original.hashCode());
+    }
+
+    @Test
+    public void testWpa3OweTransition() {
+        assumeTrue(SdkLevel.isAtLeastT());
+        SoftApConfiguration original = new SoftApConfiguration.Builder()
+                .setPassphrase(null,
+                        SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION)
+                .setChannel(149, SoftApConfiguration.BAND_5GHZ)
+                .setHiddenSsid(false)
+                .build();
+        assertThat(original.getSecurityType()).isEqualTo(
+                SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION);
+        assertThat(original.getPassphrase()).isEqualTo(null);
+        assertThat(original.getBand()).isEqualTo(SoftApConfiguration.BAND_5GHZ);
+        assertThat(original.getChannel()).isEqualTo(149);
+        assertThat(original.isHiddenSsid()).isEqualTo(false);
+
+        SoftApConfiguration unparceled = parcelUnparcel(original);
+        assertThat(unparceled).isNotSameInstanceAs(original);
+        assertThat(unparceled).isEqualTo(original);
+        assertThat(unparceled.hashCode()).isEqualTo(original.hashCode());
+
+        SoftApConfiguration copy = new SoftApConfiguration.Builder(original).build();
+        assertThat(copy).isNotSameInstanceAs(original);
+        assertThat(copy).isEqualTo(original);
+        assertThat(copy.hashCode()).isEqualTo(original.hashCode());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new SoftApConfiguration.Builder().setPassphrase(
+                        "something or other",
+                        SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION));
+    }
+
+    @Test
+    public void testWpa3Owe() {
+        assumeTrue(SdkLevel.isAtLeastT());
+        SoftApConfiguration original = new SoftApConfiguration.Builder()
+                .setPassphrase(null,
+                        SoftApConfiguration.SECURITY_TYPE_WPA3_OWE)
+                .setChannel(149, SoftApConfiguration.BAND_5GHZ)
+                .setHiddenSsid(false)
+                .build();
+        assertThat(original.getSecurityType()).isEqualTo(
+                SoftApConfiguration.SECURITY_TYPE_WPA3_OWE);
+        assertThat(original.getPassphrase()).isEqualTo(null);
+        assertThat(original.getBand()).isEqualTo(SoftApConfiguration.BAND_5GHZ);
+        assertThat(original.getChannel()).isEqualTo(149);
+        assertThat(original.isHiddenSsid()).isEqualTo(false);
+
+        SoftApConfiguration unparceled = parcelUnparcel(original);
+        assertThat(unparceled).isNotSameInstanceAs(original);
+        assertThat(unparceled).isEqualTo(original);
+        assertThat(unparceled.hashCode()).isEqualTo(original.hashCode());
+
+        SoftApConfiguration copy = new SoftApConfiguration.Builder(original).build();
+        assertThat(copy).isNotSameInstanceAs(original);
+        assertThat(copy).isEqualTo(original);
+        assertThat(copy.hashCode()).isEqualTo(original.hashCode());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new SoftApConfiguration.Builder().setPassphrase(
+                        "something or other",
+                        SoftApConfiguration.SECURITY_TYPE_WPA3_OWE));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -635,5 +705,87 @@ public class SoftApConfigurationTest {
         SoftApConfiguration original = new SoftApConfiguration.Builder()
                 .setVendorElements(dupElements)
                 .build();
+    }
+
+    @Test
+    // TODO: b/216875688 enable it after updating target SDK build version
+    // (expected = IllegalArgumentException.class)
+    public void testThrowsExceptionWhenBssidSetButMacRandomizationSettingIsPersistent() {
+        assumeTrue(SdkLevel.isAtLeastS());
+        MacAddress testBssid = MacAddress.fromString(TEST_BSSID);
+        SoftApConfiguration config_setBssidAfterSetMacRandomizationSettingToPersistent =
+                new SoftApConfiguration.Builder()
+                .setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_PERSISTENT)
+                .setBssid(testBssid)
+                .build();
+    }
+
+    @Test
+    // TODO: b/216875688 enable it after updating target SDK build version
+    // (expected = IllegalArgumentException.class)
+    public void testThrowsExceptionWhenBssidSetButMacRandomizationSettingIsNonPersistent() {
+        assumeTrue(SdkLevel.isAtLeastS());
+        MacAddress testBssid = MacAddress.fromString(TEST_BSSID);
+        SoftApConfiguration config_setBssidAfterSetMacRandomizationSettingToNonPersistent =
+                new SoftApConfiguration.Builder()
+                .setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NON_PERSISTENT)
+                .setBssid(testBssid)
+                .build();
+    }
+
+    @Test
+    public void testSetBssidSucceededWWithDisableMacRandomizationSetting() {
+        assumeTrue(SdkLevel.isAtLeastS());
+        MacAddress testBssid = MacAddress.fromString(TEST_BSSID);
+        SoftApConfiguration config_setBssidAfterSetMacRandomizationSettingToNone =
+                new SoftApConfiguration.Builder()
+                .setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE)
+                .setBssid(testBssid)
+                .build();
+        assertEquals(config_setBssidAfterSetMacRandomizationSettingToNone.getBssid(),
+                testBssid);
+    }
+
+    @Test
+    public void testSetAllowedAcsChannels() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+
+        SoftApConfiguration config = new SoftApConfiguration.Builder()
+                .build();
+        assertEquals(0, config.getAllowedAcsChannels(SoftApConfiguration.BAND_2GHZ).length);
+        assertEquals(0, config.getAllowedAcsChannels(SoftApConfiguration.BAND_5GHZ).length);
+        assertEquals(0, config.getAllowedAcsChannels(SoftApConfiguration.BAND_6GHZ).length);
+
+        int[] channels2g = {1, 6, 11};
+        int[] channels5g = {36, 149, 136};
+        int[] channels6g = {1, 2, 3};
+
+        config = new SoftApConfiguration.Builder()
+                .setAllowedAcsChannels(SoftApConfiguration.BAND_2GHZ, channels2g)
+                .setAllowedAcsChannels(SoftApConfiguration.BAND_5GHZ, channels5g)
+                .setAllowedAcsChannels(SoftApConfiguration.BAND_6GHZ, channels6g)
+                .build();
+        assertArrayEquals(channels2g, config.getAllowedAcsChannels(SoftApConfiguration.BAND_2GHZ));
+        assertArrayEquals(channels5g, config.getAllowedAcsChannels(SoftApConfiguration.BAND_5GHZ));
+        assertArrayEquals(channels6g, config.getAllowedAcsChannels(SoftApConfiguration.BAND_6GHZ));
+    }
+
+    @Test
+    public void testSetAllowedAcsChannelsInvalidValues() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+
+        int[] channels2g = {1, 6, 11, 50};
+        int[] channels5g = {36, 7, 149, 800};
+        int[] channels6g = {1, 2, -1, 3};
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new SoftApConfiguration.Builder()
+                        .setAllowedAcsChannels(SoftApConfiguration.BAND_2GHZ, channels2g));
+        assertThrows(IllegalArgumentException.class,
+                () -> new SoftApConfiguration.Builder()
+                        .setAllowedAcsChannels(SoftApConfiguration.BAND_5GHZ, channels5g));
+        assertThrows(IllegalArgumentException.class,
+                () -> new SoftApConfiguration.Builder()
+                        .setAllowedAcsChannels(SoftApConfiguration.BAND_6GHZ, channels6g));
     }
 }

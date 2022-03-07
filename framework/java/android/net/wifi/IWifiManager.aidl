@@ -21,6 +21,7 @@ import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.hotspot2.IProvisioningCallback;
 
 import android.net.DhcpInfo;
+import android.net.DhcpOption;
 import android.net.Network;
 import android.net.wifi.CoexUnsafeChannel;
 import android.net.wifi.IActionListener;
@@ -77,9 +78,9 @@ interface IWifiManager
 
     Map getAllMatchingFqdnsForScanResults(in List<ScanResult> scanResult);
 
-    void setSsidsDoNotBlocklist(String packageName, in List<WifiSsid> ssids);
+    void setSsidsAllowlist(String packageName, in List<WifiSsid> ssids);
 
-    List getSsidsDoNotBlocklist(String packageName);
+    List getSsidsAllowlist(String packageName);
 
     Map getMatchingOsuProviders(in List<ScanResult> scanResult);
 
@@ -320,7 +321,7 @@ interface IWifiManager
 
     void clearWifiConnectedNetworkScorer();
 
-    void setExternalPnoScanRequest(in IBinder binder, in IPnoScanResultsCallback callback, in List<WifiSsid> ssids, String packageName, String featureId);
+    void setExternalPnoScanRequest(in IBinder binder, in IPnoScanResultsCallback callback, in List<WifiSsid> ssids, in int[] frequencies, String packageName, String featureId);
 
     void clearExternalPnoScanRequest();
 
@@ -384,4 +385,12 @@ interface IWifiManager
     int getStaConcurrencyForMultiInternetMode();
 
     boolean setStaConcurrencyForMultiInternetMode(int mode);
+
+    void validateCurrentWifiMeetsAdminRequirements();
+
+    void replyToP2pInvitationReceivedDialog(int dialogId, boolean accepted, String optionalPin);
+
+    void addCustomDhcpOptions(in WifiSsid ssid, in byte[] oui, in List<DhcpOption> options);
+
+    void removeCustomDhcpOptions(in WifiSsid ssid, in byte[] oui);
 }

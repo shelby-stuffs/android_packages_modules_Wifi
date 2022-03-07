@@ -409,6 +409,12 @@ public class SoftApManager implements ActiveModeManager {
         mStateMachine.sendMessage(SoftApStateMachine.CMD_STOP);
     }
 
+    private boolean isOweTransition() {
+        return (SdkLevel.isAtLeastT() && mCurrentSoftApConfiguration != null
+                && mCurrentSoftApConfiguration.getSecurityType()
+                        == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION);
+    }
+
     public boolean isBridgedMode() {
         return (SdkLevel.isAtLeastS() && mCurrentSoftApConfiguration != null
                 && (mCurrentSoftApConfiguration.getBands().length > 1
@@ -416,6 +422,10 @@ public class SoftApManager implements ActiveModeManager {
                         == SoftApConfiguration.SECURITY_TYPE_OWE
                        && (mCurrentSoftApConfiguration.getBand()
                            & SoftApConfiguration.BAND_6GHZ) == 0)));
+    }
+
+    private boolean isBridgeRequired() {
+        return isBridgedMode() || isOweTransition();
     }
 
     private long getShutdownTimeoutMillis() {
@@ -574,7 +584,8 @@ public class SoftApManager implements ActiveModeManager {
 
         intent.putExtra(WifiManager.EXTRA_WIFI_AP_INTERFACE_NAME, mApInterfaceName);
         intent.putExtra(WifiManager.EXTRA_WIFI_AP_MODE, mOriginalModeConfiguration.getTargetMode());
-        mContext.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+        mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                android.Manifest.permission.ACCESS_WIFI_STATE);
     }
 
     private int setMacAddress() {
@@ -941,9 +952,16 @@ public class SoftApManager implements ActiveModeManager {
                                         .build();
                             }
                         }
+
+                        // Remove 6GHz from requested bands if security type is restricted
+                        // Note: 6GHz only band is already handled by initial validation
+                        mCurrentSoftApConfiguration =
+                                ApConfigUtil.remove6gBandForUnsupportedSecurity(
+                                    mCurrentSoftApConfiguration);
+
                         mApInterfaceName = mWifiNative.setupInterfaceForSoftApMode(
                                 mWifiNativeInterfaceCallback, mRequestorWs,
-                                mCurrentSoftApConfiguration.getBand(), isBridgedMode(),
+                                mCurrentSoftApConfiguration.getBand(), isBridgeRequired(),
                                 mCurrentSoftApConfiguration.getSecurityType());
                         if (TextUtils.isEmpty(mApInterfaceName)) {
                             Log.e(getTag(), "setup failure when creating ap interface.");
@@ -1226,7 +1244,7 @@ public class SoftApManager implements ActiveModeManager {
 
                 if (mSoftApCallback != null) {
                     mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                            mConnectedClientWithApInfoMap, isBridgedMode());
+                            mConnectedClientWithApInfoMap, isBridgeRequired());
                 } else {
                     Log.e(getTag(),
                             "SoftApCallback is null. Dropping ConnectedClientsChanged event.");
@@ -1251,7 +1269,7 @@ public class SoftApManager implements ActiveModeManager {
                     mCurrentSoftApInfoMap.clear();
                     mConnectedClientWithApInfoMap.clear();
                     mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                            mConnectedClientWithApInfoMap, isBridgedMode());
+                            mConnectedClientWithApInfoMap, isBridgeRequired());
                     return;
                 }
                 String changedInstance = apInfo.getApInstanceIdentifier();
@@ -1263,13 +1281,13 @@ public class SoftApManager implements ActiveModeManager {
                         mSoftApTimeoutMessageMap.remove(changedInstance);
                         mConnectedClientWithApInfoMap.remove(changedInstance);
                         mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                                mConnectedClientWithApInfoMap, isBridgedMode());
+                                mConnectedClientWithApInfoMap, isBridgeRequired());
                         if (isClientConnected) {
                             mWifiMetrics.addSoftApNumAssociatedStationsChangedEvent(
                                     getConnectedClientList().size(), 0,
                                     mOriginalModeConfiguration.getTargetMode(), apInfo);
                         }
-                        if (isBridgedMode()) {
+                        if (isBridgeRequired()) {
                             mWifiMetrics.addSoftApInstanceDownEventInDualMode(
                                     mOriginalModeConfiguration.getTargetMode(), apInfo);
                         }
@@ -1288,7 +1306,7 @@ public class SoftApManager implements ActiveModeManager {
 
                 mCurrentSoftApInfoMap.put(changedInstance, new SoftApInfo(apInfo));
                 mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                        mConnectedClientWithApInfoMap, isBridgedMode());
+                        mConnectedClientWithApInfoMap, isBridgeRequired());
 
                 boolean isNeedToScheduleTimeoutMessage = false;
                 if (!mSoftApTimeoutMessageMap.containsKey(mApInterfaceName)) {
@@ -1320,7 +1338,7 @@ public class SoftApManager implements ActiveModeManager {
                         && apInfo.getBandwidth() != SoftApInfo.CHANNEL_WIDTH_INVALID) {
                     mWifiMetrics.addSoftApChannelSwitchedEvent(
                             new ArrayList<>(mCurrentSoftApInfoMap.values()),
-                            mOriginalModeConfiguration.getTargetMode(), isBridgedMode());
+                            mOriginalModeConfiguration.getTargetMode(), isBridgeRequired());
                     updateUserBandPreferenceViolationMetricsIfNeeded(apInfo);
                 }
             }
@@ -1341,7 +1359,7 @@ public class SoftApManager implements ActiveModeManager {
                     mConnectedClientWithApInfoMap.clear();
                     if (mSoftApCallback != null) {
                         mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                                mConnectedClientWithApInfoMap, isBridgedMode());
+                                mConnectedClientWithApInfoMap, isBridgeRequired());
                     }
                 } else {
                     // the interface was up, but goes down
@@ -1349,12 +1367,12 @@ public class SoftApManager implements ActiveModeManager {
                 }
                 mWifiMetrics.addSoftApUpChangedEvent(isUp,
                         mOriginalModeConfiguration.getTargetMode(),
-                        mDefaultShutdownTimeoutMillis, isBridgedMode());
+                        mDefaultShutdownTimeoutMillis, isBridgeRequired());
                 if (isUp) {
                     mWifiMetrics.updateSoftApConfiguration(mCurrentSoftApConfiguration,
-                            mOriginalModeConfiguration.getTargetMode(), isBridgedMode());
+                            mOriginalModeConfiguration.getTargetMode(), isBridgeRequired());
                     mWifiMetrics.updateSoftApCapability(mCurrentSoftApCapability,
-                            mOriginalModeConfiguration.getTargetMode(), isBridgedMode());
+                            mOriginalModeConfiguration.getTargetMode(), isBridgeRequired());
                 }
             }
 
@@ -1396,7 +1414,7 @@ public class SoftApManager implements ActiveModeManager {
                     mConnectedClientWithApInfoMap.clear();
                     if (mSoftApCallback != null) {
                         mSoftApCallback.onConnectedClientsOrInfoChanged(mCurrentSoftApInfoMap,
-                                mConnectedClientWithApInfoMap, isBridgedMode());
+                                mConnectedClientWithApInfoMap, isBridgeRequired());
                     }
                 }
                 mPendingDisconnectClients.clear();
@@ -1408,7 +1426,7 @@ public class SoftApManager implements ActiveModeManager {
                 // future CMD_INTERFACE_STATUS_CHANGED events after this point
                 mWifiMetrics.addSoftApUpChangedEvent(false,
                         mOriginalModeConfiguration.getTargetMode(),
-                        mDefaultShutdownTimeoutMillis, isBridgedMode());
+                        mDefaultShutdownTimeoutMillis, isBridgeRequired());
                 updateApState(WifiManager.WIFI_AP_STATE_DISABLED,
                         WifiManager.WIFI_AP_STATE_DISABLING, 0);
 
@@ -1423,7 +1441,7 @@ public class SoftApManager implements ActiveModeManager {
 
             private void updateUserBandPreferenceViolationMetricsIfNeeded(SoftApInfo apInfo) {
                 // The band preference violation only need to detect in single AP mode.
-                if (isBridgedMode()) return;
+                if (isBridgeRequired()) return;
                 int band = mCurrentSoftApConfiguration.getBand();
                 boolean bandPreferenceViolated =
                         (ScanResult.is24GHz(apInfo.getFrequency())
@@ -1554,7 +1572,7 @@ public class SoftApManager implements ActiveModeManager {
                         SoftApCapability capability = (SoftApCapability) message.obj;
                         mCurrentSoftApCapability = new SoftApCapability(capability);
                         mWifiMetrics.updateSoftApCapability(mCurrentSoftApCapability,
-                                mOriginalModeConfiguration.getTargetMode(), isBridgedMode());
+                                mOriginalModeConfiguration.getTargetMode(), isBridgeRequired());
                         updateClientConnection();
                         updateSafeChannelFrequencyList();
                         break;
@@ -1594,7 +1612,8 @@ public class SoftApManager implements ActiveModeManager {
                             }
                             mWifiMetrics.updateSoftApConfiguration(
                                     mCurrentSoftApConfiguration,
-                                    mOriginalModeConfiguration.getTargetMode(), isBridgedMode());
+                                    mOriginalModeConfiguration.getTargetMode(),
+                                    isBridgeRequired());
                         } else {
                             Log.d(getTag(), "Ignore the config: " + newConfig
                                     + " update since it requires restart");
@@ -1644,7 +1663,7 @@ public class SoftApManager implements ActiveModeManager {
                                 getHighestFrequencyInstance(unavailableInstances));
                         break;
                     case CMD_HANDLE_WIFI_CONNECTED:
-                        if (!isBridgedMode() || mCurrentSoftApInfoMap.size() != 2) {
+                        if (!isBridgeRequired() || mCurrentSoftApInfoMap.size() != 2) {
                             Log.d(getTag(), "Ignore wifi connected in single AP state");
                             break;
                         }

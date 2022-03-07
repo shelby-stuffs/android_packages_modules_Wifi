@@ -41,6 +41,7 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
 import android.net.DhcpInfo;
+import android.net.DhcpOption;
 import android.net.LinkProperties;
 import android.net.MacAddress;
 import android.net.Network;
@@ -86,6 +87,7 @@ import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -651,6 +653,7 @@ public class WifiManager {
      * @hide
      */
     @SystemApi
+    @RequiresPermission(android.Manifest.permission.ACCESS_WIFI_STATE)
     public static final String WIFI_AP_STATE_CHANGED_ACTION =
         "android.net.wifi.WIFI_AP_STATE_CHANGED";
 
@@ -1707,6 +1710,24 @@ public class WifiManager {
         return configs;
     }
 
+    /**
+     * To be used with setScreenOnScanSchedule.
+     */
+    public static class ScreenOnScanSchedule {
+        private final int mScanTimeMs;
+        private final int mScanType;
+
+        /**
+         * Creates a ScreenOnScanSchedule.
+         * @param scanTimeMs Interval between framework-initiated connectivity scans in
+         *                   milliseconds.
+         * @param scanType One of the {@code WifiScanner.SCAN_TYPE_} values.
+         */
+        public ScreenOnScanSchedule(int scanTimeMs, @WifiAnnotations.ScanType int scanType) {
+            mScanTimeMs = scanTimeMs;
+            mScanType = scanType;
+        }
+    }
 
     /**
      * Allows a privileged app to customize the screen-on scan behavior. When a non-null schedule
@@ -1719,13 +1740,14 @@ public class WifiManager {
      * {@link WifiScanner#SCAN_TYPE_HIGH_ACCURACY}, and all
      * scheduled scans later should happen every 40 seconds using
      * {@link WifiScanner#SCAN_TYPE_LOW_POWER}.
-     * setScreenOnScanSchedule(new int[] {20, 40},
-     * new int[] {WifiScanner.SCAN_TYPE_HIGH_ACCURACY, WifiScanner.SCAN_TYPE_LOW_POWER})
-     * @param scanSchedule defines the screen-on scan schedule in seconds, or null to unset the
-     *                     customized scan schedule.
-     * @param scanType defines the screen-on scan type. Each value must be one of
-     *                 {@link WifiAnnotations#ScanType}. Set to null to unset the customized scan
-     *                 type.
+     * <pre>
+     * List<ScreenOnScanSchedule> schedule = new ArrayList<>();
+     * schedule.add(new ScreenOnScanSchedule(20, WifiScanner.SCAN_TYPE_HIGH_ACCURACY));
+     * schedule.add(new ScreenOnScanSchedule(40, WifiScanner.SCAN_TYPE_LOW_POWER));
+     * wifiManager.setScreenOnScanSchedule(schedule);
+     * </pre>
+     * @param screenOnScanSchedule defines the screen-on scan schedule and the corresponding
+     *                             scan type. Set to null to clear any previously set value.
      *
      * @throws IllegalStateException if input is invalid
      * @throws UnsupportedOperationException if the API is not supported on this SDK version.
@@ -1738,8 +1760,22 @@ public class WifiManager {
             MANAGE_WIFI_AUTO_JOIN
     })
     @SystemApi
-    public void setScreenOnScanSchedule(@Nullable int[] scanSchedule, @Nullable int[] scanType) {
+    public void setScreenOnScanSchedule(@Nullable List<ScreenOnScanSchedule> screenOnScanSchedule) {
         try {
+            if (screenOnScanSchedule == null) {
+                mService.setScreenOnScanSchedule(null, null);
+                return;
+            }
+            if (screenOnScanSchedule.isEmpty()) {
+                throw new IllegalArgumentException("The input should either be null or a non-empty"
+                        + " list");
+            }
+            int[] scanSchedule = new int[screenOnScanSchedule.size()];
+            int[] scanType = new int[screenOnScanSchedule.size()];
+            for (int i = 0; i < screenOnScanSchedule.size(); i++) {
+                scanSchedule[i] = screenOnScanSchedule.get(i).mScanTimeMs;
+                scanType[i] = screenOnScanSchedule.get(i).mScanType;
+            }
             mService.setScreenOnScanSchedule(scanSchedule, scanType);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -1780,7 +1816,7 @@ public class WifiManager {
      * Specify a set of SSIDs that will not get disabled internally by the Wi-Fi subsystem when
      * connection issues occur. To clear the list, call this API with an empty Set.
      * <p>
-     * {@link #getSsidsDoNotBlocklist()} can be used to check the SSIDs that have been set.
+     * {@link #getSsidsAllowlist()} can be used to check the SSIDs that have been set.
      * @param ssids - list of WifiSsid that will not get disabled internally
      * @throws SecurityException if the calling app is not a Device Owner (DO), Profile Owner (PO),
      *                           or a privileged app that has one of the permissions required by
@@ -1792,12 +1828,12 @@ public class WifiManager {
     @RequiresPermission(anyOf = {
             android.Manifest.permission.NETWORK_SETTINGS,
             android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}, conditional = true)
-    public void setSsidsDoNotBlocklist(@NonNull Set<WifiSsid> ssids) {
+    public void setSsidsAllowlist(@NonNull Set<WifiSsid> ssids) {
         if (ssids == null) {
             throw new IllegalArgumentException(TAG + ": ssids can not be null");
         }
         try {
-            mService.setSsidsDoNotBlocklist(mContext.getOpPackageName(), new ArrayList<>(ssids));
+            mService.setSsidsAllowlist(mContext.getOpPackageName(), new ArrayList<>(ssids));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1815,10 +1851,10 @@ public class WifiManager {
     @RequiresPermission(anyOf = {
             android.Manifest.permission.NETWORK_SETTINGS,
             android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN}, conditional = true)
-    public @NonNull Set<WifiSsid> getSsidsDoNotBlocklist() {
+    public @NonNull Set<WifiSsid> getSsidsAllowlist() {
         try {
             return new ArraySet<WifiSsid>(
-                    mService.getSsidsDoNotBlocklist(mContext.getOpPackageName()));
+                    mService.getSsidsAllowlist(mContext.getOpPackageName()));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -2503,17 +2539,16 @@ public class WifiManager {
      *
      * See {@link WifiNetworkSuggestion} for a detailed explanation of the parameters.
      * See {@link WifiNetworkSuggestion#equals(Object)} for the equivalence evaluation used.
+     * <p></
+     * Note: Use {@link #removeNetworkSuggestions(List, int)}. An {@code action} of
+     * {@link #ACTION_REMOVE_SUGGESTION_DISCONNECT} is equivalent to the current behavior.
      *
      * @param networkSuggestions List of network suggestions to be removed. Pass an empty list
      *                           to remove all the previous suggestions provided by the app.
      * @return Status code for the operation. One of the {@code STATUS_NETWORK_SUGGESTIONS_*}
      * values. Any matching suggestions are removed from the device and will not be considered for
      * any further connection attempts.
-     *
-     * @deprecated Use {@link #removeNetworkSuggestions(List, int)}. An {@code action} of
-     * {@link #ACTION_REMOVE_SUGGESTION_DISCONNECT} is equivalent to the current behavior.
      */
-    @Deprecated
     @RequiresPermission(CHANGE_WIFI_STATE)
     public @NetworkSuggestionsStatusCode int removeNetworkSuggestions(
             @NonNull List<WifiNetworkSuggestion> networkSuggestions) {
@@ -8512,6 +8547,12 @@ public class WifiManager {
      *
      * @param executor The executor on which callback will be invoked.
      * @param ssids The list of SSIDs to request for PNO scan.
+     * @param frequencies Provide as hint a list of up to 10 frequencies to be used for PNO scan.
+     *                    Each frequency should be in MHz. For example 2412 and 5180 are valid
+     *                    frequencies. {@link WifiInfo#getFrequency()} is a location where this
+     *                    information could be obtained. If a null or empty array is provided, the
+     *                    Wi-Fi framework will automatically decide the list of frequencies to scan.
+     *
      * @param callback For the calling application to receive results and status updates.
      *
      * @throws SecurityException if the caller does not have permission.
@@ -8524,13 +8565,16 @@ public class WifiManager {
             REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION})
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     public void setExternalPnoScanRequest(@NonNull @CallbackExecutor Executor executor,
-            @NonNull List<WifiSsid> ssids, @NonNull PnoScanResultsCallback callback) {
+            @NonNull List<WifiSsid> ssids, @Nullable int[] frequencies,
+            @NonNull PnoScanResultsCallback callback) {
         if (executor == null) throw new IllegalArgumentException("executor cannot be null");
         if (callback == null) throw new IllegalArgumentException("callback cannot be null");
         try {
+
             mService.setExternalPnoScanRequest(new Binder(),
                     new PnoScanResultsCallbackProxy(executor, callback),
-                    ssids, mContext.getOpPackageName(), mContext.getAttributionTag());
+                    ssids, frequencies == null ? new int[0] : frequencies,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -9126,7 +9170,11 @@ public class WifiManager {
         if (mVerboseLoggingEnabled) {
             Log.v(TAG, "validateCurrentWifiMeetsAdminRequirements");
         }
-        //TODO: check current network meets all the admin restrictions
+        try {
+            mService.validateCurrentWifiMeetsAdminRequirements();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
     }
 
     /**
@@ -9154,6 +9202,163 @@ public class WifiManager {
         }
         try {
             return mService.setStaConcurrencyForMultiInternetMode(mode);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Intent action to launch a dialog from the WifiDialog app.
+     * Must include EXTRA_DIALOG_ID, EXTRA_DIALOG_TYPE, and appropriate extras for the dialog type.
+     * @hide
+     */
+    public static final String ACTION_LAUNCH_DIALOG =
+            "android.net.wifi.action.LAUNCH_DIALOG";
+
+    /**
+     * Intent action to cancel an existing dialog from the WifiDialog app.
+     * Must include EXTRA_DIALOG_ID.
+     * @hide
+     */
+    public static final String ACTION_CANCEL_DIALOG =
+            "android.net.wifi.action.CANCEL_DIALOG";
+
+    /**
+     * Unknown DialogType.
+     * @hide
+     */
+    public static final int DIALOG_TYPE_UNKNOWN = 0;
+
+    /**
+     * DialogType for a P2P Invitation Received dialog.
+     * @hide
+     */
+    public static final int DIALOG_TYPE_P2P_INVITATION_RECEIVED = 1;
+
+    /** @hide */
+    @IntDef(prefix = { "DIALOG_TYPE_" }, value = {
+            DIALOG_TYPE_UNKNOWN,
+            DIALOG_TYPE_P2P_INVITATION_RECEIVED,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface DialogType {}
+
+    /**
+     * Extra int indicating the type of dialog to display.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_TYPE = "android.net.wifi.extra.DIALOG_TYPE";
+
+    /**
+     * Extra int indicating the ID of a dialog. The value must be non-negative.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_ID = "android.net.wifi.extra.DIALOG_ID";
+
+    /**
+     * Extra String indicating a P2P device name for a P2P Invitation Sent/Received dialog.
+     * @hide
+     */
+    public static final String EXTRA_P2P_DEVICE_NAME = "android.net.wifi.extra.P2P_DEVICE_NAME";
+
+    /**
+     * Extra boolean indicating that a PIN is requested for a P2P Invitation Received dialog.
+     * @hide
+     */
+    public static final String EXTRA_P2P_PIN_REQUESTED = "android.net.wifi.extra.P2P_PIN_REQUESTED";
+
+    /**
+     * Extra String indicating the PIN to be displayed for a P2P Invitation Sent/Received dialog.
+     * @hide
+     */
+    public static final String EXTRA_P2P_DISPLAY_PIN = "android.net.wifi.extra.P2P_DISPLAY_PIN";
+
+    /**
+     * Extra String indicating the Display ID to be used for the dialog. Default display is
+     * Display.DEFAULT_DISPLAY.
+     * @hide
+     */
+    public static final String EXTRA_P2P_DISPLAY_ID = "android.net.wifi.extra.P2P_DISPLAY_ID";
+
+    /**
+     * Method for WifiDialog to notify the framework of a reply to a P2P Invitation Received dialog.
+     * @param dialogId id of the replying dialog.
+     * @param accepted Whether the invitation was accepted.
+     * @param optionalPin PIN of the reply, or {@code null} if none was supplied.
+     * @hide
+     */
+    public void replyToP2pInvitationReceivedDialog(
+            int dialogId, boolean accepted, @Nullable String optionalPin) {
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "notifyP2pInvitationResponse: "
+                    + "dialogId=" + dialogId
+                    + ", accepted=" + accepted
+                    + ", pin=" + optionalPin);
+        }
+        try {
+            mService.replyToP2pInvitationReceivedDialog(dialogId, accepted, optionalPin);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Specify a list of DHCP options to use for any network whose SSID is specified and which
+     * transmits vendor-specific information elements (VSIEs) using the specified Organizationally
+     * Unique Identifier (OUI). If the AP transmits VSIEs for multiple specified OUIs then all
+     * matching DHCP options will be used. The allowlist for DHCP options in
+     * {@link android.net.ip.IpClient} gates whether the DHCP options will actually be used.
+     * When DHCP options are used: if the option value {@link android.net.DhcpOption#getValue()}
+     * is null, the option type {@link android.net.DhcpOption#getType()} will be put in the
+     * Parameter Request List in the DHCP packets; otherwise, the option will be included in the
+     * options section in the DHCP packets. Use {@link #removeCustomDhcpOptions(Object, Object)}
+     * to remove the specified DHCP options.
+     *
+     * @param ssid the network SSID.
+     * @param oui the 3-byte OUI.
+     * @param options the list of {@link android.net.DhcpOption}.
+     *
+     * @hide
+     */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            android.Manifest.permission.OVERRIDE_WIFI_CONFIG
+    })
+    public void addCustomDhcpOptions(@NonNull WifiSsid ssid, @NonNull byte[] oui,
+            @NonNull List<DhcpOption> options) {
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "addCustomDhcpOptions: ssid="
+                    + ssid + ", oui=" + Arrays.toString(oui) + ", options=" + options);
+        }
+        try {
+            mService.addCustomDhcpOptions(ssid, oui, options);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Remove custom DHCP options specified by {@link #addCustomDhcpOptions(Object, Object, List)}.
+     *
+     * @param ssid the network SSID.
+     * @param oui the 3-byte OUI.
+     *
+     * @hide
+     */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            android.Manifest.permission.OVERRIDE_WIFI_CONFIG
+    })
+    public void removeCustomDhcpOptions(@NonNull WifiSsid ssid, @NonNull byte[] oui) {
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "removeCustomDhcpOptions: ssid=" + ssid + ", oui=" + Arrays.toString(oui));
+        }
+        try {
+            mService.removeCustomDhcpOptions(ssid, oui);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

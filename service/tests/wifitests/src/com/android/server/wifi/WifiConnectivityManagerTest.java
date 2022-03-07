@@ -26,6 +26,7 @@ import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SECONDARY_TR
 import static com.android.server.wifi.ClientModeImpl.WIFI_WORK_SOURCE;
 import static com.android.server.wifi.WifiConfigurationTestUtil.generateWifiConfig;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -64,6 +65,7 @@ import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.MacAddress;
+import android.net.wifi.IPnoScanResultsCallback;
 import android.net.wifi.ScanResult;
 import android.net.wifi.ScanResult.InformationElement;
 import android.net.wifi.SupplicantState;
@@ -82,6 +84,7 @@ import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.util.ScanResultUtil;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.IPowerManager;
 import android.os.IThermalService;
 import android.os.Looper;
@@ -91,6 +94,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.os.WorkSource;
 import android.os.test.TestLooper;
+import android.util.ArraySet;
 import android.util.LocalLog;
 
 import androidx.test.filters.SmallTest;
@@ -280,6 +284,7 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
     @Mock private ConcreteClientModeManager mPrimaryClientModeManager;
     @Mock private ConcreteClientModeManager mSecondaryClientModeManager;
     @Mock private WifiGlobals mWifiGlobals;
+    @Mock private ExternalPnoScanRequestManager mExternalPnoScanRequestManager;
     @Mock WifiCandidates.Candidate mCandidate1;
     @Mock WifiCandidates.Candidate mCandidate2;
     private WifiConfiguration mCandidateWifiConfig1;
@@ -555,7 +560,7 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
                 mWifiMetrics, mTestHandler, mClock,
                 mLocalLog, mWifiScoreCard, mWifiBlocklistMonitor, mWifiChannelUtilization,
                 mPasspointManager, mMultiInternetManager, mDeviceConfigFacade, mActiveModeWarden,
-                mFacade, mWifiGlobals);
+                mFacade, mWifiGlobals, mExternalPnoScanRequestManager);
         verify(mActiveModeWarden, atLeastOnce()).registerModeChangeCallback(
                 mModeChangeCallbackCaptor.capture());
         verify(mContext, atLeastOnce()).registerReceiver(
@@ -1818,6 +1823,26 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
 
         verify(mWifiMetrics).incrementNumConnectivityWatchdogPnoGood();
         verify(mWifiMetrics, never()).incrementNumConnectivityWatchdogPnoBad();
+    }
+
+    @Test
+    public void testNetworkConnectionCancelWatchdogTimer() {
+        // Set screen to off
+        setScreenState(false);
+
+        // Set WiFi to disconnected state to trigger PNO scan
+        mWifiConnectivityManager.handleConnectionStateChanged(
+                mPrimaryClientModeManager,
+                WifiConnectivityManager.WIFI_STATE_DISCONNECTED);
+
+        // Verify the watchdog alarm has been set
+        assertTrue(mAlarmManager.isPending(WifiConnectivityManager.WATCHDOG_TIMER_TAG));
+
+        // Set WiFi to connected
+        setWifiStateConnected();
+
+        // Verify the watchdog alarm has been canceled
+        assertFalse(mAlarmManager.isPending(WifiConnectivityManager.WATCHDOG_TIMER_TAG));
     }
 
     /**
@@ -4392,6 +4417,116 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
         setWifiEnabled(false);
         mWifiConnectivityManager.forceConnectivityScan(WIFI_WORK_SOURCE);
         verify(mWifiScanner, times(1)).startScan(any(), any(), any(), any());
+    }
+
+    @Test
+    public void testSetAndClearExternalPnoScanRequest() {
+        int testUid = 123;
+        IBinder binder = mock(IBinder.class);
+        IPnoScanResultsCallback callback = mock(IPnoScanResultsCallback.class);
+        List<WifiSsid> requestedSsids = Arrays.asList(
+                WifiSsid.fromString("\"TEST_SSID_1\""),
+                WifiSsid.fromString("\"TEST_SSID_2\""));
+        int[] frequencies = new int[] {TEST_FREQUENCY};
+        mWifiConnectivityManager.setExternalPnoScanRequest(testUid, binder, callback,
+                requestedSsids, frequencies);
+        verify(mExternalPnoScanRequestManager).setRequest(testUid, binder, callback,
+                requestedSsids, frequencies);
+        mWifiConnectivityManager.clearExternalPnoScanRequest(testUid);
+        verify(mExternalPnoScanRequestManager).removeRequest(testUid);
+    }
+
+    /**
+     * When location is disabled external PNO SSIDs should not get scanned.
+     */
+    @Test
+    public void testExternalPnoScanRequest_gatedBylocationMode() {
+        when(mWifiScoreCard.lookupNetwork(any())).thenReturn(mock(WifiScoreCard.PerNetwork.class));
+        mResources.setBoolean(R.bool.config_wifiPnoFrequencyCullingEnabled, true);
+        mWifiConnectivityManager.setLocationModeEnabled(false);
+        // mock saved networks list to be empty
+        when(mWifiConfigManager.getSavedNetworks(anyInt())).thenReturn(Collections.EMPTY_LIST);
+
+
+        // Mock a couple external requested PNO SSIDs
+        Set<String> requestedSsids = new ArraySet<>();
+        requestedSsids.add("\"Test_SSID_1\"");
+        requestedSsids.add("\"Test_SSID_2\"");
+        when(mExternalPnoScanRequestManager.getExternalPnoScanSsids()).thenReturn(requestedSsids);
+        Set<Integer> frequencies = new ArraySet<>();
+        frequencies.add(TEST_FREQUENCY);
+        when(mExternalPnoScanRequestManager.getExternalPnoScanFrequencies())
+                .thenReturn(frequencies);
+
+        assertEquals(Collections.EMPTY_LIST, mWifiConnectivityManager.retrievePnoNetworkList());
+
+        // turn location mode on and now PNO scan should include the requested SSIDs
+        mWifiConnectivityManager.setLocationModeEnabled(true);
+        List<WifiScanner.PnoSettings.PnoNetwork> pnoNetworks =
+                mWifiConnectivityManager.retrievePnoNetworkList();
+        assertEquals(2, pnoNetworks.size());
+        assertEquals("\"Test_SSID_1\"", pnoNetworks.get(0).ssid);
+        assertEquals("\"Test_SSID_2\"", pnoNetworks.get(1).ssid);
+        assertArrayEquals(new int[] {TEST_FREQUENCY}, pnoNetworks.get(0).frequencies);
+        assertArrayEquals(new int[] {TEST_FREQUENCY}, pnoNetworks.get(1).frequencies);
+    }
+
+    /**
+     * Test external requested PNO SSIDs get handled properly when there are existing saved networks
+     * with same SSID.
+     */
+    @Test
+    public void testExternalPnoScanRequest_withSavedNetworks() {
+        mWifiConnectivityManager.setLocationModeEnabled(true);
+        // Create and add 3 networks.
+        WifiConfiguration network1 = WifiConfigurationTestUtil.createEapNetwork();
+        WifiConfiguration network2 = WifiConfigurationTestUtil.createPskNetwork();
+        WifiConfiguration network3 = WifiConfigurationTestUtil.createOpenHiddenNetwork();
+        List<WifiConfiguration> networkList = new ArrayList<>();
+        networkList.add(network1);
+        networkList.add(network2);
+        networkList.add(network3);
+        mLruConnectionTracker.addNetwork(network3);
+        mLruConnectionTracker.addNetwork(network2);
+        mLruConnectionTracker.addNetwork(network1);
+        when(mWifiConfigManager.getSavedNetworks(anyInt())).thenReturn(networkList);
+
+        // Mock a couple external requested PNO SSIDs. network3.SSID is in both saved networks
+        // and external requested networks.
+        Set<String> requestedSsids = new ArraySet<>();
+        requestedSsids.add("\"Test_SSID_1\"");
+        requestedSsids.add(network3.SSID);
+        when(mExternalPnoScanRequestManager.getExternalPnoScanSsids()).thenReturn(requestedSsids);
+
+        mWifiConnectivityManager.setLocationModeEnabled(true);
+        List<WifiScanner.PnoSettings.PnoNetwork> pnoNetworks =
+                mWifiConnectivityManager.retrievePnoNetworkList();
+        // There should be 4 SSIDs in total: network1, network2, network3, and Test_SSID_1.
+        assertEquals(4, pnoNetworks.size());
+        // Verify the order. Test_SSID_1 and network3 should be in the front because they are
+        // requested by an external app. Verify network3.SSID only appears once.
+        assertEquals("\"Test_SSID_1\"", pnoNetworks.get(0).ssid);
+        assertEquals(network3.SSID, pnoNetworks.get(1).ssid);
+        assertEquals(network1.SSID, pnoNetworks.get(2).ssid);
+        assertEquals(network2.SSID, pnoNetworks.get(3).ssid);
+    }
+
+    @Test
+    public void testExternalPnoScanRequest_reportResults() {
+        setWifiEnabled(true);
+        mWifiConnectivityManager.setLocationModeEnabled(true);
+
+        when(mClock.getElapsedSinceBootMillis()).thenReturn(0L);
+        // starts a PNO scan
+        mWifiConnectivityManager.handleConnectionStateChanged(
+                mPrimaryClientModeManager,
+                WifiConnectivityManager.WIFI_STATE_DISCONNECTED);
+        mWifiConnectivityManager.setTrustedConnectionAllowed(true);
+
+        InOrder inOrder = inOrder(mWifiScanner, mExternalPnoScanRequestManager);
+
+        inOrder.verify(mWifiScanner).startDisconnectedPnoScan(any(), any(), any(), any());
+        inOrder.verify(mExternalPnoScanRequestManager).onPnoNetworkFound(any());
     }
 
     /**

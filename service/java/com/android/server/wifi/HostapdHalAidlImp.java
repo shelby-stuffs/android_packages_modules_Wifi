@@ -44,7 +44,6 @@ import android.os.IBinder.DeathRecipient;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
-import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -56,10 +55,13 @@ import com.android.wifi.resources.R;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -72,6 +74,8 @@ import javax.annotation.concurrent.ThreadSafe;
 public class HostapdHalAidlImp implements IHostapdHal {
     private static final String TAG = "HostapdHalAidlImp";
     private static final String HAL_INSTANCE_NAME = IHostapd.DESCRIPTOR + "/default";
+    @VisibleForTesting
+    public static final long WAIT_FOR_DEATH_TIMEOUT_MS = 50L;
 
     private final Object mLock = new Object();
     private boolean mVerboseLoggingEnabled = false;
@@ -86,42 +90,41 @@ public class HostapdHalAidlImp implements IHostapdHal {
     private Set<String> mActiveInstances = new HashSet<>();
     private HostapdDeathEventHandler mDeathEventHandler;
     private boolean mServiceDeclared = false;
-    private HostapdDeathRecipient mIHostapdDeathRecipient;
+    private CountDownLatch mWaitForDeathLatch;
 
     /**
      * Default death recipient. Called any time the service dies.
      */
     private class HostapdDeathRecipient implements DeathRecipient {
+        private final IBinder mWho;
         @Override
+        /* Do nothing as we override the default function binderDied(IBinder who). */
         public void binderDied() {
-            mEventHandler.post(() -> {
-                synchronized (mLock) {
-                    Log.w(TAG, "IHostapd/IHostapd died");
-                    hostapdServiceDiedHandler();
+            synchronized (mLock) {
+                Log.w(TAG, "IHostapd/IHostapd died. who " + mWho + " service "
+                        + getServiceBinderMockable());
+                if (mWho == getServiceBinderMockable()) {
+                    if (mWaitForDeathLatch != null) {
+                        mWaitForDeathLatch.countDown();
+                    }
+                    mEventHandler.post(() -> {
+                        synchronized (mLock) {
+                            Log.w(TAG, "Handle IHostapd/IHostapd died.");
+                            hostapdServiceDiedHandler(mWho);
+                        }
+                    });
                 }
-            });
+            }
         }
-    }
 
-    /**
-     * Terminate death recipient. Linked to service death on call to terminate()
-     */
-    private class TerminateDeathRecipient implements DeathRecipient {
-        @Override
-        public void binderDied() {
-            mEventHandler.post(() -> {
-                synchronized (mLock) {
-                    Log.w(TAG, "IHostapd/IHostapd was killed by terminate()");
-                    // nothing more to be done here
-                }
-            });
+        HostapdDeathRecipient(IBinder who) {
+            mWho = who;
         }
     }
 
     public HostapdHalAidlImp(@NonNull Context context, @NonNull Handler handler) {
         mContext = context;
         mEventHandler = handler;
-        mIHostapdDeathRecipient = new HostapdDeathRecipient();
         Log.d(TAG, "init HostapdHalAidlImp");
     }
 
@@ -352,8 +355,12 @@ public class HostapdHalAidlImp implements IHostapdHal {
     /**
      * Handle hostapd death.
      */
-    private void hostapdServiceDiedHandler() {
+    private void hostapdServiceDiedHandler(IBinder who) {
         synchronized (mLock) {
+            if (who != getServiceBinderMockable()) {
+                Log.w(TAG, "Ignoring stale death recipient notification");
+                return;
+            }
             mIHostapd = null;
             if (mDeathEventHandler != null) {
                 mDeathEventHandler.onDeath();
@@ -479,7 +486,8 @@ public class HostapdHalAidlImp implements IHostapdHal {
             try {
                 IBinder serviceBinder = getServiceBinderMockable();
                 if (serviceBinder == null) return false;
-                serviceBinder.linkToDeath(mIHostapdDeathRecipient, /* flags= */ 0);
+                mWaitForDeathLatch = null;
+                serviceBinder.linkToDeath(new HostapdDeathRecipient(serviceBinder), /* flags= */ 0);
                 setDebugParams();
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
@@ -496,37 +504,39 @@ public class HostapdHalAidlImp implements IHostapdHal {
     }
 
     /**
-     * Terminate the hostapd daemon & register a DeathListener to confirm death
+     * Terminate the hostapd daemon & wait for it's death.
      */
     @Override
     public void terminate() {
         synchronized (mLock) {
-            // Register a new death listener to confirm that terminate() killed hostapd
             final String methodStr = "terminate";
             if (!checkHostapdAndLogFailure(methodStr)) {
                 return;
             }
+            Log.i(TAG, "Terminate HostApd Service.");
             try {
-                IBinder serviceBinder = getServiceBinderMockable();
-                if (serviceBinder == null) return;
-                serviceBinder.linkToDeath(new TerminateDeathRecipient(), /* flags= */ 0);
-            } catch (RemoteException e) {
-                Log.e(TAG, "Unable to register death recipient", e);
-                handleRemoteException(e, methodStr);
-                return;
-            }
-
-            try {
+                mWaitForDeathLatch = new CountDownLatch(1);
                 mIHostapd.terminate();
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
             }
         }
+
+        // Now wait for death listener callback to confirm that it's dead.
+        try {
+            if (!mWaitForDeathLatch.await(WAIT_FOR_DEATH_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Timed out waiting for confirmation of hostapd death");
+            } else {
+                Log.d(TAG, "Got service death confirmation");
+            }
+        } catch (InterruptedException e) {
+            Log.w(TAG, "Failed to wait for hostapd death");
+        }
     }
 
     private void handleRemoteException(RemoteException e, String methodStr) {
         synchronized (mLock) {
-            hostapdServiceDiedHandler();
+            hostapdServiceDiedHandler(getServiceBinderMockable());
             Log.e(TAG, "IHostapd." + methodStr + " failed with exception", e);
         }
     }
@@ -570,6 +580,12 @@ public class HostapdHalAidlImp implements IHostapdHal {
             case SoftApConfiguration.SECURITY_TYPE_WPA3_SAE:
                 encryptionType = EncryptionType.WPA3_SAE;
                 break;
+            case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION:
+                encryptionType = EncryptionType.WPA3_OWE_TRANSITION;
+                break;
+            case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE:
+                encryptionType = EncryptionType.WPA3_OWE;
+                break;
             default:
                 // We really shouldn't default to None, but this was how NetworkManagementService
                 // used to do this.
@@ -606,94 +622,90 @@ public class HostapdHalAidlImp implements IHostapdHal {
      * Prepare the acsChannelFreqRangesMhz in ChannelParams.
      */
     private void prepareAcsChannelFreqRangesMhz(ChannelParams channelParams,
-            @BandType int band) {
+            @BandType int band, SoftApConfiguration config) {
         List<FrequencyRange> ranges = new ArrayList<>();
         if ((band & SoftApConfiguration.BAND_2GHZ) != 0) {
-            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_2GHZ));
+            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_2GHZ, config));
         }
         if ((band & SoftApConfiguration.BAND_5GHZ) != 0) {
-            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_5GHZ));
+            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_5GHZ, config));
         }
         if ((band & SoftApConfiguration.BAND_6GHZ) != 0) {
-            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_6GHZ));
+            ranges.addAll(toAcsFreqRanges(SoftApConfiguration.BAND_6GHZ, config));
         }
         channelParams.acsChannelFreqRangesMhz = ranges.toArray(
                 new FrequencyRange[ranges.size()]);
     }
 
     /**
-     * Convert channel list string like '1-6,11' to list of FreqRange
+     * Convert OEM and SoftApConfiguration channel restrictions to a list of FreqRanges
      */
-    private List<FrequencyRange> toAcsFreqRanges(@BandType int band) {
-        List<FrequencyRange> FrequencyRanges = new ArrayList<>();
+    private List<FrequencyRange> toAcsFreqRanges(@BandType int band, SoftApConfiguration config) {
+        List<Integer> allowedChannelList;
+        List<FrequencyRange> frequencyRanges = new ArrayList<>();
 
         if (!ApConfigUtil.isBandValid(band) || ApConfigUtil.isMultiband(band)) {
             Log.e(TAG, "Invalid band : " + band);
-            return FrequencyRanges;
+            return frequencyRanges;
         }
 
-        String channelListStr;
+        String oemConfig;
         switch (band) {
             case SoftApConfiguration.BAND_2GHZ:
-                channelListStr = mContext.getResources().getString(
+                oemConfig = mContext.getResources().getString(
                         R.string.config_wifiSoftap2gChannelList);
-                if (TextUtils.isEmpty(channelListStr)) {
-                    channelListStr = ScanResult.BAND_24_GHZ_FIRST_CH_NUM + "-"
-                            + ScanResult.BAND_24_GHZ_LAST_CH_NUM;
-                }
                 break;
             case SoftApConfiguration.BAND_5GHZ:
-                channelListStr = mContext.getResources().getString(
+                oemConfig = mContext.getResources().getString(
                         R.string.config_wifiSoftap5gChannelList);
-                if (TextUtils.isEmpty(channelListStr)) {
-                    channelListStr = ScanResult.BAND_5_GHZ_FIRST_CH_NUM + "-"
-                            + ScanResult.BAND_5_GHZ_LAST_CH_NUM;
-                }
                 break;
             case SoftApConfiguration.BAND_6GHZ:
-                channelListStr = mContext.getResources().getString(
+                oemConfig = mContext.getResources().getString(
                         R.string.config_wifiSoftap6gChannelList);
-                if (TextUtils.isEmpty(channelListStr)) {
-                    channelListStr = ScanResult.BAND_6_GHZ_FIRST_CH_NUM + "-"
-                            + ScanResult.BAND_6_GHZ_LAST_CH_NUM;
-                }
                 break;
             default:
-                return FrequencyRanges;
+                return frequencyRanges;
         }
 
-        for (String channelRange : channelListStr.split(",")) {
-            FrequencyRange freqRange = new FrequencyRange();
-            try {
-                if (channelRange.contains("-")) {
-                    String[] channels  = channelRange.split("-");
-                    if (channels.length != 2) {
-                        Log.e(TAG, "Unrecognized channel range, length is " + channels.length);
-                        continue;
-                    }
-                    int start = Integer.parseInt(channels[0].trim());
-                    int end = Integer.parseInt(channels[1].trim());
-                    if (start > end) {
-                        Log.e(TAG, "Invalid channel range, from " + start + " to " + end);
-                        continue;
-                    }
-                    freqRange.startMhz =
-                            ApConfigUtil.convertChannelToFrequency(start, band);
-                    freqRange.endMhz = ApConfigUtil.convertChannelToFrequency(end, band);
-                } else if (!TextUtils.isEmpty(channelRange)) {
-                    int channel = Integer.parseInt(channelRange.trim());
-                    freqRange.startMhz =
-                            ApConfigUtil.convertChannelToFrequency(channel, band);
-                    freqRange.endMhz = freqRange.startMhz;
-                }
-            } catch (NumberFormatException e) {
-                // Ignore malformed value
-                Log.e(TAG, "Malformed channel value detected: " + e);
-                continue;
-            }
-            FrequencyRanges.add(freqRange);
+        allowedChannelList = ApConfigUtil.collectAllowedAcsChannels(band, oemConfig,
+                SdkLevel.isAtLeastT()
+                        ? config.getAllowedAcsChannels(band) : new int[] {});
+        if (allowedChannelList.isEmpty()) {
+            Log.e(TAG, "Empty list of allowed channels");
+            return frequencyRanges;
         }
-        return FrequencyRanges;
+        Collections.sort(allowedChannelList);
+
+        // Convert the sorted list to a set of frequency ranges
+        boolean rangeStarted = false;
+        int prevChannel = -1;
+        FrequencyRange freqRange = null;
+        for (int channel : allowedChannelList) {
+            // Continuation of an existing frequency range
+            if (rangeStarted) {
+                if (channel == prevChannel + 1) {
+                    prevChannel = channel;
+                    continue;
+                }
+
+                // End of the existing frequency range
+                freqRange.endMhz = ApConfigUtil.convertChannelToFrequency(prevChannel, band);
+                frequencyRanges.add(freqRange);
+                // We will continue to start a new frequency range
+            }
+
+            // Beginning of a new frequency range
+            freqRange = new FrequencyRange();
+            freqRange.startMhz = ApConfigUtil.convertChannelToFrequency(channel, band);
+            rangeStarted = true;
+            prevChannel = channel;
+        }
+
+        // End the last range
+        freqRange.endMhz = ApConfigUtil.convertChannelToFrequency(prevChannel, band);
+        frequencyRanges.add(freqRange);
+
+        return frequencyRanges;
     }
 
     /**
@@ -717,6 +729,8 @@ public class HostapdHalAidlImp implements IHostapdHal {
                 return SoftApInfo.CHANNEL_WIDTH_80MHZ_PLUS_MHZ;
             case Bandwidth.BANDWIDTH_160:
                 return SoftApInfo.CHANNEL_WIDTH_160MHZ;
+            case Bandwidth.BANDWIDTH_320:
+                return SoftApInfo.CHANNEL_WIDTH_320MHZ;
             case Bandwidth.BANDWIDTH_2160:
                 return SoftApInfo.CHANNEL_WIDTH_2160MHZ;
             case Bandwidth.BANDWIDTH_4320:
@@ -747,6 +761,8 @@ public class HostapdHalAidlImp implements IHostapdHal {
                 return ScanResult.WIFI_STANDARD_11AC;
             case Generation.WIFI_STANDARD_11AX:
                 return ScanResult.WIFI_STANDARD_11AX;
+            case Generation.WIFI_STANDARD_11BE:
+                return ScanResult.WIFI_STANDARD_11BE;
             case Generation.WIFI_STANDARD_11AD:
                 return ScanResult.WIFI_STANDARD_11AD;
             default:
@@ -821,20 +837,29 @@ public class HostapdHalAidlImp implements IHostapdHal {
                 R.bool.config_wifiSoftapHeMuBeamformerSupported);
         hwModeParams.enableHeTargetWakeTime = mContext.getResources().getBoolean(
                 R.bool.config_wifiSoftapHeTwtSupported);
+        hwModeParams.enable80211BE = ApConfigUtil.isIeee80211beSupported(mContext);
+        //Update 80211be support with the configuration.
+        hwModeParams.enable80211BE &= config.isIeee80211beEnabledInternal();
         return hwModeParams;
     }
 
     private ChannelParams[] prepareChannelParamsList(SoftApConfiguration config)
             throws IllegalArgumentException {
         int nChannels = 1;
+        boolean repeatBand = false;
         if (SdkLevel.isAtLeastS()) {
             nChannels = config.getChannels().size();
+        }
+        if (config.getSecurityType()
+                == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION) {
+            nChannels = 2;
+            repeatBand = true;
         }
         ChannelParams[] channelParamsList = new ChannelParams[nChannels];
         for (int i = 0; i < nChannels; i++) {
             int band = config.getBand();
             int channel = config.getChannel();
-            if (SdkLevel.isAtLeastS()) {
+            if (SdkLevel.isAtLeastS() && !repeatBand) {
                 band = config.getChannels().keyAt(i);
                 channel = config.getChannels().valueAt(i);
             }
@@ -847,8 +872,8 @@ public class HostapdHalAidlImp implements IHostapdHal {
             if (channelParamsList[i].enableAcs) {
                 channelParamsList[i].acsShouldExcludeDfs = !mContext.getResources()
                         .getBoolean(R.bool.config_wifiSoftapAcsIncludeDfs);
-                if (ApConfigUtil.isSendFreqRangesNeeded(band, mContext)) {
-                    prepareAcsChannelFreqRangesMhz(channelParamsList[i], band);
+                if (ApConfigUtil.isSendFreqRangesNeeded(band, mContext, config)) {
+                    prepareAcsChannelFreqRangesMhz(channelParamsList[i], band, config);
                 }
             }
             if (channelParamsList[i].acsChannelFreqRangesMhz == null) {

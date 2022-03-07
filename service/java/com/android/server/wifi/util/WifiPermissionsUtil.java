@@ -257,7 +257,14 @@ public class WifiPermissionsUtil {
         } catch (PackageManager.NameNotFoundException e) {
             Log.w(TAG, "Could not find package for disavowal check: " + packageName);
         }
-        // App did not disavow location. Check for location permission.
+        // App did not disavow location. Check for location permission and location mode.
+        if (!isLocationModeEnabled()) {
+            if (mVerboseLoggingEnabled) {
+                Log.v(TAG, "enforceCanAccessScanResults(pkg=" + packageName + ", uid=" + uid + "): "
+                        + "location is disabled");
+            }
+            throw new SecurityException("Location mode is disabled for the device");
+        }
         if (mPermissionManager.checkPermissionForDataDelivery(
                 ACCESS_FINE_LOCATION, attributionSource, message)
                 == PermissionManager.PERMISSION_GRANTED) {
@@ -811,7 +818,10 @@ public class WifiPermissionsUtil {
         return mode == AppOpsManager.MODE_ALLOWED;
     }
 
-    private static DevicePolicyManager retrieveDevicePolicyManagerFromContext(Context context) {
+    /**
+     * Returns the DevicePolicyManager from context
+     */
+    public static DevicePolicyManager retrieveDevicePolicyManagerFromContext(Context context) {
         DevicePolicyManager devicePolicyManager =
                 context.getSystemService(DevicePolicyManager.class);
         if (devicePolicyManager == null

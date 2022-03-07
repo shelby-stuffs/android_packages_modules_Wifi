@@ -19,6 +19,7 @@ package com.android.server.wifi;
 import static android.net.wifi.SoftApConfiguration.RANDOMIZATION_NON_PERSISTENT;
 import static android.net.wifi.SoftApConfiguration.RANDOMIZATION_PERSISTENT;
 import static android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA2_PSK;
+import static android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA3_SAE;
 import static android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION;
 
 import static com.google.common.truth.Truth.assertThat;
@@ -594,8 +595,12 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         verifyDefaultLocalOnlyApConfig(config, TEST_DEFAULT_HOTSPOT_SSID,
                 SoftApConfiguration.BAND_6GHZ);
 
+        SoftApConfiguration updatedConfig = new SoftApConfiguration.Builder(config)
+                .setPassphrase("somepassword", SECURITY_TYPE_WPA3_SAE)
+                .build();
+
         // verify that the config passes the validateApWifiConfiguration check
-        assertTrue(WifiApConfigStore.validateApWifiConfiguration(config, true, mContext));
+        assertTrue(WifiApConfigStore.validateApWifiConfiguration(updatedConfig, true, mContext));
     }
 
     /**
@@ -636,9 +641,13 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
     @Test
     public void generateLohsConfig_forwardsCustomMac() throws Exception {
         WifiApConfigStore store = createWifiApConfigStore();
-        SoftApConfiguration customConfig = new SoftApConfiguration.Builder()
-                .setBssid(TEST_SAP_BSSID_MAC)
-                .build();
+        SoftApConfiguration.Builder customConfigBuilder = new SoftApConfiguration.Builder()
+                .setBssid(TEST_SAP_BSSID_MAC);
+        if (SdkLevel.isAtLeastS()) {
+            customConfigBuilder.setMacRandomizationSetting(
+                    SoftApConfiguration.RANDOMIZATION_NONE);
+        }
+        SoftApConfiguration customConfig = customConfigBuilder.build();
         SoftApConfiguration softApConfig = store.generateLocalOnlyHotspotConfig(
                 mContext, customConfig, mSoftApCapability);
         assertThat(softApConfig.getBssid().toString()).isNotEmpty();
@@ -716,6 +725,9 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         mResources.setBoolean(R.bool.config_wifi_ap_mac_randomization_supported, true);
         Builder baseConfigBuilder = new SoftApConfiguration.Builder();
         baseConfigBuilder.setBssid(TEST_SAP_BSSID_MAC);
+        if (SdkLevel.isAtLeastS()) {
+            baseConfigBuilder.setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE);
+        }
 
         WifiApConfigStore store = createWifiApConfigStore();
         SoftApConfiguration config = store.randomizeBssidIfUnset(mContext,
@@ -773,6 +785,47 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         configBuilder.setSsid("ssid");
         assertTrue(WifiApConfigStore.validateApWifiConfiguration(
                 configBuilder.build(), true, mContext));
+    }
+
+    /**
+     * Verify the 6GHz restrictions on security types.
+     */
+    @Test
+    public void test6ghzRestrictionsSecurityTypes() {
+        Builder configBuilder = new SoftApConfiguration.Builder();
+        configBuilder.setSsid("ssid");
+        configBuilder.setBand(SoftApConfiguration.BAND_6GHZ);
+
+        // OPEN
+        configBuilder.setPassphrase(null, SoftApConfiguration.SECURITY_TYPE_OPEN);
+        assertFalse(WifiApConfigStore.validateApWifiConfiguration(
+                configBuilder.build(), true, mContext));
+
+        // WPA2
+        configBuilder.setPassphrase("somepassword", SoftApConfiguration.SECURITY_TYPE_WPA2_PSK);
+        assertFalse(WifiApConfigStore.validateApWifiConfiguration(
+                configBuilder.build(), true, mContext));
+
+        // WPA3 SAE (should succeed)
+        configBuilder.setPassphrase("somepassword", SoftApConfiguration.SECURITY_TYPE_WPA3_SAE);
+        assertTrue(WifiApConfigStore.validateApWifiConfiguration(
+                configBuilder.build(), true, mContext));
+
+        // WPA3 SAE-Transition
+        configBuilder.setPassphrase("somepassword",
+                SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION);
+        assertFalse(WifiApConfigStore.validateApWifiConfiguration(
+                configBuilder.build(), true, mContext));
+
+        if (SdkLevel.isAtLeastT()) {
+            // WPA3 OWE-Transition
+            if (SdkLevel.isAtLeastT()) {
+                configBuilder.setPassphrase(null,
+                        SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION);
+                assertFalse(WifiApConfigStore.validateApWifiConfiguration(
+                        configBuilder.build(), true, mContext));
+            }
+        }
     }
 
     /**
@@ -1104,9 +1157,14 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
     @Test
     public void testBssidDenyIfCallerWithoutPrivileged() throws Exception {
         WifiApConfigStore store = createWifiApConfigStore();
-        SoftApConfiguration config = new SoftApConfiguration.Builder(store.getApConfiguration())
-                .setBssid(TEST_SAP_BSSID_MAC).build();
-        assertFalse(WifiApConfigStore.validateApWifiConfiguration(config, false, mContext));
+        SoftApConfiguration.Builder configBuilder =
+                new SoftApConfiguration.Builder(store.getApConfiguration())
+                .setBssid(TEST_SAP_BSSID_MAC);
+        if (SdkLevel.isAtLeastS()) {
+            configBuilder.setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE);
+        }
+        assertFalse(WifiApConfigStore.validateApWifiConfiguration(configBuilder.build(),
+                false, mContext));
     }
 
     /**
@@ -1115,9 +1173,14 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
     @Test
     public void testBssidAllowIfCallerOwnPrivileged() throws Exception {
         WifiApConfigStore store = createWifiApConfigStore();
-        SoftApConfiguration config = new SoftApConfiguration.Builder(store.getApConfiguration())
-                .setBssid(TEST_SAP_BSSID_MAC).build();
-        assertTrue(WifiApConfigStore.validateApWifiConfiguration(config, true, mContext));
+        SoftApConfiguration.Builder configBuilder =
+                new SoftApConfiguration.Builder(store.getApConfiguration())
+                .setBssid(TEST_SAP_BSSID_MAC);
+        if (SdkLevel.isAtLeastS()) {
+            configBuilder.setMacRandomizationSetting(SoftApConfiguration.RANDOMIZATION_NONE);
+        }
+        assertTrue(WifiApConfigStore.validateApWifiConfiguration(configBuilder.build(),
+                true, mContext));
     }
 
     @Test
@@ -1272,5 +1335,14 @@ public class WifiApConfigStoreTest extends WifiBaseTest {
         verifyUpgradeConfiguration(store, false, true);
         verifyUpgradeConfiguration(store, true, false);
         verifyUpgradeConfiguration(store, false, false);
+    }
+
+    @Test
+    public void testRandomizedMacAddress() throws Exception {
+        WifiApConfigStore store = createWifiApConfigStore();
+        assertNotNull(store.getApConfiguration().getPersistentRandomizedMacAddress());
+        assertNotNull(store.generateLocalOnlyHotspotConfig(mContext, null, mSoftApCapability));
+        assertNotNull(store.generateLocalOnlyHotspotConfig(mContext, store.getApConfiguration(),
+                mSoftApCapability));
     }
 }

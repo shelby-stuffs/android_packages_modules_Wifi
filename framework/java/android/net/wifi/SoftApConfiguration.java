@@ -21,6 +21,9 @@ import android.annotation.IntRange;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SystemApi;
+import android.compat.Compatibility;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledAfter;
 import android.net.MacAddress;
 import android.net.wifi.util.HexEncoding;
 import android.os.Build;
@@ -43,6 +46,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Configuration for a soft access point (a.k.a. Soft AP, SAP, Hotspot).
@@ -142,7 +148,12 @@ public final class SoftApConfiguration implements Parcelable {
     private static final int MIN_CH_60G_BAND = 1;
     private static final int MAX_CH_60G_BAND = 6;
 
-
+    /**
+     * Requires to configure MAC randomization setting to None when configuring BSSID.
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.S)
+    private static final long FORCE_MUTUAL_EXCLUSIVE_BSSID_MAC_RAMDONIZATION_SETTING = 215656264L;
 
     private static boolean isChannelBandPairValid(int channel, @BandType int band) {
         switch (band) {
@@ -212,6 +223,39 @@ public final class SoftApConfiguration implements Parcelable {
     private final SparseIntArray mChannels;
 
     /**
+     * The set of allowed channels in 2.4GHz band to select from using ACS (Automatic Channel
+     * Selection) algorithm.
+     *
+     * Requires the driver to support {@link SoftApCapability#SOFTAP_FEATURE_ACS_OFFLOAD}.
+     * Otherwise, this set will be ignored.
+     *
+     * If the set is empty, then all channels in 2.4GHz band are allowed.
+     */
+    private final @NonNull Set<Integer> mAllowedAcsChannels2g;
+
+    /**
+     * The set of allowed channels in 5GHz band to select from using ACS (Automatic Channel
+     * Selection) algorithm.
+     *
+     * Requires the driver to support {@link SoftApCapability#SOFTAP_FEATURE_ACS_OFFLOAD}.
+     * Otherwise, this set will be ignored.
+     *
+     * If the set is empty, then all channels in 5GHz are allowed.
+     */
+    private final @NonNull Set<Integer> mAllowedAcsChannels5g;
+
+    /**
+     * The set of allowed channels in 6GHz band to select from using ACS (Automatic Channel
+     * Selection) algorithm.
+     *
+     * Requires the driver to support {@link SoftApCapability#SOFTAP_FEATURE_ACS_OFFLOAD}.
+     * Otherwise, this set will be ignored.
+     *
+     * If the set is empty, then all channels in 6GHz are allowed.
+     */
+    private final @NonNull Set<Integer> mAllowedAcsChannels6g;
+
+    /**
      * The maximim allowed number of clients that can associate to the AP.
      */
     private final int mMaxNumberOfClients;
@@ -222,7 +266,9 @@ public final class SoftApConfiguration implements Parcelable {
      * {@link #SECURITY_TYPE_OPEN},
      * {@link #SECURITY_TYPE_WPA2_PSK},
      * {@link #SECURITY_TYPE_WPA3_SAE_TRANSITION},
-     * {@link #SECURITY_TYPE_WPA3_SAE}
+     * {@link #SECURITY_TYPE_WPA3_SAE},
+     * {@link #SECURITY_TYPE_WPA3_OWE_TRANSITION},
+     * {@link #SECURITY_TYPE_WPA3_OWE}
      */
     private final @SecurityType int mSecurityType;
 
@@ -306,15 +352,25 @@ public final class SoftApConfiguration implements Parcelable {
     private boolean mIeee80211axEnabled;
 
     /**
+     * Whether 802.11be AP is enabled or not.
+     */
+    private boolean mIeee80211beEnabled;
+
+    /**
      * Whether the current configuration is configured by user or not.
      */
     private boolean mIsUserConfiguration;
 
     /**
+     * Randomized MAC address to use with this configuration when MAC randomization setting
+     * is {@link #RANDOMIZATION_PERSISTENT}.
+     */
+    private final @Nullable MacAddress mPersistentRandomizedMacAddress;
+
+    /**
      * Delay in milliseconds before shutting down an instance in bridged AP.
      */
     private final long mBridgedModeOpportunisticShutdownTimeoutMillis;
-
 
     /**
      * THe definition of security type OPEN.
@@ -336,6 +392,16 @@ public final class SoftApConfiguration implements Parcelable {
      */
     public static final int SECURITY_TYPE_WPA3_SAE = 3;
 
+    /**
+     * The definition of security type WPA3-OWE Transition.
+     */
+    public static final int SECURITY_TYPE_WPA3_OWE_TRANSITION = 4;
+
+    /**
+     * The definition of security type WPA3-OWE.
+     */
+    public static final int SECURITY_TYPE_WPA3_OWE = 5;
+
     /** @hide */
     public static final int SECURITY_TYPE_OWE = 4;
 
@@ -346,6 +412,8 @@ public final class SoftApConfiguration implements Parcelable {
         SECURITY_TYPE_WPA2_PSK,
         SECURITY_TYPE_WPA3_SAE_TRANSITION,
         SECURITY_TYPE_WPA3_SAE,
+        SECURITY_TYPE_WPA3_OWE_TRANSITION,
+        SECURITY_TYPE_WPA3_OWE,
         SECURITY_TYPE_OWE,
     })
     public @interface SecurityType {}
@@ -362,9 +430,12 @@ public final class SoftApConfiguration implements Parcelable {
             long shutdownTimeoutMillis, boolean clientControlByUser,
             @NonNull List<MacAddress> blockedList, @NonNull List<MacAddress> allowedList,
             int macRandomizationSetting, boolean bridgedModeOpportunisticShutdownEnabled,
-            boolean ieee80211axEnabled, boolean isUserConfiguration,
+            boolean ieee80211axEnabled, boolean ieee80211beEnabled, boolean isUserConfiguration,
             long bridgedModeOpportunisticShutdownTimeoutMillis,
             @NonNull List<ScanResult.InformationElement> vendorElements,
+            @Nullable MacAddress persistentRandomizedMacAddress,
+            @NonNull Set<Integer> allowedAcsChannels24g, @NonNull Set<Integer> allowedAcsChannels5g,
+            @NonNull Set<Integer> allowedAcsChannels6g,
             @Nullable String oweTransIfaceName) {
         mWifiSsid = ssid;
         mBssid = bssid;
@@ -386,10 +457,15 @@ public final class SoftApConfiguration implements Parcelable {
         mMacRandomizationSetting = macRandomizationSetting;
         mBridgedModeOpportunisticShutdownEnabled = bridgedModeOpportunisticShutdownEnabled;
         mIeee80211axEnabled = ieee80211axEnabled;
+        mIeee80211beEnabled = ieee80211beEnabled;
         mIsUserConfiguration = isUserConfiguration;
         mBridgedModeOpportunisticShutdownTimeoutMillis =
                 bridgedModeOpportunisticShutdownTimeoutMillis;
         mVendorElements = new ArrayList<>(vendorElements);
+        mPersistentRandomizedMacAddress = persistentRandomizedMacAddress;
+        mAllowedAcsChannels2g = new HashSet<>(allowedAcsChannels24g);
+        mAllowedAcsChannels5g = new HashSet<>(allowedAcsChannels5g);
+        mAllowedAcsChannels6g = new HashSet<>(allowedAcsChannels6g);
         mOweTransIfaceName = oweTransIfaceName;
     }
 
@@ -418,10 +494,16 @@ public final class SoftApConfiguration implements Parcelable {
                 && mBridgedModeOpportunisticShutdownEnabled
                         == other.mBridgedModeOpportunisticShutdownEnabled
                 && mIeee80211axEnabled == other.mIeee80211axEnabled
+                && mIeee80211beEnabled == other.mIeee80211beEnabled
                 && mIsUserConfiguration == other.mIsUserConfiguration
                 && mBridgedModeOpportunisticShutdownTimeoutMillis
                         == other.mBridgedModeOpportunisticShutdownTimeoutMillis
                 && Objects.equals(mVendorElements, other.mVendorElements)
+                && Objects.equals(mPersistentRandomizedMacAddress,
+                        other.mPersistentRandomizedMacAddress)
+                && Objects.equals(mAllowedAcsChannels2g, other.mAllowedAcsChannels2g)
+                && Objects.equals(mAllowedAcsChannels5g, other.mAllowedAcsChannels5g)
+                && Objects.equals(mAllowedAcsChannels6g, other.mAllowedAcsChannels6g)
                 && mOweTransIfaceName == other.mOweTransIfaceName;
     }
 
@@ -431,9 +513,11 @@ public final class SoftApConfiguration implements Parcelable {
                 mChannels.toString(), mSecurityType, mMaxNumberOfClients, mAutoShutdownEnabled,
                 mShutdownTimeoutMillis, mClientControlByUser, mBlockedClientList,
                 mAllowedClientList, mMacRandomizationSetting,
-                mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
+                mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled, mIeee80211beEnabled,
                 mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
-                mVendorElements, mOweTransIfaceName);
+                mVendorElements, mPersistentRandomizedMacAddress, mAllowedAcsChannels2g,
+                mAllowedAcsChannels5g, mAllowedAcsChannels6g,
+                mOweTransIfaceName);
     }
 
     @Override
@@ -458,8 +542,14 @@ public final class SoftApConfiguration implements Parcelable {
         sbuf.append(" \n BridgedModeOpportunisticShutdownTimeoutMillis = ")
                 .append(mBridgedModeOpportunisticShutdownTimeoutMillis);
         sbuf.append(" \n Ieee80211axEnabled = ").append(mIeee80211axEnabled);
+        sbuf.append(" \n Ieee80211beEnabled = ").append(mIeee80211beEnabled);
         sbuf.append(" \n isUserConfiguration = ").append(mIsUserConfiguration);
         sbuf.append(" \n vendorElements = ").append(mVendorElements);
+        sbuf.append(" \n mPersistentRandomizedMacAddress = ")
+                .append(mPersistentRandomizedMacAddress);
+        sbuf.append(" \n mAllowedAcsChannels2g = ").append(mAllowedAcsChannels2g);
+        sbuf.append(" \n mAllowedAcsChannels5g = ").append(mAllowedAcsChannels5g);
+        sbuf.append(" \n mAllowedAcsChannels6g = ").append(mAllowedAcsChannels6g);
         sbuf.append(" \n OWE Transition mode Iface =").append(mOweTransIfaceName);
         return sbuf.toString();
     }
@@ -481,9 +571,14 @@ public final class SoftApConfiguration implements Parcelable {
         dest.writeInt(mMacRandomizationSetting);
         dest.writeBoolean(mBridgedModeOpportunisticShutdownEnabled);
         dest.writeBoolean(mIeee80211axEnabled);
+        dest.writeBoolean(mIeee80211beEnabled);
         dest.writeBoolean(mIsUserConfiguration);
         dest.writeLong(mBridgedModeOpportunisticShutdownTimeoutMillis);
         dest.writeTypedList(mVendorElements);
+        dest.writeParcelable(mPersistentRandomizedMacAddress, flags);
+        writeHashSetInt(dest, mAllowedAcsChannels2g);
+        writeHashSetInt(dest, mAllowedAcsChannels5g);
+        writeHashSetInt(dest, mAllowedAcsChannels6g);
         dest.writeString(mOweTransIfaceName);
     }
 
@@ -522,6 +617,33 @@ public final class SoftApConfiguration implements Parcelable {
         return sa;
     }
 
+    /* Write HashSet<Integer> into Parcel */
+    private static void writeHashSetInt(@NonNull Parcel dest, @NonNull Set<Integer> set) {
+        if (set.isEmpty()) {
+            dest.writeInt(-1);
+            return;
+        }
+
+        dest.writeInt(set.size());
+        for (int val : set) {
+            dest.writeInt(val);
+        }
+    }
+
+    /* Read HashSet<Integer> from Parcel */
+    @NonNull
+    private static Set<Integer> readHashSetInt(@NonNull Parcel in) {
+        Set<Integer> set = new HashSet<>();
+        int len = in.readInt();
+        if (len < 0) {
+            return set;
+        }
+
+        for (int i = 0; i < len; i++) {
+            set.add(in.readInt());
+        }
+        return set;
+    }
 
     @Override
     public int describeContents() {
@@ -539,8 +661,12 @@ public final class SoftApConfiguration implements Parcelable {
                     in.readInt(), in.readBoolean(), in.readLong(), in.readBoolean(),
                     in.createTypedArrayList(MacAddress.CREATOR),
                     in.createTypedArrayList(MacAddress.CREATOR), in.readInt(), in.readBoolean(),
-                    in.readBoolean(), in.readBoolean(), in.readLong(),
+                    in.readBoolean(), in.readBoolean(), in.readBoolean(), in.readLong(),
                     in.createTypedArrayList(ScanResult.InformationElement.CREATOR),
+                    in.readParcelable(MacAddress.class.getClassLoader()),
+                    readHashSetInt(in),
+                    readHashSetInt(in),
+                    readHashSetInt(in),
                     in.readString());
         }
 
@@ -711,7 +837,9 @@ public final class SoftApConfiguration implements Parcelable {
      * {@link #SECURITY_TYPE_OPEN},
      * {@link #SECURITY_TYPE_WPA2_PSK},
      * {@link #SECURITY_TYPE_WPA3_SAE_TRANSITION},
-     * {@link #SECURITY_TYPE_WPA3_SAE}
+     * {@link #SECURITY_TYPE_WPA3_SAE},
+     * {@link #SECURITY_TYPE_WPA3_OWE_TRANSITION},
+     * {@link #SECURITY_TYPE_WPA3_OWE}
      */
     public @SecurityType int getSecurityType() {
         return mSecurityType;
@@ -861,6 +989,62 @@ public final class SoftApConfiguration implements Parcelable {
     }
 
     /**
+     * @see #isIeee80211beEnabled()
+     * @hide
+     */
+    public boolean isIeee80211beEnabledInternal() {
+        return mIeee80211beEnabled;
+    }
+
+    /**
+     * Returns whether or not the Soft AP is configured to enable 802.11be.
+     * This is an indication that if the device support 802.11be AP then to enable or disable
+     * that feature. If the device does not support 802.11be AP then this flag is ignored.
+     * See also {@link Builder#setIeee80211beEnabled(boolean}}
+     * @hide
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @SystemApi
+    public boolean isIeee80211beEnabled() {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        return isIeee80211beEnabledInternal();
+    }
+
+    /**
+     * Returns the allowed channels for ACS in a selected band.
+     *
+     * If an empty array is returned, then all channels in that band are allowed
+     * The channels are configured using {@link Builder#setAllowedAcsChannels(int, int[])}
+     *
+     * @param band one of the following band types:
+     * {@link #BAND_2GHZ}, {@link #BAND_5GHZ}, {@link #BAND_6GHZ}.
+     *
+     * @return array of the allowed channels for ACS in that band
+     *
+     * @hide
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @NonNull
+    @SystemApi
+    public int[] getAllowedAcsChannels(@BandType int band) {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        switch(band) {
+            case BAND_2GHZ:
+                return mAllowedAcsChannels2g.stream().mapToInt(Integer::intValue).toArray();
+            case BAND_5GHZ:
+                return mAllowedAcsChannels5g.stream().mapToInt(Integer::intValue).toArray();
+            case BAND_6GHZ:
+                return mAllowedAcsChannels6g.stream().mapToInt(Integer::intValue).toArray();
+            default:
+                throw new IllegalArgumentException("getAllowedAcsChannels: Invalid band: " + band);
+        }
+    }
+
+    /**
      * Returns whether or not the {@link SoftApConfiguration} was configured by the user
      * (as opposed to the default system configuration).
      * <p>
@@ -877,6 +1061,20 @@ public final class SoftApConfiguration implements Parcelable {
             throw new UnsupportedOperationException();
         }
         return isUserConfigurationInternal();
+    }
+
+    /**
+     * Returns the randomized MAC address to be used by this configuration.
+     *
+     * The Soft AP may be configured to use a persistent randomized MAC address with
+     * {@link Builder#setMacRandomizationSetting(int)}. This method returns the persistent
+     * randomized MAC address which will be used for the Soft AP controlled by this configuration.
+     *
+     * @hide
+     */
+    @SystemApi
+    public @NonNull MacAddress getPersistentRandomizedMacAddress() {
+        return mPersistentRandomizedMacAddress;
     }
 
     /**
@@ -1007,9 +1205,14 @@ public final class SoftApConfiguration implements Parcelable {
         private int mMacRandomizationSetting;
         private boolean mBridgedModeOpportunisticShutdownEnabled;
         private boolean mIeee80211axEnabled;
+        private boolean mIeee80211beEnabled;
         private boolean mIsUserConfiguration;
         private long mBridgedModeOpportunisticShutdownTimeoutMillis;
         private List<ScanResult.InformationElement> mVendorElements;
+        private MacAddress mPersistentRandomizedMacAddress;
+        private Set<Integer> mAllowedAcsChannels2g;
+        private Set<Integer> mAllowedAcsChannels5g;
+        private Set<Integer> mAllowedAcsChannels6g;
         private String mOweTransIfaceName;
 
         /**
@@ -1036,9 +1239,14 @@ public final class SoftApConfiguration implements Parcelable {
             }
             mBridgedModeOpportunisticShutdownEnabled = true;
             mIeee80211axEnabled = true;
+            mIeee80211beEnabled = true;
             mIsUserConfiguration = true;
             mBridgedModeOpportunisticShutdownTimeoutMillis = 0;
             mVendorElements = new ArrayList<>();
+            mPersistentRandomizedMacAddress = null;
+            mAllowedAcsChannels2g = new HashSet<>();
+            mAllowedAcsChannels5g = new HashSet<>();
+            mAllowedAcsChannels6g = new HashSet<>();
             mOweTransIfaceName = null;
         }
 
@@ -1064,10 +1272,15 @@ public final class SoftApConfiguration implements Parcelable {
             mBridgedModeOpportunisticShutdownEnabled =
                     other.mBridgedModeOpportunisticShutdownEnabled;
             mIeee80211axEnabled = other.mIeee80211axEnabled;
+            mIeee80211beEnabled = other.mIeee80211beEnabled;
             mIsUserConfiguration = other.mIsUserConfiguration;
             mBridgedModeOpportunisticShutdownTimeoutMillis =
                     other.mBridgedModeOpportunisticShutdownTimeoutMillis;
             mVendorElements = new ArrayList<>(other.mVendorElements);
+            mPersistentRandomizedMacAddress = other.mPersistentRandomizedMacAddress;
+            mAllowedAcsChannels2g = new HashSet<>(other.mAllowedAcsChannels2g);
+            mAllowedAcsChannels5g = new HashSet<>(other.mAllowedAcsChannels5g);
+            mAllowedAcsChannels6g = new HashSet<>(other.mAllowedAcsChannels6g);
             mOweTransIfaceName = other.mOweTransIfaceName;
         }
 
@@ -1083,13 +1296,24 @@ public final class SoftApConfiguration implements Parcelable {
                     throw new IllegalArgumentException("A MacAddress exist in both client list");
                 }
             }
+
+            // mMacRandomizationSetting supported from S.
+            if (SdkLevel.isAtLeastS() && Compatibility.isChangeEnabled(
+                    FORCE_MUTUAL_EXCLUSIVE_BSSID_MAC_RAMDONIZATION_SETTING)
+                    && mBssid != null && mMacRandomizationSetting != RANDOMIZATION_NONE) {
+                throw new IllegalArgumentException("A BSSID had configured but MAC randomization"
+                        + " setting is not NONE");
+            }
             return new SoftApConfiguration(mWifiSsid, mBssid, mPassphrase,
                     mHiddenSsid, mChannels, mSecurityType, mMaxNumberOfClients,
                     mAutoShutdownEnabled, mShutdownTimeoutMillis, mClientControlByUser,
                     mBlockedClientList, mAllowedClientList, mMacRandomizationSetting,
                     mBridgedModeOpportunisticShutdownEnabled, mIeee80211axEnabled,
-                    mIsUserConfiguration, mBridgedModeOpportunisticShutdownTimeoutMillis,
-                    mVendorElements, mOweTransIfaceName);
+                    mIeee80211beEnabled, mIsUserConfiguration,
+                    mBridgedModeOpportunisticShutdownTimeoutMillis, mVendorElements,
+                    mPersistentRandomizedMacAddress, mAllowedAcsChannels2g, mAllowedAcsChannels5g,
+                    mAllowedAcsChannels6g,
+                    mOweTransIfaceName);
         }
 
         /**
@@ -1179,6 +1403,9 @@ public final class SoftApConfiguration implements Parcelable {
          * <p>
          * <li>If not set, defaults to null.</li>
          *
+         * When this method is called, the caller needs to configure MAC randomization settings to
+         * {@link #RANDOMIZATION_NONE}. See {@link #setMacRandomizationSetting(int)} for details.
+         *
          * If multiple bands are requested via {@link #setBands(int[])} or
          * {@link #setChannels(SparseIntArray)}, HAL will derive 2 MAC addresses since framework
          * only sends down 1 MAC address.
@@ -1225,19 +1452,33 @@ public final class SoftApConfiguration implements Parcelable {
          * {@link #SECURITY_TYPE_OPEN},
          * {@link #SECURITY_TYPE_WPA2_PSK},
          * {@link #SECURITY_TYPE_WPA3_SAE_TRANSITION},
-         * {@link #SECURITY_TYPE_WPA3_SAE}.
+         * {@link #SECURITY_TYPE_WPA3_SAE},
+         * {@link #SECURITY_TYPE_WPA3_OWE_TRANSITION},
+         * {@link #SECURITY_TYPE_WPA3_OWE}.
          * @param passphrase The passphrase to use for sepcific {@code securityType} configuration
-         * or null with {@link #SECURITY_TYPE_OPEN}.
+         * or null with {@link #SECURITY_TYPE_OPEN}, {@link #SECURITY_TYPE_WPA3_OWE_TRANSITION},
+         * and {@link #SECURITY_TYPE_WPA3_OWE}.
          *
          * @return Builder for chaining.
          * @throws IllegalArgumentException when the passphrase length is invalid and
-         *         {@code securityType} is not {@link #SECURITY_TYPE_OPEN}
+         *         {@code securityType} is any of the following:
+         *         {@link ##SECURITY_TYPE_WPA2_PSK} or {@link #SECURITY_TYPE_WPA3_SAE_TRANSITION}
+         *         or {@link #SECURITY_TYPE_WPA3_SAE},
          *         or non-null passphrase and {@code securityType} is
-         *         {@link #SECURITY_TYPE_OPEN}.
+         *         {@link #SECURITY_TYPE_OPEN} or {@link #SECURITY_TYPE_WPA3_OWE_TRANSITION} or
+         *         {@link #SECURITY_TYPE_WPA3_OWE}.
          */
         @NonNull
         public Builder setPassphrase(@Nullable String passphrase, @SecurityType int securityType) {
-            if (securityType == SECURITY_TYPE_OPEN || securityType == SECURITY_TYPE_OWE) {
+            if (!SdkLevel.isAtLeastT()
+                    && (securityType == SECURITY_TYPE_WPA3_OWE_TRANSITION
+                            || securityType == SECURITY_TYPE_WPA3_OWE)) {
+                throw new UnsupportedOperationException();
+            }
+            if (securityType == SECURITY_TYPE_OPEN
+                    || securityType == SECURITY_TYPE_WPA3_OWE_TRANSITION
+                    || securityType == SECURITY_TYPE_WPA3_OWE
+                    || securityType == SECURITY_TYPE_OWE) {
                 if (passphrase != null) {
                     throw new IllegalArgumentException(
                             "passphrase should be null when security type is open");
@@ -1570,6 +1811,66 @@ public final class SoftApConfiguration implements Parcelable {
             return this;
         }
 
+        /**
+         * Configures the set of channel numbers in the specified band that are allowed
+         * to be selected by the Automatic Channel Selection (ACS) algorithm.
+         * <p>
+         *
+         * Requires the driver to support {@link SoftApCapability#SOFTAP_FEATURE_ACS_OFFLOAD}.
+         * Otherwise, these sets will be ignored.
+         * <p>
+         *
+         * @param band one of the following band types:
+         * {@link #BAND_2GHZ}, {@link #BAND_5GHZ}, {@link #BAND_6GHZ}.
+         *
+         * @param channels that are allowed to be used by ACS algorithm in this band. If it is
+         * configured to an empty array or not configured, then all channels within that band
+         * will be allowed.
+         * <p>
+         *
+         * @return Builder for chaining.
+         */
+        @NonNull
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        public Builder setAllowedAcsChannels(@BandType int band, @NonNull int[] channels) {
+            if (!SdkLevel.isAtLeastT()) {
+                throw new UnsupportedOperationException();
+            }
+
+            if (channels == null) {
+                throw new IllegalArgumentException(
+                        "Passing a null object to setAllowedAcsChannels");
+            }
+
+            if ((band != BAND_2GHZ) && (band != BAND_5GHZ) && (band != BAND_6GHZ)) {
+                throw new IllegalArgumentException(
+                        "Passing an invalid band to setAllowedAcsChannels");
+            }
+
+            for (int channel : channels) {
+                if (!isChannelBandPairValid(channel, band)) {
+                    throw new IllegalArgumentException(
+                            "Invalid channel to setAllowedAcsChannels: band: " + band
+                            + "channel: " + channel);
+                }
+            }
+
+            HashSet<Integer> set = IntStream.of(channels).boxed()
+                    .collect(Collectors.toCollection(HashSet::new));
+            switch(band) {
+                case BAND_2GHZ:
+                    mAllowedAcsChannels2g = set;
+                    break;
+                case BAND_5GHZ:
+                    mAllowedAcsChannels5g = set;
+                    break;
+                case BAND_6GHZ:
+                    mAllowedAcsChannels6g = set;
+                    break;
+            }
+
+            return this;
+        }
 
         /**
          * This method together with {@link setClientControlByUserEnabled(boolean)} control client
@@ -1627,7 +1928,9 @@ public final class SoftApConfiguration implements Parcelable {
          * The Soft AP BSSID will be randomized only if the BSSID isn't set
          * {@link #setBssid(MacAddress)} and this method is either uncalled
          * or called with {@link #RANDOMIZATION_PERSISTENT} or
-         * {@link #RANDOMIZATION_NON_PERSISTENT}.
+         * {@link #RANDOMIZATION_NON_PERSISTENT}. When this method is called with
+         * {@link #RANDOMIZATION_PERSISTENT} or {@link #RANDOMIZATION_NON_PERSISTENT}, the caller
+         * the caller must not call {@link #setBssid(MacAddress)}.
          *
          * <p>
          * <li>If not set, defaults to {@link #RANDOMIZATION_NON_PERSISTENT}</li>
@@ -1728,6 +2031,34 @@ public final class SoftApConfiguration implements Parcelable {
         }
 
         /**
+         * Specifies whether or not to enable 802.11be on the Soft AP.
+         *
+         * <p>
+         * Note: Only relevant when the device supports 802.11be on the Soft AP.
+         * If enabled on devices that do not support 802.11be then ignored.
+         * Use {@link WifiManager.SoftApCallback#onCapabilityChanged(SoftApCapability)} and
+         * {@link SoftApCapability#areFeaturesSupported(long)}
+         * with {@link SoftApCapability.SOFTAP_FEATURE_IEEE80211_BE} to determine
+         * whether or not 802.11be is supported on the Soft AP.
+         * <p>
+         * <li>If not set, defaults to true - which will be ignored on devices
+         * which do not support 802.11be</li>
+         *
+         * @param enable true to enable, false to disable.
+         * @return Builder for chaining.
+         *
+         */
+        @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+        @NonNull
+        public Builder setIeee80211beEnabled(boolean enable) {
+            if (!SdkLevel.isAtLeastT()) {
+                throw new UnsupportedOperationException();
+            }
+            mIeee80211beEnabled = enable;
+            return this;
+        }
+
+        /**
          * Specifies whether or not the configuration is configured by user.
          *
          * @param isUserConfigured true to user configuration, false otherwise.
@@ -1768,6 +2099,20 @@ public final class SoftApConfiguration implements Parcelable {
                 throw new UnsupportedOperationException();
             }
             mBridgedModeOpportunisticShutdownTimeoutMillis = timeoutMillis;
+            return this;
+        }
+
+        /**
+         * @param mac persistent randomized MacAddress generated by the frameworks.
+         * @hide
+         */
+        @NonNull
+        public Builder setRandomizedMacAddress(@NonNull MacAddress mac) {
+            if (mac == null) {
+                throw new IllegalArgumentException("setRandomizedMacAddress received"
+                        + " null MacAddress.");
+            }
+            mPersistentRandomizedMacAddress = mac;
             return this;
         }
 
