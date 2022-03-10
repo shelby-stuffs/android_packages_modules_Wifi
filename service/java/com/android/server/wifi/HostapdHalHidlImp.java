@@ -412,7 +412,7 @@ public class HostapdHalHidlImp implements IHostapdHal {
                 return false;
             }
 
-            if (!isV1_3()) {
+            if (!isApInfoCallbackSupported()) {
                 Log.d(TAG, "The current HAL doesn't support event callback.");
                 return false;
             }
