@@ -86,6 +86,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -96,6 +97,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.concurrent.Executor;
+import java.util.function.BiConsumer;
 
 /**
  * This class provides the primary API for managing all aspects of Wi-Fi
@@ -401,6 +403,72 @@ public class WifiManager {
     /** @hide */
     @SystemApi
     public static final int PASSPOINT_ROAMING_NETWORK = 1;
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(value = {
+            API_SCANNING_ENABLED,
+            API_WIFI_ENABLED,
+            API_SOFT_AP,
+            API_TETHERED_HOTSPOT,
+            API_AUTOJOIN_GLOBAL,
+            API_SET_SCAN_SCHEDULE})
+    public @interface ApiType {}
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiScanner#setScanningEnabled(boolean)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_SCANNING_ENABLED = 1;
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiManager#setWifiEnabled(boolean)} .
+     * @hide
+     */
+    @SystemApi
+    public static final int API_WIFI_ENABLED = 2;
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiManager#startSoftAp(WifiConfiguration)} and
+     * {@link WifiManager#stopSoftAp()}.
+     * @hide
+     */
+    @SystemApi
+    public static final int API_SOFT_AP = 3;
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiManager#startTetheredHotspot(SoftApConfiguration)}.
+     * @hide
+     */
+    @SystemApi
+    public static final int API_TETHERED_HOTSPOT = 4;
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiManager#allowAutojoinGlobal(boolean)}.
+     * @hide
+     */
+    @SystemApi
+    public static final int API_AUTOJOIN_GLOBAL = 5;
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of {@link WifiManager#setScreenOnScanSchedule(List)}.
+     * @hide
+     */
+    @SystemApi
+    public static final int API_SET_SCAN_SCHEDULE = 6;
+    /**
+     * Used internally to keep track of boundary.
+     * @hide
+     */
+    public static final int API_MAX = 6;
 
     /**
      * Broadcast intent action indicating that a Passpoint provider icon has been received.
@@ -1712,20 +1780,39 @@ public class WifiManager {
 
     /**
      * To be used with setScreenOnScanSchedule.
+     * @hide
      */
+    @SystemApi
     public static class ScreenOnScanSchedule {
-        private final int mScanTimeMs;
+        private final Duration mScanInterval;
         private final int mScanType;
 
         /**
          * Creates a ScreenOnScanSchedule.
-         * @param scanTimeMs Interval between framework-initiated connectivity scans in
-         *                   milliseconds.
+         * @param scanInterval Interval between framework-initiated connectivity scans.
          * @param scanType One of the {@code WifiScanner.SCAN_TYPE_} values.
          */
-        public ScreenOnScanSchedule(int scanTimeMs, @WifiAnnotations.ScanType int scanType) {
-            mScanTimeMs = scanTimeMs;
+        public ScreenOnScanSchedule(@NonNull Duration scanInterval,
+                @WifiAnnotations.ScanType int scanType) {
+            if (scanInterval == null) {
+                throw new IllegalArgumentException("scanInterval can't be null");
+            }
+            mScanInterval = scanInterval;
             mScanType = scanType;
+        }
+
+        /**
+         * Gets the interval between framework-initiated connectivity scans.
+         */
+        public @NonNull Duration getScanInterval() {
+            return mScanInterval;
+        }
+
+        /**
+         * Gets the type of scan to be used. One of the {@code WifiScanner.SCAN_TYPE_} values.
+         */
+        public @WifiAnnotations.ScanType int getScanType() {
+            return mScanType;
         }
     }
 
@@ -1733,7 +1820,8 @@ public class WifiManager {
      * Allows a privileged app to customize the screen-on scan behavior. When a non-null schedule
      * is set via this API, it will always get used instead of the scan schedules defined in the
      * overlay. When a null schedule is set via this API, the wifi subsystem will go back to using
-     * the scan schedules defined in the overlay.
+     * the scan schedules defined in the overlay. Also note, the scan schedule will be truncated
+     * (rounded down) to the nearest whole second.
      * <p>
      * Example usage:
      * The following call specifies that first scheduled scan should be in 20 seconds using
@@ -1742,8 +1830,10 @@ public class WifiManager {
      * {@link WifiScanner#SCAN_TYPE_LOW_POWER}.
      * <pre>
      * List<ScreenOnScanSchedule> schedule = new ArrayList<>();
-     * schedule.add(new ScreenOnScanSchedule(20, WifiScanner.SCAN_TYPE_HIGH_ACCURACY));
-     * schedule.add(new ScreenOnScanSchedule(40, WifiScanner.SCAN_TYPE_LOW_POWER));
+     * schedule.add(new ScreenOnScanSchedule(Duration.ofSeconds(20),
+     *         WifiScanner.SCAN_TYPE_HIGH_ACCURACY));
+     * schedule.add(new ScreenOnScanSchedule(Duration.ofSeconds(40),
+     *         WifiScanner.SCAN_TYPE_LOW_POWER));
      * wifiManager.setScreenOnScanSchedule(schedule);
      * </pre>
      * @param screenOnScanSchedule defines the screen-on scan schedule and the corresponding
@@ -1773,8 +1863,8 @@ public class WifiManager {
             int[] scanSchedule = new int[screenOnScanSchedule.size()];
             int[] scanType = new int[screenOnScanSchedule.size()];
             for (int i = 0; i < screenOnScanSchedule.size(); i++) {
-                scanSchedule[i] = screenOnScanSchedule.get(i).mScanTimeMs;
-                scanType[i] = screenOnScanSchedule.get(i).mScanType;
+                scanSchedule[i] = (int) screenOnScanSchedule.get(i).getScanInterval().toSeconds();
+                scanType[i] = screenOnScanSchedule.get(i).getScanType();
             }
             mService.setScreenOnScanSchedule(scanSchedule, scanType);
         } catch (RemoteException e) {
@@ -6114,12 +6204,11 @@ public class WifiManager {
      * auto-join.
      *
      * @param allowAutojoin true to allow auto-join, false to disallow auto-join
-     * @hide
+     *
+     * Available for DO/PO apps.
+     * Other apps require {@code android.Manifest.permission#NETWORK_SETTINGS} or
+     * {@code android.Manifest.permission#MANAGE_WIFI_AUTO_JOIN} permission.
      */
-    @SystemApi
-    @RequiresPermission(anyOf = {
-            android.Manifest.permission.NETWORK_SETTINGS,
-            android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN})
     public void allowAutojoinGlobal(boolean allowAutojoin) {
         try {
             mService.allowAutojoinGlobal(allowAutojoin);
@@ -8334,7 +8423,7 @@ public class WifiManager {
 
 
     /**
-     * Callback registered with {@link #setExternalPnoScanRequest(Executor, List,
+     * Callback registered with {@link WifiManager#setExternalPnoScanRequest(List, int[], Executor,
      * PnoScanResultsCallback)}. Returns status and result information on offloaded external PNO
      * requests.
      * @hide
@@ -8545,14 +8634,13 @@ public class WifiManager {
      * {@link #clearExternalPnoScanRequest()}</li>
      * </ul>
      *
-     * @param executor The executor on which callback will be invoked.
      * @param ssids The list of SSIDs to request for PNO scan.
      * @param frequencies Provide as hint a list of up to 10 frequencies to be used for PNO scan.
      *                    Each frequency should be in MHz. For example 2412 and 5180 are valid
      *                    frequencies. {@link WifiInfo#getFrequency()} is a location where this
      *                    information could be obtained. If a null or empty array is provided, the
      *                    Wi-Fi framework will automatically decide the list of frequencies to scan.
-     *
+     * @param executor The executor on which callback will be invoked.
      * @param callback For the calling application to receive results and status updates.
      *
      * @throws SecurityException if the caller does not have permission.
@@ -8564,13 +8652,12 @@ public class WifiManager {
     @RequiresPermission(allOf = {ACCESS_FINE_LOCATION,
             REQUEST_COMPANION_PROFILE_AUTOMOTIVE_PROJECTION})
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    public void setExternalPnoScanRequest(@NonNull @CallbackExecutor Executor executor,
-            @NonNull List<WifiSsid> ssids, @Nullable int[] frequencies,
+    public void setExternalPnoScanRequest(@NonNull List<WifiSsid> ssids,
+            @Nullable int[] frequencies, @NonNull @CallbackExecutor Executor executor,
             @NonNull PnoScanResultsCallback callback) {
         if (executor == null) throw new IllegalArgumentException("executor cannot be null");
         if (callback == null) throw new IllegalArgumentException("callback cannot be null");
         try {
-
             mService.setExternalPnoScanRequest(new Binder(),
                     new PnoScanResultsCallbackProxy(executor, callback),
                     ssids, frequencies == null ? new int[0] : frequencies,
@@ -8592,6 +8679,48 @@ public class WifiManager {
     public void clearExternalPnoScanRequest() {
         try {
             mService.clearExternalPnoScanRequest();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns information about the last caller of an API.
+     *
+     * @param apiType The type of API to request information for the last caller.
+     * @param executor The executor on which callback will be invoked.
+     * @param resultsCallback An asynchronous callback that will return 2 arguments.
+     *                        {@code String} the name of the package that performed the last API
+     *                        call. {@code Boolean} the value associated with the last API call.
+     *
+     * @throws SecurityException if the caller does not have permission.
+     * @throws IllegalArgumentException if the caller provided invalid inputs.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            android.Manifest.permission.NETWORK_STACK,
+            NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK})
+    public void getLastCallerInfoForApi(@ApiType int apiType, @NonNull Executor executor,
+            @NonNull BiConsumer<String, Boolean> resultsCallback) {
+        if (executor == null) {
+            throw new IllegalArgumentException("executor can't be null");
+        }
+        if (resultsCallback == null) {
+            throw new IllegalArgumentException("resultsCallback can't be null");
+        }
+        try {
+            mService.getLastCallerInfoForApi(apiType,
+                    new ILastCallerListener.Stub() {
+                        @Override
+                        public void onResult(String packageName, boolean enabled) {
+                            Binder.clearCallingIdentity();
+                            executor.execute(() -> {
+                                resultsCallback.accept(packageName, enabled);
+                            });
+                        }
+                    });
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -9216,12 +9345,12 @@ public class WifiManager {
             "android.net.wifi.action.LAUNCH_DIALOG";
 
     /**
-     * Intent action to cancel an existing dialog from the WifiDialog app.
+     * Intent action to dismiss an existing dialog from the WifiDialog app.
      * Must include EXTRA_DIALOG_ID.
      * @hide
      */
-    public static final String ACTION_CANCEL_DIALOG =
-            "android.net.wifi.action.CANCEL_DIALOG";
+    public static final String ACTION_DISMISS_DIALOG =
+            "android.net.wifi.action.DISMISS_DIALOG";
 
     /**
      * Unknown DialogType.
@@ -9230,18 +9359,71 @@ public class WifiManager {
     public static final int DIALOG_TYPE_UNKNOWN = 0;
 
     /**
-     * DialogType for a P2P Invitation Received dialog.
+     * DialogType for a simple dialog.
+     * @see {@link com.android.server.wifi.WifiDialogManager#createSimpleDialog}
      * @hide
      */
-    public static final int DIALOG_TYPE_P2P_INVITATION_RECEIVED = 1;
+    public static final int DIALOG_TYPE_SIMPLE = 1;
+
+    /**
+     * DialogType for a P2P Invitation Received dialog.
+     * @see {@link com.android.server.wifi.WifiDialogManager#createP2pInvitationReceivedDialog}
+     * @hide
+     */
+    public static final int DIALOG_TYPE_P2P_INVITATION_RECEIVED = 2;
 
     /** @hide */
     @IntDef(prefix = { "DIALOG_TYPE_" }, value = {
             DIALOG_TYPE_UNKNOWN,
+            DIALOG_TYPE_SIMPLE,
             DIALOG_TYPE_P2P_INVITATION_RECEIVED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface DialogType {}
+
+    /**
+     * Dialog positive button was clicked.
+     * @hide
+     */
+    public static final int DIALOG_REPLY_POSITIVE = 0;
+
+    /**
+     * Dialog negative button was clicked.
+     * @hide
+     */
+    public static final int DIALOG_REPLY_NEGATIVE = 1;
+
+    /**
+     * Dialog neutral button was clicked.
+     * @hide
+     */
+    public static final int DIALOG_REPLY_NEUTRAL = 2;
+
+    /**
+     * Dialog was cancelled.
+     * @hide
+     */
+    public static final int DIALOG_REPLY_CANCELLED = 3;
+
+    /**
+     * Indication of a reply to a dialog.
+     * See {@link WifiManager#replyToSimpleDialog(int, int)}
+     * @hide
+     */
+    @IntDef(prefix = { "DIALOG_TYPE_" }, value = {
+            DIALOG_REPLY_POSITIVE,
+            DIALOG_REPLY_NEGATIVE,
+            DIALOG_REPLY_NEUTRAL,
+            DIALOG_REPLY_CANCELLED,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface DialogReply {}
+
+    /**
+     * Invalid dialog id for dialogs that are not currently active.
+     * @hide
+     */
+    public static final int INVALID_DIALOG_ID = -1;
 
     /**
      * Extra int indicating the type of dialog to display.
@@ -9250,10 +9432,43 @@ public class WifiManager {
     public static final String EXTRA_DIALOG_TYPE = "android.net.wifi.extra.DIALOG_TYPE";
 
     /**
-     * Extra int indicating the ID of a dialog. The value must be non-negative.
+     * Extra int indicating the ID of a dialog. The value must not be {@link #INVALID_DIALOG_ID}.
      * @hide
      */
     public static final String EXTRA_DIALOG_ID = "android.net.wifi.extra.DIALOG_ID";
+
+    /**
+     * Extra String indicating the title of a simple dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_TITLE = "android.net.wifi.extra.DIALOG_TITLE";
+
+    /**
+     * Extra String indicating the message of a simple dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_MESSAGE = "android.net.wifi.extra.DIALOG_MESSAGE";
+
+    /**
+     * Extra String indicating the positive button text of a simple dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_POSITIVE_BUTTON_TEXT =
+            "android.net.wifi.extra.DIALOG_POSITIVE_BUTTON_TEXT";
+
+    /**
+     * Extra String indicating the negative button text of a simple dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_NEGATIVE_BUTTON_TEXT =
+            "android.net.wifi.extra.DIALOG_NEGATIVE_BUTTON_TEXT";
+
+    /**
+     * Extra String indicating the neutral button text of a simple dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_NEUTRAL_BUTTON_TEXT =
+            "android.net.wifi.extra.DIALOG_NEUTRAL_BUTTON_TEXT";
 
     /**
      * Extra String indicating a P2P device name for a P2P Invitation Sent/Received dialog.
@@ -9281,6 +9496,39 @@ public class WifiManager {
     public static final String EXTRA_P2P_DISPLAY_ID = "android.net.wifi.extra.P2P_DISPLAY_ID";
 
     /**
+     * Returns a set of packages that aren't DO or PO but should be able to manage WiFi networks.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    @NonNull
+    public Set<String> getOemPrivilegedWifiAdminPackages() {
+        try {
+            return new ArraySet<>(mService.getOemPrivilegedWifiAdminPackages());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Method for WifiDialog to notify the framework of a reply to a simple dialog.
+     * @param dialogId id of the replying dialog.
+     * @param reply reply of the dialog.
+     * @hide
+     */
+    public void replyToSimpleDialog(int dialogId, @DialogReply int reply) {
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "replyToWifiEnableRequestDialog: dialogId=" + dialogId
+                    + " reply=" + reply);
+        }
+        try {
+            mService.replyToSimpleDialog(dialogId, reply);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Method for WifiDialog to notify the framework of a reply to a P2P Invitation Received dialog.
      * @param dialogId id of the replying dialog.
      * @param accepted Whether the invitation was accepted.
@@ -9290,7 +9538,7 @@ public class WifiManager {
     public void replyToP2pInvitationReceivedDialog(
             int dialogId, boolean accepted, @Nullable String optionalPin) {
         if (mVerboseLoggingEnabled) {
-            Log.v(TAG, "notifyP2pInvitationResponse: "
+            Log.v(TAG, "replyToP2pInvitationReceivedDialog: "
                     + "dialogId=" + dialogId
                     + ", accepted=" + accepted
                     + ", pin=" + optionalPin);
@@ -9359,6 +9607,120 @@ public class WifiManager {
         }
         try {
             mService.removeCustomDhcpOptions(ssid, oui);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Wi-Fi interface of type STA.
+     */
+    public static final int WIFI_INTERFACE_TYPE_STA = 0;
+
+    /**
+     * Wi-Fi interface of type AP.
+     */
+    public static final int WIFI_INTERFACE_TYPE_AP = 1;
+
+    /**
+     * Wi-Fi interface of type Wi-Fi Aware (aka NAN).
+     */
+    public static final int WIFI_INTERFACE_TYPE_AWARE = 2;
+
+    /**
+     * Wi-Fi interface of type Wi-Fi Direct (aka P2P).
+     */
+    public static final int WIFI_INTERFACE_TYPE_DIRECT = 3;
+
+    /** @hide */
+    @IntDef(prefix = { "WIFI_INTERFACE_TYPE_" }, value = {
+            WIFI_INTERFACE_TYPE_STA,
+            WIFI_INTERFACE_TYPE_AP,
+            WIFI_INTERFACE_TYPE_AWARE,
+            WIFI_INTERFACE_TYPE_DIRECT,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface WifiInterfaceType {}
+
+    /**
+     * Queries the framework to determine whether the specified interface can be created, and if
+     * so - what other interfaces would be torn down by the framework to allow this creation if
+     * it were requested. The result is returned via the specified {@link BiConsumer} callback
+     * which returns two arguments:
+     * <li>First argument: a {@code boolean} - indicating whether or not the interface can be
+     * created.</li>
+     * <li>Second argument: a {@code List<Pair<Integer, String[]>>} - if the interface can be
+     * created (first argument is {@code true} then this is the list of interface types which
+     * will be removed and the packages which requested them. Possibly an empty list. If the
+     * first argument is {@code false}, then an empty list will be returned here.</li>
+     * <p>
+     * Interfaces, input and output, are specified using the {@code WIFI_INTERFACE_*} constants:
+     * {@link #WIFI_INTERFACE_TYPE_STA}, {@link #WIFI_INTERFACE_TYPE_AP},
+     * {@link #WIFI_INTERFACE_TYPE_AWARE}, or {@link #WIFI_INTERFACE_TYPE_DIRECT}.
+     * <p>
+     * This method does not actually create the interface. That operation is handled by the
+     * framework when a particular service method is called. E.g. a Wi-Fi Direct interface may be
+     * created when various methods of {@link android.net.wifi.p2p.WifiP2pManager} are called,
+     * similarly for Wi-Fi Aware and {@link android.net.wifi.aware.WifiAwareManager}.
+     * <p>
+     * Note: the information returned via this method is the current snapshot of the system. It may
+     * change due to actions of the framework or other apps.
+     *
+     * @param interfaceType The interface type whose possible creation is being queried.
+     * @param queryForNewInterface Indicates that the query is for a new interface of the specified
+     *                             type - an existing interface won't meet the query. Some
+     *                             operations (such as Wi-Fi Direct and Wi-Fi Aware are a shared
+     *                             resource and so may not need a new interface).
+     * @param executor An {@link Executor} on which to return the result.
+     * @param resultCallback The asynchronous callback which will return two argument: a
+     * {@code boolean} (whether or not the interface can be created), and a
+     * {@code List<Pair<Integer, String[]>>} (a list of interfaces which will be destroyed when
+     *                      the interface is created and the packages which requested them and
+     *                      thus may be impacted).
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(allOf = {android.Manifest.permission.MANAGE_WIFI_INTERFACES,
+            ACCESS_WIFI_STATE})
+    public void reportImpactToCreateIfaceRequest(@WifiInterfaceType int interfaceType,
+            boolean queryForNewInterface,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull BiConsumer<Boolean, List<Pair<Integer, String[]>>> resultCallback) {
+        if (executor == null) throw new IllegalArgumentException("Null executor");
+        if (resultCallback == null) throw new IllegalArgumentException("Null resultCallback");
+        try {
+            mService.reportImpactToCreateIfaceRequest(mContext.getOpPackageName(), interfaceType,
+                    queryForNewInterface, new IInterfaceCreationInfoCallback.Stub() {
+                        @Override
+                        public void onResults(boolean canCreate, int[] interfacesToDelete,
+                                String[] packagesForInterfaces) {
+                            Binder.clearCallingIdentity();
+                            if ((interfacesToDelete == null && packagesForInterfaces != null)
+                                    || (interfacesToDelete != null
+                                    && packagesForInterfaces == null) || (canCreate && (
+                                    interfacesToDelete == null || interfacesToDelete.length
+                                            != packagesForInterfaces.length))) {
+                                Log.e(TAG,
+                                        "reportImpactToCreateIfaceRequest: Invalid callback "
+                                                + "parameters - canCreate="
+                                                + canCreate + ", interfacesToDelete="
+                                                + Arrays.toString(interfacesToDelete)
+                                                + ", worksourcesForInterfaces="
+                                                + Arrays.toString(packagesForInterfaces));
+                                return;
+                            }
+
+                            final List<Pair<Integer, String[]>> finalList =
+                                    (canCreate && interfacesToDelete.length > 0) ? new ArrayList<>()
+                                            : Collections.emptyList();
+                            if (canCreate) {
+                                for (int i = 0; i < interfacesToDelete.length; ++i) {
+                                    finalList.add(Pair.create(interfacesToDelete[i],
+                                            packagesForInterfaces[i].split(",")));
+                                }
+                            }
+                            executor.execute(() -> resultCallback.accept(canCreate, finalList));
+                        }
+                    });
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

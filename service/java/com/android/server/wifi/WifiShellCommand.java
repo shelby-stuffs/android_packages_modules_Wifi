@@ -28,12 +28,18 @@ import static android.net.wifi.WifiManager.LocalOnlyHotspotCallback.REQUEST_REGI
 import static android.net.wifi.WifiManager.WIFI_STATE_DISABLED;
 import static android.net.wifi.WifiManager.WIFI_STATE_ENABLED;
 
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP_BRIDGE;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_NAN;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_P2P;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_STA;
 import static com.android.server.wifi.SelfRecovery.REASON_API_CALL;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.MacAddress;
 import android.net.Network;
@@ -68,6 +74,7 @@ import android.os.PatternMatcher;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.WorkSource;
 import android.telephony.Annotation;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.SubscriptionManager;
@@ -75,6 +82,7 @@ import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
+import android.util.SparseArray;
 import android.view.Display;
 
 import androidx.annotation.NonNull;
@@ -129,8 +137,6 @@ public class WifiShellCommand extends BasicShellCommandHandler {
     // However, these do perform permission checks in the corresponding WifiService methods.
     private static final String[] NON_PRIVILEGED_COMMANDS = {
             "add-suggestion",
-            "add-network",
-            "connect-network",
             "forget-network",
             "get-country-code",
             "help",
@@ -177,6 +183,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
     private int mSapState = WifiManager.WIFI_STATE_UNKNOWN;
     private final ScanRequestProxy mScanRequestProxy;
     private final @NonNull WifiDialogManager mWifiDialogManager;
+    private final HalDeviceManager mHalDeviceManager;
 
     private class SoftApCallbackProxy extends ISoftApCallback.Stub {
         private final PrintWriter mPrintWriter;
@@ -286,6 +293,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         mWifiApConfigStore = wifiInjector.getWifiApConfigStore();
         mScanRequestProxy = wifiInjector.getScanRequestProxy();
         mWifiDialogManager = wifiInjector.getWifiDialogManager();
+        mHalDeviceManager = wifiInjector.getHalDeviceManager();
     }
 
     @Override
@@ -1152,12 +1160,107 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     }
                     mScanRequestProxy.enableScanning(enabled, hiddenEnabled);
                     return 0;
+                case "launch-dialog-simple":
+                    String title = null;
+                    String message = null;
+                    String positiveButtonText = null;
+                    String negativeButtonText = null;
+                    String neutralButtonText = null;
+                    String dialogOption = getNextOption();
+                    boolean simpleTimeoutSpecified = false;
+                    long simpleTimeoutMs = 0;
+                    while (dialogOption != null) {
+                        switch (dialogOption) {
+                            case "-t":
+                                title = getNextArgRequired();
+                                break;
+                            case "-m":
+                                message = getNextArgRequired();
+                                break;
+                            case "-y":
+                                positiveButtonText = getNextArgRequired();
+                                break;
+                            case "-n":
+                                negativeButtonText = getNextArgRequired();
+                                break;
+                            case "-x":
+                                neutralButtonText = getNextArgRequired();
+                                break;
+                            case "-c":
+                                simpleTimeoutMs = Integer.parseInt(getNextArgRequired());
+                                simpleTimeoutSpecified = true;
+                                break;
+                            default:
+                                pw.println("Ignoring unknown option " + dialogOption);
+                                break;
+                        }
+                        dialogOption = getNextOption();
+                    }
+                    ArrayBlockingQueue<String> simpleQueue = new ArrayBlockingQueue<>(1);
+                    WifiDialogManager.SimpleDialogCallback wifiEnableRequestCallback =
+                            new WifiDialogManager.SimpleDialogCallback() {
+                                @Override
+                                public void onPositiveButtonClicked() {
+                                    simpleQueue.offer("Positive button was clicked.");
+                                }
+
+                                @Override
+                                public void onNegativeButtonClicked() {
+                                    simpleQueue.offer("Negative button was clicked.");
+                                }
+
+                                @Override
+                                public void onNeutralButtonClicked() {
+                                    simpleQueue.offer("Neutral button was clicked.");
+                                }
+
+                                @Override
+                                public void onCancelled() {
+                                    simpleQueue.offer("Dialog was cancelled.");
+                                }
+                            };
+                    WifiDialogManager.DialogHandle simpleDialogHandle =
+                            mWifiDialogManager.createSimpleDialog(
+                                    title,
+                                    message,
+                                    positiveButtonText,
+                                    negativeButtonText,
+                                    neutralButtonText,
+                                    wifiEnableRequestCallback,
+                                    mWifiThreadRunner);
+                    if (simpleTimeoutSpecified) {
+                        simpleDialogHandle.launchDialog(simpleTimeoutMs);
+                        pw.println("Launched dialog with " + simpleTimeoutMs + " millisecond"
+                                + " timeout. Waiting for user response...");
+                        pw.flush();
+                        String dialogResponse = simpleQueue.take();
+                        if (dialogResponse == null) {
+                            pw.println("No response received.");
+                        } else {
+                            pw.println(dialogResponse);
+                        }
+                    } else {
+                        simpleDialogHandle.launchDialog();
+                        pw.println("Launched dialog. Waiting up to 15 seconds for user response"
+                                + " before dismissing...");
+                        pw.flush();
+                        String dialogResponse = simpleQueue.poll(15, TimeUnit.SECONDS);
+                        if (dialogResponse == null) {
+                            pw.println("No response received. Dismissing dialog.");
+                            simpleDialogHandle.dismissDialog();
+                        } else {
+                            pw.println(dialogResponse);
+                        }
+                    }
+                    return 0;
                 case "launch-dialog-p2p-invitation-received":
                     String deviceName = getNextArgRequired();
                     boolean isPinRequested = false;
                     String displayPin = null;
                     String pinOption = getNextOption();
                     int displayId = Display.DEFAULT_DISPLAY;
+                    boolean p2pInvRecTimeoutSpecified = false;
+                    long p2pInvRecTimeout = 0;
                     while (pinOption != null) {
                         if (pinOption.equals("-p")) {
                             isPinRequested = true;
@@ -1174,38 +1277,131 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                                         + displayIdStr);
                                 return -1;
                             }
+                            DisplayManager dm = mContext.getSystemService(DisplayManager.class);
+                            Display[] displays = dm.getDisplays();
+                            for (Display display : displays) {
+                                pw.println("Display: id=" + display.getDisplayId() + ", info="
+                                        + display.getDeviceProductInfo());
+                            }
+                        } else if (pinOption.equals("-c")) {
+                            p2pInvRecTimeout = Integer.parseInt(getNextArgRequired());
+                            p2pInvRecTimeoutSpecified = true;
                         } else {
                             pw.println("Ignoring unknown option " + pinOption);
                         }
                         pinOption = getNextOption();
                     }
-                    ArrayBlockingQueue<String> queue = new ArrayBlockingQueue<>(1);
+                    ArrayBlockingQueue<String> p2pInvRecQueue = new ArrayBlockingQueue<>(1);
                     WifiDialogManager.P2pInvitationReceivedDialogCallback callback =
                             new WifiDialogManager.P2pInvitationReceivedDialogCallback() {
                         @Override
                         public void onAccepted(@Nullable String optionalPin) {
-                            queue.offer("Invitation accepted with optionalPin=" + optionalPin);
+                            p2pInvRecQueue.offer("Invitation accepted with optionalPin="
+                                    + optionalPin);
                         }
 
                         @Override
                         public void onDeclined() {
-                            queue.offer("Invitation declined");
+                            p2pInvRecQueue.offer("Invitation declined");
                         }
                     };
-                    mWifiDialogManager.launchP2pInvitationReceivedDialog(
-                            deviceName,
-                            isPinRequested,
-                            displayPin,
-                            displayId,
-                            callback,
-                            mWifiThreadRunner);
-                    pw.println("Launched dialog. Waiting up to 15 seconds for user response.");
-                    pw.flush();
-                    String msg = queue.poll(15, TimeUnit.SECONDS);
-                    if (msg == null) {
-                        pw.println("No response received.");
+                    WifiDialogManager.DialogHandle p2pInvitationReceivedDialogHandle =
+                            mWifiDialogManager.createP2pInvitationReceivedDialog(
+                                    deviceName,
+                                    isPinRequested,
+                                    displayPin,
+                                    displayId,
+                                    callback,
+                                    mWifiThreadRunner);
+                    if (p2pInvRecTimeoutSpecified) {
+                        p2pInvitationReceivedDialogHandle.launchDialog(p2pInvRecTimeout);
+                        pw.println("Launched dialog with " + p2pInvRecTimeout + " millisecond"
+                                + " timeout. Waiting for user response...");
+                        pw.flush();
+                        String dialogResponse = p2pInvRecQueue.take();
+                        if (dialogResponse == null) {
+                            pw.println("No response received.");
+                        } else {
+                            pw.println(dialogResponse);
+                        }
                     } else {
-                        pw.println(msg);
+                        p2pInvitationReceivedDialogHandle.launchDialog();
+                        pw.println("Launched dialog. Waiting up to 15 seconds for user response"
+                                + " before dismissing...");
+                        pw.flush();
+                        String dialogResponse = p2pInvRecQueue.poll(15, TimeUnit.SECONDS);
+                        if (dialogResponse == null) {
+                            pw.println("No response received. Dismissing dialog.");
+                            p2pInvitationReceivedDialogHandle.dismissDialog();
+                        } else {
+                            pw.println(dialogResponse);
+                        }
+                    }
+                    return 0;
+                case "query-interface":
+                    String uidArg = getNextArgRequired();
+                    int uid = 0;
+                    try {
+                        uid = Integer.parseInt(uidArg);
+                    } catch (NumberFormatException e) {
+                        pw.println(
+                                "Invalid UID specified, can't convert to an integer - " + uidArg);
+                        return -1;
+                    }
+                    String packageName = getNextArgRequired();
+
+                    String interfaceTypeArg = getNextArgRequired();
+                    int interfaceType;
+                    switch (interfaceTypeArg) {
+                        case "STA":
+                            interfaceType = HDM_CREATE_IFACE_STA;
+                            break;
+                        case "AP":
+                            interfaceType = HDM_CREATE_IFACE_AP;
+                            break;
+                        case "AWARE":
+                            interfaceType = HDM_CREATE_IFACE_NAN;
+                            break;
+                        case "DIRECT":
+                            interfaceType = HDM_CREATE_IFACE_P2P;
+                            break;
+                        default:
+                            pw.println("Invalid interface type - expected STA|AP|AWARE|DIRECT: "
+                                    + interfaceTypeArg);
+                            return -1;
+                    }
+                    boolean queryForNewInterface = false;
+                    String optArg = getNextArg();
+                    if (optArg != null) {
+                        if (TextUtils.equals("-new", optArg)) {
+                            queryForNewInterface = true;
+                        } else {
+                            pw.println("Unknown extra arg --- " + optArg);
+                            return -1;
+                        }
+                    }
+                    List<Pair<Integer, WorkSource>> details =
+                            mHalDeviceManager.reportImpactToCreateIface(interfaceType,
+                                    queryForNewInterface, new WorkSource(uid, packageName));
+                    final SparseArray<String> ifaceMap = new SparseArray<String>() {{
+                            put(HDM_CREATE_IFACE_STA, "STA");
+                            put(HDM_CREATE_IFACE_AP, "AP");
+                            put(HDM_CREATE_IFACE_AP_BRIDGE, "AP");
+                            put(HDM_CREATE_IFACE_P2P, "DIRECT");
+                            put(HDM_CREATE_IFACE_NAN, "AWARE");
+                        }};
+                    if (details == null) {
+                        pw.println("Can't create interface: " + interfaceTypeArg);
+                    } else if (details.size() == 0) {
+                        pw.println("Interface " + interfaceTypeArg
+                                + " can be created without destroying any other interfaces");
+                    } else {
+                        pw.println("Interface " + interfaceTypeArg
+                                + " can be created. Following interfaces will be destroyed:");
+                        for (Pair<Integer, WorkSource> detail: details) {
+                            pw.println("    Type=" + ifaceMap.get(detail.first) + ", WS="
+                                    + detail.second);
+                        }
                     }
                     return 0;
                 default:
@@ -1752,44 +1948,6 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    Start a new scan");
         pw.println("  list-networks");
         pw.println("    Lists the saved networks");
-        pw.println("  connect-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
-                + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
-        pw.println("    Connect to a network with provided params and add to saved networks list");
-        pw.println("    <ssid> - SSID of the network");
-        pw.println("    open|owe|wpa2|wpa3 - Security type of the network.");
-        pw.println("        - Use 'open' or 'owe' for networks with no passphrase");
-        pw.println("           - 'open' - Open networks (Most prevalent)");
-        pw.println("           - 'owe' - Enhanced open networks");
-        pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
-        pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
-        pw.println("           - 'wpa3' - WPA-3 PSK networks");
-        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
-        pw.println("    -m - Mark the network metered.");
-        pw.println("    -d - Mark the network autojoin disabled.");
-        pw.println("    -h - Mark the network hidden.");
-        pw.println("    -p - Mark the network private (not shared).");
-        pw.println("    -b <bssid> - Set specific BSSID.");
-        pw.println("    -r auto|none|persistent|non_persistent - MAC randomization scheme for the"
-                + " network");
-        pw.println("  add-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
-                + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
-        pw.println("    Add/update saved network with provided params");
-        pw.println("    <ssid> - SSID of the network");
-        pw.println("    open|owe|wpa2|wpa3 - Security type of the network.");
-        pw.println("        - Use 'open' or 'owe' for networks with no passphrase");
-        pw.println("           - 'open' - Open networks (Most prevalent)");
-        pw.println("           - 'owe' - Enhanced open networks");
-        pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
-        pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
-        pw.println("           - 'wpa3' - WPA-3 PSK networks");
-        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
-        pw.println("    -m - Mark the network metered.");
-        pw.println("    -d - Mark the network autojoin disabled.");
-        pw.println("    -h - Mark the network hidden.");
-        pw.println("    -p - Mark the network private (not shared).");
-        pw.println("    -b <bssid> - Set specific BSSID.");
-        pw.println("    -r auto|none|persistent|non_persistent - MAC randomization scheme for the"
-                + " network");
         pw.println("  forget-network <networkId>");
         pw.println("    Remove the network mentioned by <networkId>");
         pw.println("        - Use list-networks to retrieve <networkId> for the network");
@@ -1900,17 +2058,71 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println(
                 "    Reset the WiFi resources cache which will cause them to be reloaded next "
                         + "time they are accessed. Necessary if overlays are manually modified.");
+        pw.println("  launch-dialog-simple [-t <title>] [-m <message>] [-y <positive_button_text>]"
+                + " [-n <negative_button_text>] [-x <neutral_button_text>] [-c <timeout_millis>]");
+        pw.println("    Launches a simple dialog and waits up to 15 seconds to"
+                + " print the response.");
+        pw.println("    -t - Title");
+        pw.println("    -m - Message");
+        pw.println("    -y - Positive Button Text");
+        pw.println("    -n - Negative Button Text");
+        pw.println("    -x - Neutral Button Text");
+        pw.println("    -c - Optional timeout in milliseconds");
         pw.println("  launch-dialog-p2p-invitation-received <device_name> [-p] [-d <pin>] "
-                + "[-i <display_id>]");
-        pw.println("    Launches a P2P Invitation Received dialog and waits up to 30 seconds to"
+                + "[-i <display_id>] [-c <timeout_millis>]");
+        pw.println("    Launches a P2P Invitation Received dialog and waits up to 15 seconds to"
                 + " print the response.");
         pw.println("    <device_name> - Name of the device sending the invitation");
         pw.println("    -p - Show PIN input");
         pw.println("    -d - Display PIN <pin>");
         pw.println("    -i - Display ID");
+        pw.println("    -c - Optional timeout in milliseconds");
+        pw.println("  query-interface <uid> <package_name> STA|AP|AWARE|DIRECT [-new]");
+        pw.println(
+                "    Query whether the specified could be created for the specified UID and "
+                        + "package name, and if so - what other interfaces would be destroyed");
+        pw.println("    -new - query for a new interfaces (otherwise an existing interface is ok");
     }
 
     private void onHelpPrivileged(PrintWriter pw) {
+        pw.println("  connect-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
+                + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
+        pw.println("    Connect to a network with provided params and add to saved networks list");
+        pw.println("    <ssid> - SSID of the network");
+        pw.println("    open|owe|wpa2|wpa3 - Security type of the network.");
+        pw.println("        - Use 'open' or 'owe' for networks with no passphrase");
+        pw.println("           - 'open' - Open networks (Most prevalent)");
+        pw.println("           - 'owe' - Enhanced open networks");
+        pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
+        pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
+        pw.println("           - 'wpa3' - WPA-3 PSK networks");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
+        pw.println("    -m - Mark the network metered.");
+        pw.println("    -d - Mark the network autojoin disabled.");
+        pw.println("    -h - Mark the network hidden.");
+        pw.println("    -p - Mark the network private (not shared).");
+        pw.println("    -b <bssid> - Set specific BSSID.");
+        pw.println("    -r auto|none|persistent|non_persistent - MAC randomization scheme for the"
+                + " network");
+        pw.println("  add-network <ssid> open|owe|wpa2|wpa3 [<passphrase>] [-x] [-m] [-d] "
+                + "[-b <bssid>] [-r auto|none|persistent|non_persistent]");
+        pw.println("    Add/update saved network with provided params");
+        pw.println("    <ssid> - SSID of the network");
+        pw.println("    open|owe|wpa2|wpa3 - Security type of the network.");
+        pw.println("        - Use 'open' or 'owe' for networks with no passphrase");
+        pw.println("           - 'open' - Open networks (Most prevalent)");
+        pw.println("           - 'owe' - Enhanced open networks");
+        pw.println("        - Use 'wpa2' or 'wpa3' for networks with passphrase");
+        pw.println("           - 'wpa2' - WPA-2 PSK networks (Most prevalent)");
+        pw.println("           - 'wpa3' - WPA-3 PSK networks");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text");
+        pw.println("    -m - Mark the network metered.");
+        pw.println("    -d - Mark the network autojoin disabled.");
+        pw.println("    -h - Mark the network hidden.");
+        pw.println("    -p - Mark the network private (not shared).");
+        pw.println("    -b <bssid> - Set specific BSSID.");
+        pw.println("    -r auto|none|persistent|non_persistent - MAC randomization scheme for the"
+                + " network");
         pw.println("  set-ipreach-disconnect enabled|disabled");
         pw.println("    Sets whether CMD_IP_REACHABILITY_LOST events should trigger disconnects.");
         pw.println("  get-ipreach-disconnect");

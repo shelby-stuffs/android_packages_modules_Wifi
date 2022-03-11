@@ -545,7 +545,15 @@ public class WifiConnectivityManager {
         }
 
         // Check if any blocklisted BSSIDs can be freed.
-        mWifiBlocklistMonitor.tryEnablingBlockedBssids(scanDetails);
+        List<ScanDetail> enabledDetails =
+                mWifiBlocklistMonitor.tryEnablingBlockedBssids(scanDetails);
+        for (ScanDetail scanDetail : enabledDetails) {
+            WifiConfiguration config = mConfigManager.getSavedNetworkForScanDetail(scanDetail);
+            if (config != null) {
+                mConfigManager.updateNetworkSelectionStatus(config.networkId,
+                        WifiConfiguration.NetworkSelectionStatus.DISABLED_NONE);
+            }
+        }
         Set<String> bssidBlocklist = mWifiBlocklistMonitor.updateAndGetBssidBlocklistForSsids(
                 connectedSsids);
         updateUserDisabledList(scanDetails);
@@ -2016,9 +2024,10 @@ public class WifiConnectivityManager {
         settings.numBssidsPerScan = 0;
         settings.hiddenNetworks.clear();
         // retrieve the list of hidden network SSIDs from saved network to scan for
-        settings.hiddenNetworks.addAll(mConfigManager.retrieveHiddenNetworkList());
+        settings.hiddenNetworks.addAll(mConfigManager.retrieveHiddenNetworkList(true));
         // retrieve the list of hidden network SSIDs from Network suggestion to scan for
-        settings.hiddenNetworks.addAll(mWifiNetworkSuggestionsManager.retrieveHiddenNetworkList());
+        settings.hiddenNetworks.addAll(
+                mWifiNetworkSuggestionsManager.retrieveHiddenNetworkList(true));
 
         SingleScanListener singleScanListener =
                 new SingleScanListener(isFullBandScan);
@@ -2071,8 +2080,8 @@ public class WifiConnectivityManager {
     /**
      * Sets the external scan schedule and scan type.
      */
-    public void setExternalScreenOnScanSchedule(int[] scanSchedule, int[] scanType) {
-        mExternalSingleScanScheduleSec = scanSchedule;
+    public void setExternalScreenOnScanSchedule(int[] scanScheduleSeconds, int[] scanType) {
+        mExternalSingleScanScheduleSec = scanScheduleSeconds;
         mExternalSingleScanType = scanType;
     }
 
@@ -2154,8 +2163,10 @@ public class WifiConnectivityManager {
     private @NonNull List<WifiConfiguration> getAllScanOptimizationNetworks() {
         List<WifiConfiguration> networks = mConfigManager.getSavedNetworks(-1);
         networks.addAll(mWifiNetworkSuggestionsManager.getAllScanOptimizationSuggestionNetworks());
-        // remove all auto-join disabled or network selection disabled network.
+        // remove all saved but never connected, auto-join disabled, or network selection disabled
+        // networks.
         networks.removeIf(config -> !config.allowAutojoin
+                || (!config.ephemeral && !config.getNetworkSelectionStatus().hasEverConnected())
                 || !config.getNetworkSelectionStatus().isNetworkEnabled()
                 || mConfigManager.isNetworkTemporarilyDisabledByUser(
                         config.isPasspoint() ? config.FQDN : config.SSID));

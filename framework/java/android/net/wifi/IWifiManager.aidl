@@ -27,6 +27,8 @@ import android.net.wifi.CoexUnsafeChannel;
 import android.net.wifi.IActionListener;
 import android.net.wifi.ICoexCallback;
 import android.net.wifi.IDppCallback;
+import android.net.wifi.IInterfaceCreationInfoCallback;
+import android.net.wifi.ILastCallerListener;
 import android.net.wifi.ILocalOnlyHotspotCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
 import android.net.wifi.IOnWifiActivityEnergyInfoListener;
@@ -68,7 +70,7 @@ interface IWifiManager
 
     oneway void getWifiActivityEnergyInfoAsync(in IOnWifiActivityEnergyInfoListener listener);
 
-    void setScreenOnScanSchedule(in int[] scanSchedule, in int[] scanType);
+    void setScreenOnScanSchedule(in int[] scanScheduleSeconds, in int[] scanType);
 
     ParceledListSlice getConfiguredNetworks(String packageName, String featureId, boolean callerNetworksOnly);
 
@@ -325,6 +327,8 @@ interface IWifiManager
 
     void clearExternalPnoScanRequest();
 
+    void getLastCallerInfoForApi(int api, in ILastCallerListener listener);
+
     /**
      * Return the Map of {@link WifiNetworkSuggestion} and the list of <ScanResult>
      */
@@ -388,9 +392,15 @@ interface IWifiManager
 
     void validateCurrentWifiMeetsAdminRequirements();
 
+    String[] getOemPrivilegedWifiAdminPackages();
+
     void replyToP2pInvitationReceivedDialog(int dialogId, boolean accepted, String optionalPin);
+
+    void replyToSimpleDialog(int dialogId, int reply);
 
     void addCustomDhcpOptions(in WifiSsid ssid, in byte[] oui, in List<DhcpOption> options);
 
     void removeCustomDhcpOptions(in WifiSsid ssid, in byte[] oui);
+
+    void reportImpactToCreateIfaceRequest(String packageName, int interfaceType, boolean queryForNewInterface, in IInterfaceCreationInfoCallback callback);
 }

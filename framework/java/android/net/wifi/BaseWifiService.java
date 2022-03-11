@@ -90,7 +90,7 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public void setScreenOnScanSchedule(int[] scanSchedule, int[] scanType) {
+    public void setScreenOnScanSchedule(int[] scanScheduleSeconds, int[] scanType) {
         throw new UnsupportedOperationException();
     }
 
@@ -754,6 +754,11 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public void getLastCallerInfoForApi(int apiType, @NonNull ILastCallerListener listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean setWifiConnectedNetworkScorer(IBinder binder,
             IWifiConnectedNetworkScorer scorer) {
         throw new UnsupportedOperationException();
@@ -888,8 +893,18 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public String[] getOemPrivilegedWifiAdminPackages() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void replyToP2pInvitationReceivedDialog(
             int dialogId, boolean accepted, @Nullable String optionalPin) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void replyToSimpleDialog(int dialogId, int button) {
         throw new UnsupportedOperationException();
     }
 
@@ -900,6 +915,12 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public void removeCustomDhcpOptions(WifiSsid ssid, byte[] oui) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void reportImpactToCreateIfaceRequest(String packageName, int interfaceType,
+            boolean queryForNewInterface, IInterfaceCreationInfoCallback callback) {
         throw new UnsupportedOperationException();
     }
 }
