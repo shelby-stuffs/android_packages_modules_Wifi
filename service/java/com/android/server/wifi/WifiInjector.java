@@ -299,7 +299,7 @@ public class WifiInjector {
                 new AdaptiveConnectivityEnabledSettingObserver(wifiHandler, mWifiMetrics,
                         mFrameworkFacade, mContext);
         // Modules interacting with Native.
-        mHalDeviceManager = new HalDeviceManager(mClock, this, wifiHandler);
+        mHalDeviceManager = new HalDeviceManager(mContext, mClock, this, wifiHandler);
         mWifiVendorHal = new WifiVendorHal(mContext, mHalDeviceManager, wifiHandler, mWifiGlobals);
         mSupplicantStaIfaceHal = new SupplicantStaIfaceHal(
                 mContext, mWifiMonitor, mFrameworkFacade, wifiHandler, mClock, mWifiMetrics,
@@ -1065,7 +1065,8 @@ public class WifiInjector {
      */
     public WorkSourceHelper makeWsHelper(@NonNull WorkSource ws) {
         return new WorkSourceHelper(ws, mWifiPermissionsUtil,
-                mContext.getSystemService(ActivityManager.class), mContext.getPackageManager());
+                mContext.getSystemService(ActivityManager.class), mContext.getPackageManager(),
+                mContext.getResources());
     }
 
     public AdaptiveConnectivityEnabledSettingObserver

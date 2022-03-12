@@ -37,6 +37,7 @@ import android.hardware.wifi.supplicant.BssTmDataFlagsMask;
 import android.hardware.wifi.supplicant.BssTmStatusCode;
 import android.hardware.wifi.supplicant.BssidChangeReason;
 import android.hardware.wifi.supplicant.DppAkm;
+import android.hardware.wifi.supplicant.DppConnectionKeys;
 import android.hardware.wifi.supplicant.DppEventType;
 import android.hardware.wifi.supplicant.DppFailureCode;
 import android.hardware.wifi.supplicant.DppProgressCode;
@@ -381,7 +382,7 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
     }
 
     @Override
-    public void onEapFailure(int errorCode) {
+    public void onEapFailure(byte[/* 6 */] bssid, int errorCode) {
         synchronized (mLock) {
             mStaIfaceHal.logCallback("onEapFailure");
             mWifiMonitor.broadcastAuthenticationFailureEvent(
@@ -434,7 +435,7 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
 
     @Override
     public void onDppSuccessConfigReceived(byte[] ssid, String password,
-            byte[] psk, int securityAkm) {
+            byte[] psk, int securityAkm, DppConnectionKeys keys) {
         if (mStaIfaceHal.getDppCallback() == null) {
             Log.e(TAG, "onDppSuccessConfigReceived callback is null");
             return;
@@ -1097,9 +1098,17 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
     }
 
     @Override
-    public void onQosPolicyRequest(QosPolicyData[] qosPolicyData) {
+    public void onQosPolicyRequest(int qosPolicyRequestId, QosPolicyData[] qosPolicyData) {
         synchronized (mLock) {
             mStaIfaceHal.logCallback("onQosPolicyRequest");
+        }
+    }
+
+    @Override
+    public void onAuxiliarySupplicantEvent(int eventCode, byte[] bssid,
+            String reasonString) {
+        synchronized (mLock) {
+            mStaIfaceHal.logCallback("onAuxiliarySupplicantEvent");
         }
     }
 }

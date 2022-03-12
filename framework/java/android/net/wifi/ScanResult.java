@@ -21,6 +21,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.SystemApi;
 import android.compat.annotation.UnsupportedAppUsage;
+import android.net.MacAddress;
 import android.net.wifi.WifiAnnotations.ChannelWidth;
 import android.net.wifi.WifiAnnotations.WifiStandard;
 import android.net.wifi.util.ScanResultUtil;
@@ -87,6 +88,86 @@ public final class ScanResult implements Parcelable {
      * The address of the access point.
      */
     public String BSSID;
+
+    /**
+     * The Multi-Link Device (MLD) address of the access point.
+     * Only applicable for Wi-Fi 7 access points, null otherwise.
+     */
+    private MacAddress mApMldMacAddress;
+
+    /**
+     * Return the access point Multi-Link Device (MLD) MAC Address for Wi-Fi 7 access points.
+     * i.e. {@link #getWifiStandard()} returns {@link #WIFI_STANDARD_11BE}.
+     *
+     * @return MLD MAC Address for access point if exists (Wi-Fi 7 access points), null otherwise.
+     */
+    @Nullable
+    public MacAddress getApMldMacAddress() {
+        return mApMldMacAddress;
+    }
+
+    /**
+     * Set the access point Multi-Link Device (MLD) MAC Address.
+     * @hide
+     */
+    public void setApMldMacAddress(@Nullable MacAddress address) {
+        mApMldMacAddress = address;
+    }
+
+    /**
+     * The Multi-Link Operation (MLO) link id for the access point.
+     * Only applicable for Wi-Fi 7 access points.
+     */
+    private int mApMloLinkId = MloLink.INVALID_MLO_LINK_ID;
+
+    /**
+     * Return the access point Multi-Link Operation (MLO) link-id for Wi-Fi 7 access points.
+     * i.e. when {@link #getWifiStandard()} returns {@link #WIFI_STANDARD_11BE}, otherwise return
+     * {@link MloLink#INVALID_MLO_LINK_ID}.
+     *
+     * Valid values are 0-15 as described in IEEE 802.11be Specification, section 9.4.2.295b.2.
+     *
+     * @return {@link MloLink#INVALID_MLO_LINK_ID} or a valid value (0-15).
+     */
+    public int getApMloLinkId() {
+        return mApMloLinkId;
+    }
+
+    /**
+     * Sets the access point Multi-Link Operation (MLO) link-id
+     * @hide
+     */
+    public void setApMloLinkId(int linkId) {
+        mApMloLinkId = linkId;
+    }
+
+    /**
+     * The Multi-Link Operation (MLO) affiliated Links.
+     * Only applicable for Wi-Fi 7 access points.
+     * Note: the list of links includes the access point for this ScanResult.
+     */
+    private List<MloLink> mAffiliatedMloLinks = Collections.emptyList();
+
+    /**
+     * Return the Multi-Link Operation (MLO) affiliated Links for Wi-Fi 7 access points.
+     * i.e. when {@link #getWifiStandard()} returns {@link #WIFI_STANDARD_11BE}.
+     *
+     * @return List of affiliated MLO links, or an empty list if access point is not Wi-Fi 7
+     */
+    @NonNull
+    public List<MloLink> getAffiliatedMloLinks() {
+        return new ArrayList<MloLink>(mAffiliatedMloLinks);
+    }
+
+    /**
+     * Set the Multi-Link Operation (MLO) affiliated Links.
+     * Only applicable for Wi-Fi 7 access points.
+     *
+     * @hide
+     */
+    public void setAffiliatedMloLinks(@NonNull List<MloLink> links) {
+        mAffiliatedMloLinks = new ArrayList<MloLink>(links);
+    }
 
     /**
      * The HESSID from the beacon.
@@ -257,9 +338,14 @@ public final class ScanResult implements Parcelable {
     public static final int KEY_MGMT_FILS_SHA384 = 16;
     /**
      * @hide
+     * Security key management scheme: DPP.
+     */
+    public static final int KEY_MGMT_DPP = 17;
+    /**
+     * @hide
      * Security key management scheme: any unknown AKM.
      */
-    public static final int KEY_MGMT_UNKNOWN = 17;
+    public static final int KEY_MGMT_UNKNOWN = 18;
     /**
      * @hide
      * Security key management scheme: FT_EAP_SHA384.
@@ -456,7 +542,7 @@ public final class ScanResult implements Parcelable {
     /**
      * AP wifi standard.
      */
-    private @WifiStandard int mWifiStandard;
+    private @WifiStandard int mWifiStandard = WIFI_STANDARD_UNKNOWN;
 
     /**
      * return the AP wifi standard.
@@ -1233,7 +1319,7 @@ public final class ScanResult implements Parcelable {
         this.centerFreq1 = UNSPECIFIED;
         this.flags = 0;
         this.radioChainInfos = null;
-        this.mWifiStandard = WIFI_STANDARD_UNKNOWN;
+        this.mApMldMacAddress = null;
     }
 
     /** {@hide} */
@@ -1259,7 +1345,7 @@ public final class ScanResult implements Parcelable {
         this.centerFreq1 = UNSPECIFIED;
         this.flags = 0;
         this.radioChainInfos = null;
-        this.mWifiStandard = WIFI_STANDARD_UNKNOWN;
+        this.mApMldMacAddress = null;
     }
 
     /** {@hide} */
@@ -1286,7 +1372,7 @@ public final class ScanResult implements Parcelable {
             this.flags = 0;
         }
         this.radioChainInfos = null;
-        this.mWifiStandard = WIFI_STANDARD_UNKNOWN;
+        this.mApMldMacAddress = null;
     }
 
     /** {@hide} */
@@ -1327,6 +1413,10 @@ public final class ScanResult implements Parcelable {
             radioChainInfos = source.radioChainInfos;
             this.mWifiStandard = source.mWifiStandard;
             this.ifaceName = source.ifaceName;
+            this.mApMldMacAddress = source.mApMldMacAddress;
+            this.mApMloLinkId = source.mApMloLinkId;
+            this.mAffiliatedMloLinks = source.mAffiliatedMloLinks != null
+                    ? new ArrayList<>(source.mAffiliatedMloLinks) : Collections.emptyList();
         }
     }
 
@@ -1366,6 +1456,17 @@ public final class ScanResult implements Parcelable {
         sb.append(((flags & FLAG_80211mc_RESPONDER) != 0) ? "is supported" : "is not supported");
         sb.append(", Radio Chain Infos: ").append(Arrays.toString(radioChainInfos));
         sb.append(", interface name: ").append(ifaceName);
+
+        if (mApMldMacAddress != null) {
+            sb.append(", MLO Info: ")
+                    .append(" AP MLD MAC Address: ")
+                    .append(mApMldMacAddress.toString())
+                    .append(", AP MLO Link-Id: ")
+                    .append((mApMloLinkId == MloLink.INVALID_MLO_LINK_ID)
+                            ? "Unspecified" : mApMloLinkId)
+                    .append(", AP MLO Affiliated Links: ").append(mAffiliatedMloLinks);
+        }
+
         return sb.toString();
     }
 
@@ -1435,6 +1536,12 @@ public final class ScanResult implements Parcelable {
             dest.writeInt(0);
         }
         dest.writeString((ifaceName != null) ? ifaceName.toString() : "");
+
+
+        // Add MLO related attributes
+        dest.writeParcelable(mApMldMacAddress, flags);
+        dest.writeInt(mApMloLinkId);
+        dest.writeTypedList(mAffiliatedMloLinks);
     }
 
     /** Implement the Parcelable interface */
@@ -1503,6 +1610,13 @@ public final class ScanResult implements Parcelable {
                     }
                 }
                 sr.ifaceName = in.readString();
+
+
+                // Read MLO related attributes
+                sr.mApMldMacAddress = in.readParcelable(MacAddress.class.getClassLoader());
+                sr.mApMloLinkId = in.readInt();
+                in.readTypedList(sr.mAffiliatedMloLinks, MloLink.CREATOR);
+
                 return sr;
             }
 

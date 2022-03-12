@@ -50,6 +50,7 @@ import android.hardware.wifi.supplicant.IfaceInfo;
 import android.hardware.wifi.supplicant.IfaceType;
 import android.hardware.wifi.supplicant.KeyMgmtMask;
 import android.hardware.wifi.supplicant.LegacyMode;
+import android.hardware.wifi.supplicant.MloLinksInfo;
 import android.hardware.wifi.supplicant.RxFilterType;
 import android.hardware.wifi.supplicant.WifiTechnology;
 import android.hardware.wifi.supplicant.WpaDriverCapabilitiesMask;
@@ -2668,6 +2669,49 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     }
 
     /**
+     * Returns connection MLO links info
+     *
+     * @param ifaceName Name of the interface.
+     * @return connection MLO links info
+     */
+    public WifiNative.ConnectionMloLinksInfo getConnectionMloLinksInfo(@NonNull String ifaceName) {
+        synchronized (mLock) {
+            final String methodStr = "getConnectionMloLinksInfo";
+            ISupplicantStaIface iface = checkStaIfaceAndLogFailure(ifaceName, methodStr);
+            if (iface == null) {
+                return null;
+            }
+            try {
+                MloLinksInfo halInfo = iface.getConnectionMloLinksInfo();
+                if (halInfo == null) {
+                    return null;
+                }
+
+                WifiNative.ConnectionMloLinksInfo nativeInfo =
+                        new WifiNative.ConnectionMloLinksInfo();
+
+                nativeInfo.links = new WifiNative.ConnectionMloLink[halInfo.links.length];
+
+                for (int i = 0; i < halInfo.links.length; i++) {
+                    nativeInfo.links[i].linkId = halInfo.links[i].linkId;
+                    nativeInfo.links[i].staMacAddress = MacAddress.fromBytes(
+                            halInfo.links[i].staLinkMacAddress);
+                }
+                return nativeInfo;
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+            } catch (ServiceSpecificException e) {
+                handleServiceSpecificException(e, methodStr);
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "Invalid STA Mac Address received from HAL");
+                return null;
+            }
+
+            return null;
+        }
+    }
+
+    /**
      * Adds a DPP peer URI to the URI list.
      *
      * Returns an ID to be used later to refer to this URI (>0).
@@ -2759,7 +2803,9 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             try {
                 iface.startDppConfiguratorInitiator(peerBootstrapId, ownBootstrapId, ssid,
                         password != null ? password : "", psk != null ? psk : "",
-                        frameworkToAidlDppNetRole(netRole), frameworkToAidlDppAkm(securityAkm));
+                        frameworkToAidlDppNetRole(netRole), frameworkToAidlDppAkm(securityAkm),
+                        new byte[] {});
+                // TODO: update dppPrivateEcKey if it is returned
                 return true;
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);

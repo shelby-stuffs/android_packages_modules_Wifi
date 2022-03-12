@@ -784,6 +784,12 @@
     <!-- Indicate the number of networks to restore in a batch. 0 : all networks in a batch -->
     <integer translatable="false" name="config_wifiConfigurationRestoreNetworksBatchNum">50</integer>
 
+    <!-- OEM privileged WiFi admin package names. Empty by default-->
+    <string-array translatable="false" name="config_oemPrivilegedWifiAdminPackages">
+        <!-- Add package names here, example: -->
+        <!-- <item>com.something.manager</item> -->
+    </string-array>
+
     <!-- Wifi driver supports Opportunistic Wireless Encryption (OWE) Transition
          aka Enhanced Open for Soft-AP -->
     <bool translatable="false" name="config_wifiSoftapOweTransitionSupported">false</bool>
@@ -795,8 +801,23 @@
     <!-- Indicate the gravity of Wifi dialogs. Must be an integer corresponding to a
          android.view.Gravity.GravityFlags constant. Default = Gravity.NO_GRAVITY (0) -->
     <integer translatable="false" name="config_wifiDialogGravity">0</integer>
-
     <!-- Indicate the time in milliseconds to wait before auto-cancelling a P2P invitation received
          dialog that the user has not responded to. A value of 0 indicates no timeout. -->
     <integer translatable="false" name="config_p2pInvitationReceivedDialogTimeoutMs">0</integer>
+    <!-- Indicates whether or not to play a notification sound upon displaying a P2P invitation
+         received dialog that the user has not responded to. If the device is in vibrate mode, then
+         the device will vibrate instead of playing a sound. -->
+    <bool translatable="false" name="config_p2pInvitationReceivedDialogNotificationSound">false</bool>
+
+    <!-- Indicates whether or not the Soft AP needs to be restarted when country code changed -->
+    <bool translatable="false" name="config_wifiForcedSoftApRestartWhenCountryCodeChanged">true</bool>
+
+    <!-- list of package names that HalDeviceManager (interface priority decision maker) will
+         treat as foreground, even if they are in the background. -->
+    <string-array translatable="false" name="config_wifiInterfacePriorityTreatAsForegroundList">
+        <!-- Below is a sample configuration for this list:
+        <item>com.company1.example.test.name1</item>
+        <item>com.company2.example.test.name2</item>
+        -->
+    </string-array>
 </resources>

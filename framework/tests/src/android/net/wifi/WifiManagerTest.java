@@ -117,6 +117,7 @@ import android.os.RemoteException;
 import android.os.connectivity.WifiActivityEnergyInfo;
 import android.os.test.TestLooper;
 import android.util.ArraySet;
+import android.util.Pair;
 import android.util.SparseArray;
 
 import androidx.test.filters.SmallTest;
@@ -139,6 +140,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.function.BiConsumer;
 
 /**
  * Unit tests for {@link android.net.wifi.WifiManager}.
@@ -3364,8 +3366,8 @@ public class WifiManagerTest {
 
     @Test
     public void testSetExternalPnoScanRequestNullFrequencies() throws Exception {
-        mWifiManager.setExternalPnoScanRequest(mock(Executor.class), Collections.EMPTY_LIST,
-                null, mock(WifiManager.PnoScanResultsCallback.class));
+        mWifiManager.setExternalPnoScanRequest(Collections.EMPTY_LIST, null,
+                mock(Executor.class), mock(WifiManager.PnoScanResultsCallback.class));
         // null frequencies should get converted to empty array
         verify(mWifiService).setExternalPnoScanRequest(any(), any(), eq(Collections.EMPTY_LIST),
                 eq(new int[0]), any(), any());
@@ -3746,5 +3748,46 @@ public class WifiManagerTest {
                 WifiManager.WIFI_MULTI_INTERNET_MODE_DBS_AP);
         verify(mWifiService).setStaConcurrencyForMultiInternetMode(
                 WifiManager.WIFI_MULTI_INTERNET_MODE_DBS_AP);
+    }
+
+    /**
+     * Verify call to
+     * {@link WifiManager#reportImpactToCreateIfaceRequest(int, boolean, Executor, BiConsumer)}.
+     */
+    @Test
+    public void testIsItPossibleToCreateInterface() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+
+        final int interfaceToCreate = WifiManager.WIFI_INTERFACE_TYPE_DIRECT;
+        final boolean queryForNewInterface = false;
+        final boolean canCreate = true;
+        final String packageName1 = "TestPackage1";
+        final String packageName2 = "TestPackage2";
+        final int[] interfaces =
+                {WifiManager.WIFI_INTERFACE_TYPE_AP, WifiManager.WIFI_INTERFACE_TYPE_AWARE};
+        final String[] packagesForInterfaces =
+                {TEST_PACKAGE_NAME, packageName1 + "," + packageName2};
+        final List<Pair<Integer, String[]>> interfacePairs = List.of(
+                Pair.create(interfaces[0], new String[]{TEST_PACKAGE_NAME}),
+                Pair.create(interfaces[1], new String[]{packageName1, packageName2}));
+        when(mContext.getOpPackageName()).thenReturn(TEST_PACKAGE_NAME);
+        BiConsumer<Boolean, List<Pair<Integer, String[]>>> resultCallback = mock(
+                BiConsumer.class);
+        ArgumentCaptor<IInterfaceCreationInfoCallback.Stub> cbCaptor = ArgumentCaptor.forClass(
+                IInterfaceCreationInfoCallback.Stub.class);
+        ArgumentCaptor<List<Pair<Integer, String[]>>> resultCaptor = ArgumentCaptor.forClass(
+                List.class);
+
+        mWifiManager.reportImpactToCreateIfaceRequest(interfaceToCreate, queryForNewInterface,
+                new SynchronousExecutor(), resultCallback);
+        verify(mWifiService).reportImpactToCreateIfaceRequest(eq(TEST_PACKAGE_NAME),
+                eq(interfaceToCreate), eq(queryForNewInterface), cbCaptor.capture());
+        cbCaptor.getValue().onResults(canCreate, interfaces, packagesForInterfaces);
+        verify(resultCallback).accept(eq(canCreate), resultCaptor.capture());
+        assertEquals(interfacePairs.size(), resultCaptor.getValue().size());
+        for (int i = 0; i < interfacePairs.size(); ++i) {
+            assertEquals(interfacePairs.get(i).first, resultCaptor.getValue().get(i).first);
+            assertArrayEquals(interfacePairs.get(i).second, resultCaptor.getValue().get(i).second);
+        }
     }
 }
