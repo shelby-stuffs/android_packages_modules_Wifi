@@ -158,6 +158,8 @@ public class WifiShellCommand extends BasicShellCommandHandler {
             "start-softap",
             "status",
             "stop-softap",
+            "query-interface",
+            "interface-priority-interactive-mode",
     };
 
     private static final Map<String, Pair<NetworkRequest, ConnectivityManager.NetworkCallback>>
@@ -184,6 +186,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
     private final ScanRequestProxy mScanRequestProxy;
     private final @NonNull WifiDialogManager mWifiDialogManager;
     private final HalDeviceManager mHalDeviceManager;
+    private final InterfaceConflictManager mInterfaceConflictManager;
 
     private class SoftApCallbackProxy extends ISoftApCallback.Stub {
         private final PrintWriter mPrintWriter;
@@ -294,6 +297,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         mScanRequestProxy = wifiInjector.getScanRequestProxy();
         mWifiDialogManager = wifiInjector.getWifiDialogManager();
         mHalDeviceManager = wifiInjector.getHalDeviceManager();
+        mInterfaceConflictManager = wifiInjector.getInterfaceConflictManager();
     }
 
     @Override
@@ -1145,7 +1149,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 case "stop-faking-scans":
                     mWifiNative.stopFakingScanDetails();
                     return 0;
-                case "enable-scanning":
+                case "enable-scanning": {
                     boolean enabled = getNextArgRequiredTrueOrFalse("enabled", "disabled");
                     boolean hiddenEnabled = false;
                     String option = getNextOption();
@@ -1160,9 +1164,13 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     }
                     mScanRequestProxy.enableScanning(enabled, hiddenEnabled);
                     return 0;
+                }
                 case "launch-dialog-simple":
                     String title = null;
                     String message = null;
+                    String messageUrl = null;
+                    int messageUrlStart = 0;
+                    int messageUrlEnd = 0;
                     String positiveButtonText = null;
                     String negativeButtonText = null;
                     String neutralButtonText = null;
@@ -1176,6 +1184,11 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                                 break;
                             case "-m":
                                 message = getNextArgRequired();
+                                break;
+                            case "-l":
+                                messageUrl = getNextArgRequired();
+                                messageUrlStart = Integer.valueOf(getNextArgRequired());
+                                messageUrlEnd = Integer.valueOf(getNextArgRequired());
                                 break;
                             case "-y":
                                 positiveButtonText = getNextArgRequired();
@@ -1220,9 +1233,12 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                                 }
                             };
                     WifiDialogManager.DialogHandle simpleDialogHandle =
-                            mWifiDialogManager.createSimpleDialog(
+                            mWifiDialogManager.createSimpleDialogWithUrl(
                                     title,
                                     message,
+                                    messageUrl,
+                                    messageUrlStart,
+                                    messageUrlEnd,
                                     positiveButtonText,
                                     negativeButtonText,
                                     neutralButtonText,
@@ -1253,7 +1269,12 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                         }
                     }
                     return 0;
-                case "launch-dialog-p2p-invitation-received":
+                case "launch-dialog-p2p-invitation-sent":
+                    mWifiDialogManager.createP2pInvitationSentDialog(
+                            getNextArgRequired(), getNextArgRequired()).launchDialog();
+                    pw.println("Launched dialog.");
+                    return 0;
+                case "launch-dialog-p2p-invitation-received": {
                     String deviceName = getNextArgRequired();
                     boolean isPinRequested = false;
                     String displayPin = null;
@@ -1338,7 +1359,8 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                         }
                     }
                     return 0;
-                case "query-interface":
+                }
+                case "query-interface": {
                     String uidArg = getNextArgRequired();
                     int uid = 0;
                     try {
@@ -1398,12 +1420,34 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     } else {
                         pw.println("Interface " + interfaceTypeArg
                                 + " can be created. Following interfaces will be destroyed:");
-                        for (Pair<Integer, WorkSource> detail: details) {
+                        for (Pair<Integer, WorkSource> detail : details) {
                             pw.println("    Type=" + ifaceMap.get(detail.first) + ", WS="
                                     + detail.second);
                         }
                     }
                     return 0;
+                }
+                case "interface-priority-interactive-mode": {
+                    String flag = getNextArgRequired(); // enable|disable|default
+                    switch (flag) {
+                        case "enable":
+                            mInterfaceConflictManager.setUserApprovalNeededOverride(true, true);
+                            break;
+                        case "disable":
+                            mInterfaceConflictManager.setUserApprovalNeededOverride(true, false);
+                            break;
+                        case "default":
+                            mInterfaceConflictManager.setUserApprovalNeededOverride(
+                                    false, /* don't care */ false);
+                            break;
+                        default:
+                            pw.println(
+                                    "Invalid argument to `interface-priority-interactive-mode` - "
+                                            + flag);
+                            return -1;
+                    }
+                    return 0;
+                }
                 default:
                     return handleDefaultCommands(cmd);
             }
@@ -2058,16 +2102,22 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println(
                 "    Reset the WiFi resources cache which will cause them to be reloaded next "
                         + "time they are accessed. Necessary if overlays are manually modified.");
-        pw.println("  launch-dialog-simple [-t <title>] [-m <message>] [-y <positive_button_text>]"
+        pw.println("  launch-dialog-simple [-t <title>] [-m <message>]"
+                + " [-l <url> <url_start> <url_end>] [-y <positive_button_text>]"
                 + " [-n <negative_button_text>] [-x <neutral_button_text>] [-c <timeout_millis>]");
         pw.println("    Launches a simple dialog and waits up to 15 seconds to"
                 + " print the response.");
         pw.println("    -t - Title");
         pw.println("    -m - Message");
+        pw.println("    -l - URL of the message, with the start and end index inside the message");
         pw.println("    -y - Positive Button Text");
         pw.println("    -n - Negative Button Text");
         pw.println("    -x - Neutral Button Text");
         pw.println("    -c - Optional timeout in milliseconds");
+        pw.println("  launch-dialog-p2p-invitation-sent <device_name> <pin>");
+        pw.println("    Launches a P2P Invitation Sent dialog.");
+        pw.println("    <device_name> - Name of the device the invitation was sent to");
+        pw.println("    <pin> - PIN for the invited device to input");
         pw.println("  launch-dialog-p2p-invitation-received <device_name> [-p] [-d <pin>] "
                 + "[-i <display_id>] [-c <timeout_millis>]");
         pw.println("    Launches a P2P Invitation Received dialog and waits up to 15 seconds to"
@@ -2082,6 +2132,9 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 "    Query whether the specified could be created for the specified UID and "
                         + "package name, and if so - what other interfaces would be destroyed");
         pw.println("    -new - query for a new interfaces (otherwise an existing interface is ok");
+        pw.println("  interface-priority-interactive-mode enable|disable|default");
+        pw.println("    Enable or disable asking the user when there's an interface priority "
+                + "conflict, |default| implies using the device default behavior.");
     }
 
     private void onHelpPrivileged(PrintWriter pw) {

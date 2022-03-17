@@ -111,6 +111,7 @@ import android.net.networkstack.aidl.ip.ReachabilityLossReason;
 import android.net.vcn.VcnManager;
 import android.net.vcn.VcnNetworkPolicyResult;
 import android.net.wifi.IActionListener;
+import android.net.wifi.MloLink;
 import android.net.wifi.ScanResult;
 import android.net.wifi.ScanResult.InformationElement;
 import android.net.wifi.SecurityParams;
@@ -238,8 +239,7 @@ public class ClientModeImplTest extends WifiBaseTest {
             MacAddress.fromString("2a:53:43:c3:56:21");
     private static final MacAddress TEST_DEFAULT_MAC_ADDRESS =
             MacAddress.fromString(WifiInfo.DEFAULT_MAC_ADDRESS);
-
-    // NetworkAgent creates threshold ranges with Integers
+   // NetworkAgent creates threshold ranges with Integers
     private static final int RSSI_THRESHOLD_MAX = -30;
     private static final int RSSI_THRESHOLD_MIN = -76;
     // Threshold breach callbacks are called with bytes
@@ -259,6 +259,11 @@ public class ClientModeImplTest extends WifiBaseTest {
             "https://www.android.com/android-11/";
     private static final long[] TEST_RCOI_ARRAY = {0xcafeL, 0xbabaL};
     private static final long TEST_MATCHED_RCOI = TEST_RCOI_ARRAY[0];
+
+    private static final String TEST_AP_MLD_MAC_ADDRESS_STR = "02:03:04:05:06:07";
+    private static final MacAddress TEST_AP_MLD_MAC_ADDRESS =
+            MacAddress.fromString(TEST_AP_MLD_MAC_ADDRESS_STR);
+    private static final int TEST_MLO_LINK_ID = 1;
 
     private long mBinderToken;
     private MockitoSession mSession;
@@ -513,6 +518,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     @Mock WifiCarrierInfoManager mWifiCarrierInfoManager;
     @Mock WifiNotificationManager mWifiNotificationManager;
     @Mock InsecureEapNetworkHandler mInsecureEapNetworkHandler;
+    @Mock ScanResult mScanResult;
 
     @Captor ArgumentCaptor<WifiConfigManager.OnNetworkUpdateListener> mConfigUpdateListenerCaptor;
     @Captor ArgumentCaptor<WifiNetworkAgent.Callback> mWifiNetworkAgentCallbackCaptor;
@@ -567,8 +573,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         // enableDebugLogs();
         mWifiMonitor = spy(new MockWifiMonitor());
         when(mTelephonyManager.createForSubscriptionId(anyInt())).thenReturn(mDataTelephonyManager);
-        when(mWifiNetworkFactory.getSpecificNetworkRequestUidAndPackageName(any(), any()))
-                .thenReturn(Pair.create(Process.INVALID_UID, ""));
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Collections.emptySet());
         setUpWifiNative();
         doAnswer(new AnswerWithArguments() {
             public MacAddress answer(
@@ -2184,6 +2190,58 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
+     * Verify that when wrong password authentication failure notification is not sent when
+     * the network was local only.
+     */
+    @Test
+    public void testWrongPasswordWithLocalOnlyConnection() throws Exception {
+        initializeAndAddNetworkAndVerifySuccess();
+
+        startConnectSuccess();
+
+        WifiConfiguration config = createTestNetwork(false);
+        when(mWifiConfigManager.getConfiguredNetwork(anyInt())).thenReturn(config);
+
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Set.of(TEST_UID));
+        mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT,
+                WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD);
+        DisconnectEventInfo disconnectEventInfo =
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
+        mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
+        mLooper.dispatchAll();
+
+        verify(mWrongPasswordNotifier, never()).onWrongPasswordError(anyString());
+        assertEquals("DisconnectedState", getCurrentState().getName());
+    }
+
+    /**
+     * Verify that when wrong password authentication failure notification is sent when
+     * the network was NOT local only.
+     */
+    @Test
+    public void testWrongPasswordWithNonLocalOnlyConnection() throws Exception {
+        initializeAndAddNetworkAndVerifySuccess();
+
+        startConnectSuccess();
+
+        WifiConfiguration config = createTestNetwork(false);
+        when(mWifiConfigManager.getConfiguredNetwork(anyInt())).thenReturn(config);
+
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Collections.emptySet());
+        mCmi.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT,
+                WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD);
+        DisconnectEventInfo disconnectEventInfo =
+                new DisconnectEventInfo(TEST_SSID, TEST_BSSID_STR, 0, false);
+        mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
+        mLooper.dispatchAll();
+
+        verify(mWrongPasswordNotifier).onWrongPasswordError(anyString());
+        assertEquals("DisconnectedState", getCurrentState().getName());
+    }
+
+    /**
      * It is observed sometimes the WifiMonitor.NETWORK_DISCONNECTION_EVENT is observed before the
      * actual connection failure messages while making a connection.
      * The test make sure that make sure that the connection event is ended properly in the above
@@ -3191,8 +3249,8 @@ public class ClientModeImplTest extends WifiBaseTest {
     public void verifyConnectedModeNetworkCapabilitiesBandwidthUpdate() throws Exception {
         when(mPerNetwork.getTxLinkBandwidthKbps()).thenReturn(40_000);
         when(mPerNetwork.getRxLinkBandwidthKbps()).thenReturn(50_000);
-        when(mWifiNetworkFactory.getSpecificNetworkRequestUidAndPackageName(any(), any()))
-                .thenReturn(Pair.create(Process.INVALID_UID, ""));
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Collections.emptySet());
         // Simulate the first connection.
         connectWithValidInitRssi(-42);
 
@@ -4288,6 +4346,9 @@ public class ClientModeImplTest extends WifiBaseTest {
         // not user selected
         when(mWifiConfigManager.getConfiguredNetwork(FRAMEWORK_NETWORK_ID))
                 .thenReturn(currentNetwork);
+        when(mWifiConfigManager.getConfiguredNetworkWithoutMasking(FRAMEWORK_NETWORK_ID))
+                .thenReturn(currentNetwork);
+
         when(mWifiConfigManager.getLastSelectedNetwork()).thenReturn(FRAMEWORK_NETWORK_ID + 1);
 
         // internet validation failure
@@ -4441,6 +4502,8 @@ public class ClientModeImplTest extends WifiBaseTest {
 
         // user didn't pick this network
         when(mWifiConfigManager.getConfiguredNetwork(FRAMEWORK_NETWORK_ID))
+                .thenReturn(currentNetwork);
+        when(mWifiConfigManager.getConfiguredNetworkWithoutMasking(FRAMEWORK_NETWORK_ID))
                 .thenReturn(currentNetwork);
         when(mWifiConfigManager.getLastSelectedNetwork()).thenReturn(FRAMEWORK_NETWORK_ID + 1);
 
@@ -4631,8 +4694,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         mWifiInfo.setFrequency(5825);
         when(mPerNetwork.getTxLinkBandwidthKbps()).thenReturn(40_000);
         when(mPerNetwork.getRxLinkBandwidthKbps()).thenReturn(50_000);
-        when(mWifiNetworkFactory.getSpecificNetworkRequestUidAndPackageName(any(), any()))
-                .thenReturn(Pair.create(Process.INVALID_UID, ""));
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Collections.emptySet());
         // Simulate the first connection.
         connectWithValidInitRssi(-42);
 
@@ -4678,8 +4741,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         mWifiInfo.setFrequency(2437);
         when(mPerNetwork.getTxLinkBandwidthKbps()).thenReturn(30_000);
         when(mPerNetwork.getRxLinkBandwidthKbps()).thenReturn(40_000);
-        when(mWifiNetworkFactory.getSpecificNetworkRequestUidAndPackageName(any(), any()))
-                .thenReturn(Pair.create(TEST_UID, OP_PACKAGE_NAME));
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Set.of(TEST_UID));
         // Simulate the first connection.
         connectWithValidInitRssi(-42);
         ArgumentCaptor<NetworkCapabilities> networkCapabilitiesCaptor =
@@ -4707,8 +4770,6 @@ public class ClientModeImplTest extends WifiBaseTest {
                 new WifiNetworkAgentSpecifier(expectedConfig, ScanResult.WIFI_BAND_24_GHZ,
                         true /* matchLocalOnlySpecifiers */);
         assertEquals(expectedWifiNetworkAgentSpecifier, wifiNetworkAgentSpecifier);
-        assertEquals(TEST_UID, networkCapabilities.getRequestorUid());
-        assertEquals(OP_PACKAGE_NAME, networkCapabilities.getRequestorPackageName());
         assertEquals(30_000, networkCapabilities.getLinkUpstreamBandwidthKbps());
         assertEquals(40_000, networkCapabilities.getLinkDownstreamBandwidthKbps());
     }
@@ -6163,6 +6224,7 @@ public class ClientModeImplTest extends WifiBaseTest {
                 .thenReturn(mScanDetailCache);
         when(mScanDetailCache.getScanResult(anyString())).thenReturn(scanResult);
         when(mWifiConfigManager.getConfiguredNetwork(anyInt())).thenReturn(config);
+        when(mWifiConfigManager.getConfiguredNetworkWithoutMasking(anyInt())).thenReturn(config);
 
         // Trigger ip reachability failure and ensure there is no action.
         ReachabilityLossInfoParcelable lossInfo =
@@ -7884,5 +7946,95 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
         mLooper.dispatchAll();
         verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    private void setScanResultWithMloInfo() {
+        List<MloLink> mloLinks = new ArrayList<>();
+        MloLink link1 = new MloLink();
+        MloLink link2 = new MloLink();
+        mloLinks.add(link1);
+        mloLinks.add(link2);
+
+        when(mScanResult.getApMldMacAddress()).thenReturn(TEST_AP_MLD_MAC_ADDRESS);
+        when(mScanResult.getApMloLinkId()).thenReturn(TEST_MLO_LINK_ID);
+        when(mScanResult.getAffiliatedMloLinks()).thenReturn(mloLinks);
+
+        when(mScanRequestProxy.getScanResults()).thenReturn(Arrays.asList(mScanResult));
+        when(mScanRequestProxy.getScanResult(any())).thenReturn(mScanResult);
+    }
+
+    private void setScanResultWithoutMloInfo() {
+        when(mScanResult.getApMldMacAddress()).thenReturn(null);
+        when(mScanResult.getApMloLinkId()).thenReturn(MloLink.INVALID_MLO_LINK_ID);
+        when(mScanResult.getAffiliatedMloLinks()).thenReturn(Collections.emptyList());
+
+        when(mScanRequestProxy.getScanResults()).thenReturn(Arrays.asList(mScanResult));
+        when(mScanRequestProxy.getScanResult(any())).thenReturn(mScanResult);
+    }
+
+    private void setConnection() throws Exception {
+        WifiConfiguration config = createTestNetwork(false);
+        setupAndStartConnectSequence(config);
+        validateSuccessfulConnectSequence(config);
+    }
+
+    /**
+     * Verify MLO parameters update from ScanResult at association
+     */
+    @Test
+    public void verifyMloParametersUpdateAssoc() throws Exception {
+        setConnection();
+        setScanResultWithMloInfo();
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+
+        mLooper.startAutoDispatch();
+        WifiInfo connectionInfo = mCmi.syncRequestConnectionInfo();
+        mLooper.stopAutoDispatch();
+        assertNotNull(connectionInfo.getApMldMacAddress());
+        assertEquals(TEST_AP_MLD_MAC_ADDRESS_STR, connectionInfo.getApMldMacAddress().toString());
+        assertEquals(TEST_MLO_LINK_ID, connectionInfo.getApMloLinkId());
+        assertEquals(2, connectionInfo.getAffiliatedMloLinks().size());
+    }
+
+    /**
+     * Verify MLO parameters update when roaming to a MLD ap, and then get cleared when roaming to
+     * a non MLD supported AP.
+     */
+    @Test
+    public void verifyMloParametersUpdateRoam() throws Exception {
+        connect();
+        setScanResultWithMloInfo();
+
+        // Roam to a MLD AP
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+
+        mLooper.startAutoDispatch();
+        WifiInfo connectionInfo = mCmi.syncRequestConnectionInfo();
+        mLooper.stopAutoDispatch();
+
+        assertNotNull(connectionInfo.getApMldMacAddress());
+        assertEquals(TEST_AP_MLD_MAC_ADDRESS_STR, connectionInfo.getApMldMacAddress().toString());
+        assertEquals(TEST_MLO_LINK_ID, connectionInfo.getApMloLinkId());
+        assertEquals(2, connectionInfo.getAffiliatedMloLinks().size());
+
+        // Now perform Roaming to a non-MLD AP
+        setScanResultWithoutMloInfo();
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+
+        mLooper.startAutoDispatch();
+        connectionInfo = mCmi.syncRequestConnectionInfo();
+        mLooper.stopAutoDispatch();
+        assertNull(connectionInfo.getApMldMacAddress());
+        assertEquals(MloLink.INVALID_MLO_LINK_ID, connectionInfo.getApMloLinkId());
+        assertTrue(connectionInfo.getAffiliatedMloLinks().isEmpty());
     }
 }

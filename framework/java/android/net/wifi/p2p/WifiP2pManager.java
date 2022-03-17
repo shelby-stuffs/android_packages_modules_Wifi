@@ -153,6 +153,14 @@ import java.util.Map;
 @SystemService(Context.WIFI_P2P_SERVICE)
 public class WifiP2pManager {
     private static final String TAG = "WifiP2pManager";
+
+    /** @hide */
+    public static final long FEATURE_SET_VENDOR_ELEMENTS        = 1L << 0;
+    /** @hide */
+    public static final long FEATURE_FLEXIBLE_DISCOVERY         = 1L << 1;
+    /** @hide */
+    public static final long FEATURE_GROUP_CLIENT_REMOVAL       = 1L << 2;
+
     /**
      * Extra for transporting a WifiP2pConfig
      * @hide
@@ -400,6 +408,22 @@ public class WifiP2pManager {
     @SystemApi
     public static final String ACTION_WIFI_P2P_PERSISTENT_GROUPS_CHANGED =
             "android.net.wifi.p2p.action.WIFI_P2P_PERSISTENT_GROUPS_CHANGED";
+
+    /**
+     * Broadcast intent action indicating whether or not current connecting
+     * request is accepted.
+     *
+     * The connecting request is initiated by
+     * {@link #connect(Channel, WifiP2pConfig, ActionListener)}.
+     */
+    public static final String ACTION_WIFI_P2P_REQUEST_RESPONSE_CHANGED =
+            "android.net.wifi.p2p.action.WIFI_P2P_REQUEST_RESPONSE_CHANGED";
+
+    /**
+     * The lookup key for the result of a request, true if accepted, false otherwise.
+     */
+    public static final String EXTRA_REQUEST_RESPONSE =
+            "android.net.wifi.p2p.extra.REQUEST_RESPONSE";
 
     /**
      * The lookup key for a handover message returned by the WifiP2pService.
@@ -1601,6 +1625,10 @@ public class WifiP2pManager {
      * android:usesPermissionFlags="neverForLocation". If the application does not declare
      * android:usesPermissionFlags="neverForLocation", then it must also have
      * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
+     * <p>
+     * Use {@link #isChannelConstrainedDiscoverySupported()} to determine whether the device
+     * supports this feature. If {@link #isChannelConstrainedDiscoverySupported()} return
+     * {@code false} then this method will throw {@link UnsupportedOperationException}.
      *
      * @param channel is the channel created at {@link #initialize}
      * @param listener for callbacks on success or failure.
@@ -1611,7 +1639,7 @@ public class WifiP2pManager {
             }, conditional = true)
     public void discoverPeersOnSocialChannels(@NonNull Channel channel,
             @Nullable ActionListener listener) {
-        if (!SdkLevel.isAtLeastT()) {
+        if (!isChannelConstrainedDiscoverySupported()) {
             throw new UnsupportedOperationException();
         }
         checkChannel(channel);
@@ -1643,6 +1671,10 @@ public class WifiP2pManager {
      * android:usesPermissionFlags="neverForLocation". If the application does not declare
      * android:usesPermissionFlags="neverForLocation", then it must also have
      * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
+     * <p>
+     * Use {@link #isChannelConstrainedDiscoverySupported()} to determine whether the device
+     * supports this feature. If {@link #isChannelConstrainedDiscoverySupported()} return
+     * {@code false} then this method will throw {@link UnsupportedOperationException}.
      *
      * @param channel is the channel created at {@link #initialize}
      * @param frequencyMhz is the frequency of the channel to use for peer discovery.
@@ -1654,7 +1686,7 @@ public class WifiP2pManager {
             }, conditional = true)
     public void discoverPeersOnSpecificFrequency(
             @NonNull Channel channel, int frequencyMhz, @Nullable ActionListener listener) {
-        if (!SdkLevel.isAtLeastT()) {
+        if (!isChannelConstrainedDiscoverySupported()) {
             throw new UnsupportedOperationException();
         }
         checkChannel(channel);
@@ -1690,6 +1722,11 @@ public class WifiP2pManager {
      * to the framework. The application is notified of a success or failure to initiate
      * connect through listener callbacks {@link ActionListener#onSuccess} or
      * {@link ActionListener#onFailure}.
+     *
+     * <p> An app should use {@link WifiP2pConfig.Builder} to build the configuration
+     * for this API, ex. call {@link WifiP2pConfig.Builder#setDeviceAddress(MacAddress)}
+     * to set the peer MAC address and {@link WifiP2pConfig.Builder#enablePersistentMode(boolean)}
+     * to configure the persistent mode.
      *
      * <p> Register for {@link #WIFI_P2P_CONNECTION_CHANGED_ACTION} intent to
      * determine when the framework notifies of a change in connectivity.
@@ -2292,6 +2329,10 @@ public class WifiP2pManager {
      *
      * <p> The callbacks are triggered on the thread specified when initializing the
      * {@code channel}, see {@link #initialize}.
+     * <p>
+     * Use {@link #isGroupClientRemovalSupported()} to determine whether the device supports
+     * this feature. If {@link #isGroupClientRemovalSupported()} return {@code false} then this
+     * method will throw {@link UnsupportedOperationException}.
      *
      * @param channel is the channel created at {@link #initialize}
      * @param peerAddress MAC address of the client.
@@ -2300,7 +2341,7 @@ public class WifiP2pManager {
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     public void removeClient(@NonNull Channel channel, @NonNull MacAddress peerAddress,
             @Nullable ActionListener listener) {
-        if (!SdkLevel.isAtLeastT()) {
+        if (!isGroupClientRemovalSupported()) {
             throw new UnsupportedOperationException();
         }
         checkChannel(channel);
@@ -2494,6 +2535,59 @@ public class WifiP2pManager {
             throw e.rethrowFromSystemServer();
         }
     }
+
+    private long getSupportedFeatures() {
+        try {
+            return mService.getSupportedFeatures();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    private boolean isFeatureSupported(long feature) {
+        return (getSupportedFeatures() & feature) == feature;
+    }
+
+    /**
+     * Check if this device supports setting vendor elements.
+     *
+     * Gates whether the
+     * {@link #setVendorElements(Channel, List, ActionListener)}
+     * method is functional on this device.
+     *
+     * @return {@code true} if supported, {@code false} otherwise.
+     */
+    public boolean isSetVendorElementsSupported() {
+        return isFeatureSupported(FEATURE_SET_VENDOR_ELEMENTS);
+    }
+
+    /**
+     * Check if this device supports discovery limited to a specific frequency or
+     * the social channels.
+     *
+     * Gates whether
+     * {@link #discoverPeersOnSpecificFrequency(Channel, int, ActionListener)} and
+     * {@link #discoverPeersOnSocialChannels(Channel, ActionListener)}
+     * methods are functional on this device.
+     *
+     * @return {@code true} if supported, {@code false} otherwise.
+     */
+    public boolean isChannelConstrainedDiscoverySupported() {
+        return isFeatureSupported(FEATURE_FLEXIBLE_DISCOVERY);
+    }
+
+    /**
+     * Check if this device supports removing clients from a group.
+     *
+     * Gates whether the
+     * {@link #removeClient(Channel, MacAddress, ActionListener)}
+     * method is functional on this device.
+     * @return {@code true} if supported, {@code false} otherwise.
+     */
+    public boolean isGroupClientRemovalSupported() {
+        return isFeatureSupported(FEATURE_GROUP_CLIENT_REMOVAL);
+    }
+
 
     /**
      * Get a handover request message for use in WFA NFC Handover transfer.
@@ -2718,7 +2812,7 @@ public class WifiP2pManager {
      * @param deviceAddress the peer which is bound to the external approver.
      * @param listener for callback when the framework needs to notify the external approver.
      */
-    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN)
+    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION)
     public void addExternalApprover(@NonNull Channel c, @NonNull MacAddress deviceAddress,
             @NonNull ExternalApproverRequestListener listener) {
         checkChannel(c);
@@ -2739,7 +2833,7 @@ public class WifiP2pManager {
      * @param deviceAddress the peer which is bound to the external approver.
      * @param listener for callback on success or failure.
      */
-    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN)
+    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION)
     public void removeExternalApprover(@NonNull Channel c, @NonNull MacAddress deviceAddress,
             @Nullable ActionListener listener) {
         checkChannel(c);
@@ -2760,7 +2854,7 @@ public class WifiP2pManager {
      * @param result the response for the incoming request.
      * @param listener for callback on success or failure.
      */
-    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN)
+    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION)
     public void setConnectionRequestResult(@NonNull Channel c, @NonNull MacAddress deviceAddress,
             @ConnectionRequestResponse int result, @Nullable ActionListener listener) {
         checkChannel(c);
@@ -2783,7 +2877,7 @@ public class WifiP2pManager {
      * @param pin the PIN for the incoming request.
      * @param listener for callback on success or failure.
      */
-    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_AUTO_JOIN)
+    @RequiresPermission(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION)
     public void setConnectionRequestResult(@NonNull Channel c, @NonNull MacAddress deviceAddress,
             @ConnectionRequestResponse int result, @Nullable String pin,
             @Nullable ActionListener listener) {
@@ -2817,6 +2911,10 @@ public class WifiP2pManager {
      * <p>
      * To publish vendor elements, this API should be called before peer discovery API, ex.
      * {@link #discoverPeers(Channel, ActionListener)}.
+     * <p>
+     * Use {@link #isSetVendorElementsSupported()} to determine whether the device supports
+     * this feature. If {@link #isSetVendorElementsSupported()} return {@code false} then
+     * this method will throw {@link UnsupportedOperationException}.
      *
      * @param c is the channel created at {@link #initialize(Context, Looper, ChannelListener)}.
      * @param vendorElements application information as vendor-specific information elements.
@@ -2829,7 +2927,7 @@ public class WifiP2pManager {
     public void setVendorElements(@NonNull Channel c,
             @NonNull List<ScanResult.InformationElement> vendorElements,
             @Nullable ActionListener listener) {
-        if (!SdkLevel.isAtLeastT()) {
+        if (!isSetVendorElementsSupported()) {
             throw new UnsupportedOperationException();
         }
         checkChannel(c);
@@ -2860,7 +2958,8 @@ public class WifiP2pManager {
 
     /**
      * Return the maximum total length (in bytes) of all Vendor specific information
-     * elements (VSIEs).
+     * elements (VSIEs) which can be set using the
+     * {@link #setVendorElements(Channel, List, ActionListener)}.
      *
      * The length is calculated adding the payload length + 2 bytes for each VSIE
      * (2 bytes: 1 byte for type and 1 byte for length).

@@ -35,7 +35,11 @@ import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Process;
 import android.os.Vibrator;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.method.LinkMovementMethod;
+import android.text.style.URLSpan;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.SparseArray;
@@ -294,9 +298,18 @@ public class WifiDialogActivity extends Activity  {
                 dialog = createSimpleDialog(dialogId,
                         intent.getStringExtra(WifiManager.EXTRA_DIALOG_TITLE),
                         intent.getStringExtra(WifiManager.EXTRA_DIALOG_MESSAGE),
+                        intent.getStringExtra(WifiManager.EXTRA_DIALOG_MESSAGE_URL),
+                        intent.getIntExtra(WifiManager.EXTRA_DIALOG_MESSAGE_URL_START, 0),
+                        intent.getIntExtra(WifiManager.EXTRA_DIALOG_MESSAGE_URL_END, 0),
                         intent.getStringExtra(WifiManager.EXTRA_DIALOG_POSITIVE_BUTTON_TEXT),
                         intent.getStringExtra(WifiManager.EXTRA_DIALOG_NEGATIVE_BUTTON_TEXT),
                         intent.getStringExtra(WifiManager.EXTRA_DIALOG_NEUTRAL_BUTTON_TEXT));
+                break;
+            case WifiManager.DIALOG_TYPE_P2P_INVITATION_SENT:
+                dialog = createP2pInvitationSentDialog(
+                        dialogId,
+                        intent.getStringExtra(WifiManager.EXTRA_P2P_DEVICE_NAME),
+                        intent.getStringExtra(WifiManager.EXTRA_P2P_DISPLAY_PIN));
                 break;
             case WifiManager.DIALOG_TYPE_P2P_INVITATION_RECEIVED:
                 dialog = createP2pInvitationReceivedDialog(
@@ -330,6 +343,9 @@ public class WifiDialogActivity extends Activity  {
         }
         mActiveDialogsPerId.put(dialogId, dialog);
         dialog.show();
+        // Allow message URLs to be clickable.
+        ((TextView) dialog.findViewById(android.R.id.message))
+                .setMovementMethod(LinkMovementMethod.getInstance());
         if (mIsVerboseLoggingEnabled) {
             Log.v(TAG, "Showing dialog " + dialogId);
         }
@@ -364,12 +380,21 @@ public class WifiDialogActivity extends Activity  {
             int dialogId,
             @Nullable String title,
             @Nullable String message,
+            @Nullable String messageUrl,
+            int messageUrlStart,
+            int messageUrlEnd,
             @Nullable String positiveButtonText,
             @Nullable String negativeButtonText,
             @Nullable String neutralButtonText) {
+        SpannableString spannableMessage = null;
+        if (message != null) {
+            spannableMessage = new SpannableString(message);
+            spannableMessage.setSpan(new URLSpan(messageUrl), messageUrlStart, messageUrlEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(title)
-                .setMessage(message)
+                .setMessage(spannableMessage)
                 .setPositiveButton(positiveButtonText, (dialogPositive, which) -> {
                     if (mIsVerboseLoggingEnabled) {
                         Log.v(TAG, "Positive button pressed for simple dialog id="
@@ -408,9 +433,58 @@ public class WifiDialogActivity extends Activity  {
                     + " id=" + dialogId
                     + " title=" + title
                     + " message=" + message
+                    + " url=[" + messageUrl + "," + messageUrlStart + "," + messageUrlEnd + "]"
                     + " positiveButtonText=" + positiveButtonText
                     + " negativeButtonText=" + negativeButtonText
                     + " neutralButtonText=" + neutralButtonText);
+        }
+        return dialog;
+    }
+
+    /**
+     * Returns a P2P Invitation Sent Dialog for the given Intent, or {@code null} if no Dialog
+     * could be created.
+     */
+    private @Nullable Dialog createP2pInvitationSentDialog(
+            final int dialogId,
+            final @NonNull String deviceName,
+            @Nullable String displayPin) {
+        if (TextUtils.isEmpty(deviceName)) {
+            if (mIsVerboseLoggingEnabled) {
+                Log.v(TAG, "Could not create P2P Invitation Sent dialog with null or empty"
+                        + " device name."
+                        + " id=" + dialogId
+                        + " deviceName=" + deviceName
+                        + " displayPin=" + displayPin);
+            }
+            return null;
+        }
+
+        final View textEntryView = LayoutInflater.from(this)
+                .inflate(getLayoutId("wifi_p2p_dialog"), null);
+        ViewGroup group = textEntryView.findViewById(getViewId("info"));
+        addRowToP2pDialog(group, getStringId("wifi_p2p_to_message"), deviceName);
+
+        if (displayPin != null) {
+            addRowToP2pDialog(group, getStringId("wifi_p2p_show_pin_message"), displayPin);
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(getString(getStringId("wifi_p2p_invitation_sent_title")))
+                .setView(textEntryView)
+                .setPositiveButton(getStringId("ok"), (dialogPositive, which) -> {
+                    // No-op
+                    if (mIsVerboseLoggingEnabled) {
+                        Log.v(TAG, "P2P Invitation Sent Dialog id=" + dialogId
+                                + " accepted.");
+                    }
+                })
+                .create();
+        if (mIsVerboseLoggingEnabled) {
+            Log.v(TAG, "Created P2P Invitation Sent dialog."
+                    + " id=" + dialogId
+                    + " deviceName=" + deviceName
+                    + " displayPin=" + displayPin);
         }
         return dialog;
     }
