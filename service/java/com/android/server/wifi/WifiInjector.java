@@ -698,17 +698,6 @@ public class WifiInjector {
     }
 
     /**
-     * Create a WifiShellCommand.
-     *
-     * @param wifiService WifiServiceImpl object shell commands get sent to.
-     * @return an instance of WifiShellCommand
-     */
-    public WifiShellCommand makeWifiShellCommand(WifiServiceImpl wifiService) {
-        return new WifiShellCommand(this, wifiService, mContext,
-                mWifiGlobals, mWifiThreadRunner);
-    }
-
-    /**
      * Create a SoftApManager.
      *
      * @param config SoftApModeConfiguration object holding the config and mode
