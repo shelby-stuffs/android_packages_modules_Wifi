@@ -8232,7 +8232,11 @@ public class WifiServiceImplTest extends WifiBaseTest {
         long supportedFeatures = mWifiServiceImpl.getSupportedFeatures();
         mLooper.stopAutoDispatchAndIgnoreExceptions();
 
-        assertTrue((supportedFeatures & WifiManager.WIFI_FEATURE_DPP_AKM) != 0);
+        if (SdkLevel.isAtLeastT()) {
+            assertTrue((supportedFeatures & WifiManager.WIFI_FEATURE_DPP_AKM) != 0);
+        } else {
+            assertFalse((supportedFeatures & WifiManager.WIFI_FEATURE_DPP_AKM) != 0);
+        }
     }
 
     /**
@@ -10254,6 +10258,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
                 interfaceToCreateInternal, true, ws);
         verify(mockCallback, times(3)).onResults(boolCaptor.capture(), intArrayCaptor.capture(),
                 stringArrayCaptor.capture());
+        verify(mPackageManager).makeUidVisible(TEST_UID, OTHER_TEST_UID);
 
         // result 0: failure
         assertFalse(boolCaptor.getAllValues().get(0));

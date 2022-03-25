@@ -1185,6 +1185,7 @@ public class WifiConfigManager {
         internalConfig.getNetworkSelectionStatus().setConnectChoiceRssi(
                 externalConfig.getNetworkSelectionStatus().getConnectChoiceRssi());
         internalConfig.setBssidAllowlist(externalConfig.getBssidAllowlistInternal());
+        internalConfig.setRepeaterEnabled(externalConfig.isRepeaterEnabled());
     }
 
     /**
@@ -1363,6 +1364,17 @@ public class WifiConfigManager {
             Log.e(TAG, "UID " + uid + " does not have permission to modify proxy Settings "
                     + config.getProfileKey() + ". Must have NETWORK_SETTINGS,"
                     + " or be device or profile owner.");
+            return new NetworkUpdateResult(WifiConfiguration.INVALID_NETWORK_ID);
+        }
+
+        // Only allow changes in Repeater Enabled flag if the user has permission to
+        if (WifiConfigurationUtil.hasRepeaterEnabledChanged(
+                existingInternalConfig, newInternalConfig)
+                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) {
+            Log.e(TAG, "UID " + uid
+                    + " does not have permission to modify Repeater Enabled Settings "
+                    + " , or add a network with Repeater Enabled set to true "
+                    + config.getProfileKey() + ". Must have NETWORK_SETTINGS.");
             return new NetworkUpdateResult(WifiConfiguration.INVALID_NETWORK_ID);
         }
 
@@ -3543,16 +3555,15 @@ public class WifiConfigManager {
      * Returns true if the given uid has permission to add, update or remove proxy settings
      */
     private boolean canModifyProxySettings(int uid, String packageName) {
-        final boolean isDeviceOwner = mWifiPermissionsUtil.isDeviceOwner(uid, packageName);
-        final boolean isProfileOwner = mWifiPermissionsUtil.isProfileOwner(uid, packageName);
+        final boolean isAdmin = mWifiPermissionsUtil.isAdmin(uid, packageName);
         final boolean hasNetworkSettingsPermission =
                 mWifiPermissionsUtil.checkNetworkSettingsPermission(uid);
         final boolean hasNetworkSetupWizardPermission =
                 mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid);
         final boolean hasNetworkManagedProvisioningPermission =
                 mWifiPermissionsUtil.checkNetworkManagedProvisioningPermission(uid);
-        // If |uid| corresponds to the device owner, allow all modifications.
-        if (isProfileOwner || isDeviceOwner || hasNetworkSettingsPermission
+        // If |uid| corresponds to the admin, allow all modifications.
+        if (isAdmin || hasNetworkSettingsPermission
                 || hasNetworkSetupWizardPermission || hasNetworkManagedProvisioningPermission) {
             return true;
         }
@@ -3560,8 +3571,7 @@ public class WifiConfigManager {
             Log.v(TAG, "UID: " + uid + " cannot modify WifiConfiguration proxy settings."
                     + " hasNetworkSettings=" + hasNetworkSettingsPermission
                     + " hasNetworkSetupWizard=" + hasNetworkSetupWizardPermission
-                    + " DeviceOwner=" + isDeviceOwner
-                    + " ProfileOwner=" + isProfileOwner);
+                    + " Admin=" + isAdmin);
         }
         return false;
     }
@@ -3689,7 +3699,7 @@ public class WifiConfigManager {
     /**
      * This maintains the legacy user connect choice state in the config store
      */
-    private boolean setLegacyUserConnectChoice(@NonNull final WifiConfiguration selected,
+    public boolean setLegacyUserConnectChoice(@NonNull final WifiConfiguration selected,
             int rssi) {
         boolean change = false;
         Collection<WifiConfiguration> configuredNetworks = getInternalConfiguredNetworks();
