@@ -651,6 +651,28 @@ public class WifiConfigManagerTest extends WifiBaseTest {
     }
 
     /**
+     * Verify that add or update networks when WifiConfiguration has RepeaterEnabled set,
+     * requires Network Settings Permission.
+     */
+    @Test
+    public void testAddOrUpdateNetworkRepeaterEnabled() throws Exception {
+        // Create an open network
+        WifiConfiguration openNetwork = WifiConfigurationTestUtil.createOpenNetwork();
+        openNetwork.setRepeaterEnabled(true);
+
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(false);
+
+        NetworkUpdateResult result = addNetworkToWifiConfigManager(openNetwork);
+        assertEquals(WifiConfiguration.INVALID_NETWORK_ID, result.getNetworkId());
+
+        // Now try with the permission is granted
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
+
+        result = addNetworkToWifiConfigManager(openNetwork);
+        assertNotEquals(WifiConfiguration.INVALID_NETWORK_ID, result.getNetworkId());
+    }
+
+    /**
      * Verifies the modification of a single network using
      * {@link WifiConfigManager#addOrUpdateNetwork(WifiConfiguration, int)}
      */
@@ -5386,7 +5408,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
             network = mWifiConfigManager.getConfiguredNetwork(networkId);
         }
         network.setIpConfiguration(ipConfiguration);
-        mockIsDeviceOwner(withDeviceOwnerPolicy);
+        mockIsAdmin(withDeviceOwnerPolicy || withProfileOwnerPolicy);
         when(mWifiPermissionsUtil.isProfileOwner(anyInt(), any()))
                 .thenReturn(withProfileOwnerPolicy);
         when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt()))

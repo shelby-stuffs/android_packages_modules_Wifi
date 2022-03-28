@@ -254,7 +254,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     // User wants to disconnect wifi in favour of p2p
     private static final int DROP_WIFI_USER_ACCEPT          =   BASE + 4;
     // User wants to keep his wifi connection and drop p2p
-    private static final int DROP_WIFI_USER_REJECT          =   BASE + 5;
+    @VisibleForTesting
+    static final int DROP_WIFI_USER_REJECT                  =   BASE + 5;
     // Delayed message to timeout p2p disable
     public static final int DISABLE_P2P_TIMED_OUT           =   BASE + 6;
     // User confirm a peer request
@@ -2394,11 +2395,18 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                     WifiP2pManager.ERROR);
                             break;
                         }
-                        int freq = isFeatureSupported(WifiP2pManager.FEATURE_FLEXIBLE_DISCOVERY)
-                                ? message.arg1 : WifiP2pManager.WIFI_P2P_SCAN_FULL;
+                        int scanType = message.arg1;
                         int uid = message.sendingUid;
                         Bundle extras = (Bundle) message.obj;
+                        int freq = extras.getInt(
+                                    WifiP2pManager.EXTRA_PARAM_KEY_PEER_DISCOVERY_FREQ,
+                                    WifiP2pManager.WIFI_P2P_SCAN_FREQ_UNSPECIFIED);
                         boolean hasPermission = false;
+                        if (scanType != WifiP2pManager.WIFI_P2P_SCAN_FULL
+                                && !isFeatureSupported(WifiP2pManager.FEATURE_FLEXIBLE_DISCOVERY)) {
+                            replyToMessage(message, WifiP2pManager.DISCOVER_PEERS_FAILED,
+                                    WifiP2pManager.ERROR);
+                        }
                         if (isPlatformOrTargetSdkLessThanT(packageName, uid)) {
                             hasPermission = mWifiPermissionsUtil.checkCanAccessWifiDirect(
                                     packageName,
@@ -2423,7 +2431,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         // do not send service discovery request while normal find operation.
                         clearSupplicantServiceRequest();
                         Log.e(TAG, "-------discover_peers before p2pFind");
-                        if (p2pFind(freq, DISCOVER_TIMEOUT_S)) {
+                        if (p2pFind(scanType, freq, DISCOVER_TIMEOUT_S)) {
                             mWifiP2pMetrics.incrementPeerScans();
                             replyToMessage(message, WifiP2pManager.DISCOVER_PEERS_SUCCEEDED);
                             sendP2pDiscoveryChangedBroadcast(true);
@@ -3699,12 +3707,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     case DROP_WIFI_USER_ACCEPT:
                         mFrequencyConflictDialog = null;
                         // User accepted dropping wifi in favour of p2p
-                        if (mWifiChannel != null) {
-                            mWifiChannel.sendMessage(WifiP2pServiceImpl.DISCONNECT_WIFI_REQUEST, 1);
-                        } else {
-                            loge("DROP_WIFI_USER_ACCEPT message received when WifiChannel is null");
-                        }
-                        mTemporarilyDisconnectedWifi = true;
+                        sendDisconnectWifiRequest(true);
                         break;
                     case DISCONNECT_WIFI_RESPONSE:
                         // Got a response from ClientModeImpl, retry p2p
@@ -4447,8 +4450,14 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                         extras);
                 return;
             }
+            int displayId = mDeathDataByBinder.values().stream()
+                    .filter(d -> d.mDisplayId != Display.DEFAULT_DISPLAY)
+                    .findAny()
+                    .map((dhd) -> dhd.mDisplayId)
+                    .orElse(Display.DEFAULT_DISPLAY);
+
             WifiDialogManager.DialogHandle dialogHandle = mWifiInjector.getWifiDialogManager()
-                    .createP2pInvitationSentDialog(getDeviceName(peerAddress), pin);
+                    .createP2pInvitationSentDialog(getDeviceName(peerAddress), pin, displayId);
             if (dialogHandle == null) {
                 loge("Could not create invitation sent dialog!");
                 return;
@@ -5200,6 +5209,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             Bundle extras = new Bundle();
             extras.putBoolean(WifiP2pManager.EXTRA_PARAM_KEY_INTERNAL_MESSAGE, true);
             sendMessage(WifiP2pManager.DISCOVER_PEERS, extras);
+
+            sendDisconnectWifiRequest(false);
         }
 
         private void handleGroupRemoved() {
@@ -5244,14 +5255,19 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             mPeersLostDuringConnection.clear();
             mServiceDiscReqId = null;
 
-            if (mTemporarilyDisconnectedWifi) {
-                if (mWifiChannel != null) {
-                    mWifiChannel.sendMessage(WifiP2pServiceImpl.DISCONNECT_WIFI_REQUEST, 0);
-                } else {
-                    loge("handleGroupRemoved(): WifiChannel is null");
-                }
-                mTemporarilyDisconnectedWifi = false;
+            sendDisconnectWifiRequest(false);
+        }
+
+        private void sendDisconnectWifiRequest(boolean disableWifi) {
+            if (null == mWifiChannel) {
+                loge("WifiChannel is null, ignore DISCONNECT_WIFI_REQUEST " + disableWifi);
+                return;
             }
+            if (mTemporarilyDisconnectedWifi == disableWifi) return;
+
+            mWifiChannel.sendMessage(WifiP2pServiceImpl.DISCONNECT_WIFI_REQUEST,
+                    disableWifi ? 1 : 0);
+            mTemporarilyDisconnectedWifi = disableWifi;
         }
 
         private void replyToMessage(Message msg, int what) {
@@ -5678,10 +5694,13 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
         }
 
         private boolean p2pFind(int timeout) {
-            return p2pFind(WifiP2pManager.WIFI_P2P_SCAN_FULL, timeout);
+            return p2pFind(
+                    WifiP2pManager.WIFI_P2P_SCAN_FULL,
+                    WifiP2pManager.WIFI_P2P_SCAN_FREQ_UNSPECIFIED, timeout);
         }
 
-        private boolean p2pFind(int freq, int timeout) {
+        private boolean p2pFind(@WifiP2pManager.WifiP2pScanType int scanType, int freq,
+                                int timeout) {
             if (isFeatureSupported(WifiP2pManager.FEATURE_SET_VENDOR_ELEMENTS)) {
                 Set<ScanResult.InformationElement> aggregatedVendorElements = new HashSet<>();
                 mVendorElements.forEach((k, v) -> aggregatedVendorElements.addAll(v));
@@ -5691,10 +5710,16 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     mWifiNative.removeVendorElements();
                 }
             }
-            if (!mWifiNative.p2pFind(freq, timeout)) {
-                return false;
+            if (scanType == WifiP2pManager.WIFI_P2P_SCAN_FULL) {
+                return mWifiNative.p2pFind(timeout);
+            } else if (scanType == WifiP2pManager.WIFI_P2P_SCAN_SOCIAL
+                    && freq == WifiP2pManager.WIFI_P2P_SCAN_FREQ_UNSPECIFIED) {
+                return mWifiNative.p2pFind(scanType, freq, timeout);
+            } else if (scanType == WifiP2pManager.WIFI_P2P_SCAN_SINGLE_FREQ
+                    && freq != WifiP2pManager.WIFI_P2P_SCAN_FREQ_UNSPECIFIED) {
+                return mWifiNative.p2pFind(scanType, freq, timeout);
             }
-            return true;
+            return false;
         }
 
         /**
