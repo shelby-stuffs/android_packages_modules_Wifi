@@ -272,7 +272,7 @@ public class WifiServiceImpl extends BaseWifiService {
     @VisibleForTesting
     public final CountryCodeTracker mCountryCodeTracker;
     private final MultiInternetManager mMultiInternetManager;
-    private final int mVerboseAlwaysOnLevel;
+    private int mVerboseAlwaysOnLevel = -1;
 
     /**
      * Callback for use with LocalOnlyHotspot to unregister requesting applications upon death.
@@ -504,8 +504,14 @@ public class WifiServiceImpl extends BaseWifiService {
         mCountryCodeTracker = new CountryCodeTracker();
         mWifiTetheringDisallowed = false;
         mMultiInternetManager = mWifiInjector.getMultiInternetManager();
-        mVerboseAlwaysOnLevel = context.getResources()
-                .getInteger(R.integer.config_wifiVerboseLoggingAlwaysOnLevel);
+    }
+
+    private int getVerboseAlwaysOnLevel() {
+        if (mVerboseAlwaysOnLevel == -1) {
+            mVerboseAlwaysOnLevel = mContext.getResources()
+                    .getInteger(R.integer.config_wifiVerboseLoggingAlwaysOnLevel);
+        }
+        return mVerboseAlwaysOnLevel;
     }
 
     /**
@@ -585,7 +591,7 @@ public class WifiServiceImpl extends BaseWifiService {
                     },
                     new IntentFilter(TelephonyManager.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED),
                     null,
-                    new Handler(mWifiHandlerThread.getLooper()));
+                    new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
 
             mContext.registerReceiver(
                     new BroadcastReceiver() {
@@ -612,7 +618,7 @@ public class WifiServiceImpl extends BaseWifiService {
                     },
                     new IntentFilter(Intent.ACTION_LOCALE_CHANGED),
                     null,
-                    new Handler(mWifiHandlerThread.getLooper()));
+                    new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
 
             mContext.registerReceiver(
                     new BroadcastReceiver() {
@@ -626,7 +632,7 @@ public class WifiServiceImpl extends BaseWifiService {
                     },
                     new IntentFilter(LocationManager.MODE_CHANGED_ACTION),
                     null,
-                    new Handler(mWifiHandlerThread.getLooper()));
+                    new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
             updateLocationMode();
 
             if (SdkLevel.isAtLeastT()) {
@@ -640,7 +646,7 @@ public class WifiServiceImpl extends BaseWifiService {
                         },
                         new IntentFilter(UserManager.ACTION_USER_RESTRICTIONS_CHANGED),
                         null,
-                        new Handler(mWifiHandlerThread.getLooper()));
+                        new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
                 mWifiTetheringDisallowed = mUserManager.getUserRestrictions()
                         .getBoolean(UserManager.DISALLOW_WIFI_TETHERING);
             }
@@ -771,7 +777,7 @@ public class WifiServiceImpl extends BaseWifiService {
                     },
                     intentFilter,
                     null,
-                    new Handler(mWifiHandlerThread.getLooper()));
+                    new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
             mMemoryStoreImpl.start();
             mPasspointManager.initializeProvisioner(
                     mWifiInjector.getPasspointProvisionerHandlerThread().getLooper());
@@ -1795,6 +1801,9 @@ public class WifiServiceImpl extends BaseWifiService {
 
         private SoftApCapability updateSoftApCapabilityWithAvailableChannelList(
                 @NonNull SoftApCapability softApCapability) {
+            if (mCountryCode.getCurrentDriverCountryCode() != null) {
+                softApCapability.setCountryCode(mCountryCode.getCurrentDriverCountryCode());
+            }
             if (!mIsBootComplete) {
                 // The available channel list is from wificond.
                 // It might be a failure or stuck during wificond init.
@@ -2017,6 +2026,9 @@ public class WifiServiceImpl extends BaseWifiService {
 
         private SoftApCapability updateSoftApCapabilityWithAvailableChannelList(
                 @NonNull SoftApCapability softApCapability) {
+            if (mCountryCode.getCurrentDriverCountryCode() != null) {
+                softApCapability.setCountryCode(mCountryCode.getCurrentDriverCountryCode());
+            }
             if (!mIsBootComplete) {
                 // The available channel list is from wificond.
                 // It might be a failure or stuck during wificond init.
@@ -4610,7 +4622,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 },
                 intentFilter,
                 null,
-                new Handler(mWifiHandlerThread.getLooper()));
+                new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
     }
 
     private void registerForCarrierConfigChange() {
@@ -4632,7 +4644,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 },
                 filter,
                 null,
-                new Handler(mWifiHandlerThread.getLooper()));
+                new Handler(mWifiHandlerThread.getLooper()), Context.RECEIVER_NOT_EXPORTED);
 
         WifiPhoneStateListener phoneStateListener = new WifiPhoneStateListener(
                 mWifiHandlerThread.getLooper());
@@ -4879,8 +4891,9 @@ public class WifiServiceImpl extends BaseWifiService {
     }
 
     private boolean isVerboseLoggingEnabled() {
-        return mFrameworkFacade.isVerboseLoggingAlwaysOn(mVerboseAlwaysOnLevel, mBuildProperties)
-                ? true : WifiManager.VERBOSE_LOGGING_LEVEL_DISABLED != mVerboseLoggingLevel;
+        return mFrameworkFacade
+                .isVerboseLoggingAlwaysOn(getVerboseAlwaysOnLevel(), mBuildProperties)
+                || WifiManager.VERBOSE_LOGGING_LEVEL_DISABLED != mVerboseLoggingLevel;
     }
 
     private void enableVerboseLoggingInternal(int verbose) {
@@ -4908,6 +4921,7 @@ public class WifiServiceImpl extends BaseWifiService {
         mWifiMulticastLockManager.enableVerboseLogging(verboseEnabled);
         mWifiInjector.enableVerboseLogging(verboseEnabled, halVerboseEnabled);
         mWifiInjector.getSarManager().enableVerboseLogging(verboseEnabled);
+        ApConfigUtil.enableVerboseLogging(verboseEnabled);
     }
 
     @Override
@@ -6405,8 +6419,13 @@ public class WifiServiceImpl extends BaseWifiService {
     public List<WifiAvailableChannel> getUsableChannels(@WifiScanner.WifiBand int band,
             @WifiAvailableChannel.OpMode int mode, @WifiAvailableChannel.Filter int filter) {
         // Location mode must be enabled
-        if (!mWifiPermissionsUtil.isLocationModeEnabled()) {
-            throw new SecurityException("Location mode is disabled for the device");
+        long ident = Binder.clearCallingIdentity();
+        try {
+            if (!mWifiPermissionsUtil.isLocationModeEnabled()) {
+                throw new SecurityException("Location mode is disabled for the device");
+            }
+        } finally {
+            Binder.restoreCallingIdentity(ident);
         }
         final int uid = Binder.getCallingUid();
         if (isVerboseLoggingEnabled()) {
