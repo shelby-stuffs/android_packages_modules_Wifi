@@ -978,12 +978,6 @@ public class WifiConfigManager {
      */
     private boolean canModifyNetwork(WifiConfiguration config, int uid,
             @Nullable String packageName) {
-        // System internals can always update networks; they're typically only
-        // making meteredHint or meteredOverride changes
-        if (uid == Process.SYSTEM_UID) {
-            return true;
-        }
-
         // Passpoint configurations are generated and managed by PasspointManager. They can be
         // added by either PasspointNetworkNominator (for auto connection) or Settings app
         // (for manual connection), and need to be removed once the connection is completed.
@@ -4001,6 +3995,7 @@ public class WifiConfigManager {
         newConfig.enterpriseConfig.enableTrustOnFirstUse(false);
         newConfig.enterpriseConfig.setCaCertificate(cert);
         newConfig.enterpriseConfig.setDomainSuffixMatch(info.commonName);
+        newConfig.enterpriseConfig.setUserApproveNoCaCert(false);
         // Trigger an update to install CA certifiate and the corresponding configuration.
         NetworkUpdateResult result = addOrUpdateNetwork(newConfig, internalConfig.creatorUid);
         if (!result.isSuccess()) {
