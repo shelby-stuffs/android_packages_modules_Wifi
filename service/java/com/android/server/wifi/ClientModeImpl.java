@@ -126,6 +126,7 @@ import com.android.net.module.util.MacAddressUtils;
 import com.android.net.module.util.NetUtils;
 import com.android.server.wifi.ActiveModeManager.ClientRole;
 import com.android.server.wifi.MboOceController.BtmFrameData;
+import com.android.server.wifi.SupplicantStaIfaceHal.QosPolicyRequest;
 import com.android.server.wifi.SupplicantStaIfaceHal.StaIfaceReasonCode;
 import com.android.server.wifi.SupplicantStaIfaceHal.StaIfaceStatusCode;
 import com.android.server.wifi.SupplicantStaIfaceHal.SupplicantEventCode;
@@ -263,6 +264,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private final ConcreteClientModeManager mClientModeManager;
 
     private final WifiNotificationManager mNotificationManager;
+    private final QosPolicyRequestHandler mQosPolicyRequestHandler;
 
     private boolean mFailedToResetMacAddress = false;
     private int mLastSignalLevel = -1;
@@ -842,6 +844,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         mWifiNetworkSelector = wifiNetworkSelector;
         mWifiInjector = wifiInjector;
+        mQosPolicyRequestHandler = new QosPolicyRequestHandler(mInterfaceName, mWifiNative,
+                mWifiInjector.getWifiHandlerThread());
 
         enableVerboseLogging(verboseLoggingEnabled);
 
@@ -927,6 +931,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             WifiMonitor.NETWORK_NOT_FOUND_EVENT,
             WifiMonitor.TOFU_ROOT_CA_CERTIFICATE,
             WifiMonitor.AUXILIARY_SUPPLICANT_EVENT,
+            WifiMonitor.QOS_POLICY_RESET_EVENT,
+            WifiMonitor.QOS_POLICY_REQUEST_EVENT,
     };
 
     private void registerForWifiMonitorEvents()  {
@@ -1269,6 +1275,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         mWifiScoreReport.enableVerboseLogging(mVerboseLoggingEnabled);
         mSupplicantStateTracker.enableVerboseLogging(mVerboseLoggingEnabled);
+        mQosPolicyRequestHandler.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     /**
@@ -1305,10 +1312,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * @param uid UID of the app requesting the connection.
      * @param forceReconnect Whether to force a connection even if we're connected to the same
      *                       network currently.
+     * @param packageName package name of the app requesting the connection.
      */
-    private void connectToUserSelectNetwork(int netId, int uid, boolean forceReconnect) {
-        logd("connectToUserSelectNetwork netId " + netId + ", uid " + uid
-                + ", forceReconnect = " + forceReconnect);
+    private void connectToUserSelectNetwork(int netId, int uid, boolean forceReconnect,
+            @NonNull String packageName) {
+        logd("connectToUserSelectNetwork netId " + netId + ", uid " + uid + ", package "
+                + packageName + ", forceReconnect = " + forceReconnect);
         if (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)) {
             mIsUserSelected = true;
@@ -1859,6 +1868,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         dumpIpClient(fd, pw, args);
         pw.println("WifiScoreReport:");
         mWifiScoreReport.dump(fd, pw, args);
+        pw.println("QosPolicyRequestHandler:");
+        mQosPolicyRequestHandler.dump(fd, pw, args);
         pw.println();
     }
 
@@ -2946,6 +2957,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (mNetworkAgent != null) {
             mNetworkAgent.unregister();
             mNetworkAgent = null;
+            mQosPolicyRequestHandler.setNetworkAgent(null);
         }
 
         /* Clear network properties */
@@ -3436,6 +3448,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             mNetworkAgent = mWifiInjector.makeWifiNetworkAgent(nc, mLinkProperties, naConfig,
                     mNetworkFactory.getProvider(), new WifiNetworkAgentCallback());
             mWifiScoreReport.setNetworkAgent(mNetworkAgent);
+            if (SdkLevel.isAtLeastT()) {
+                mQosPolicyRequestHandler.setNetworkAgent(mNetworkAgent);
+            }
 
             transitionTo(mL3ProvisioningState);
         } else {
@@ -3886,8 +3901,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             filter.addAction(Intent.ACTION_SCREEN_ON);
             filter.addAction(Intent.ACTION_SCREEN_OFF);
             if (!mIsScreenStateChangeReceiverRegistered) {
-                mContext.registerReceiver(mScreenStateChangeReceiver, filter,
-                        Context.RECEIVER_NOT_EXPORTED);
+                mContext.registerReceiver(mScreenStateChangeReceiver, filter);
                 mIsScreenStateChangeReceiverRegistered = true;
             }
             // Learn the initial state of whether the screen is on.
@@ -4069,7 +4083,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     NetworkUpdateResult result = cnm.result;
                     int netId = result.getNetworkId();
                     connectToUserSelectNetwork(
-                            netId, message.sendingUid, result.hasCredentialChanged());
+                            netId, message.sendingUid, result.hasCredentialChanged(),
+                            cnm.packageName);
                     mWifiMetrics.logStaEvent(mInterfaceName, StaEvent.TYPE_CONNECT_NETWORK,
                             mWifiConfigManager.getConfiguredNetwork(netId));
                     cnm.listener.sendSuccess();
@@ -4390,6 +4405,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         builder.setOwnerUid(currentWifiConfiguration.creatorUid);
         builder.setAdministratorUids(new int[]{currentWifiConfiguration.creatorUid});
+        if (SdkLevel.isAtLeastT()) {
+            builder.setAllowedUids(Set.of(currentWifiConfiguration.creatorUid));
+        }
 
         if (!WifiConfiguration.isMetered(currentWifiConfiguration, mWifiInfo)) {
             builder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
@@ -4697,6 +4715,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         public void onAutomaticReconnectDisabled() {
             if (!isThisCallbackActive()) return;
             unwantedNetwork(NETWORK_STATUS_UNWANTED_DISABLE_AUTOJOIN);
+        }
+
+        @Override
+        public void onDscpPolicyStatusUpdated(int policyId, int status) {
+            mQosPolicyRequestHandler.setQosPolicyStatus(policyId, status);
         }
     }
 
@@ -5019,6 +5042,19 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     mWifiConfigManager.updateNetworkTransitionDisable(message.arg1, message.arg2);
                     break;
                 }
+                case WifiMonitor.QOS_POLICY_RESET_EVENT: {
+                    if (SdkLevel.isAtLeastT() && mNetworkAgent != null) {
+                        mNetworkAgent.sendRemoveAllDscpPolicies();
+                    }
+                    break;
+                }
+                case WifiMonitor.QOS_POLICY_REQUEST_EVENT: {
+                    if (SdkLevel.isAtLeastT()) {
+                        mQosPolicyRequestHandler.queueQosPolicyRequest(
+                                message.arg1, (List<QosPolicyRequest>) message.obj);
+                    }
+                    break;
+                }
                 default: {
                     handleStatus = NOT_HANDLED;
                     break;
@@ -5334,10 +5370,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 }
                 case WifiMonitor.TOFU_ROOT_CA_CERTIFICATE:
                     if (null == mTargetWifiConfiguration) break;
-                    if (!mInsecureEapNetworkHandler.setPendingCaCertificate(
-                            mTargetWifiConfiguration.SSID,
+                    if (!mInsecureEapNetworkHandler.setPendingCertificate(
+                            mTargetWifiConfiguration.SSID, message.arg2,
                             (X509Certificate) message.obj)) {
-                        Log.d(TAG, "Cannot set pending Root CA cert.");
+                        Log.d(TAG, "Cannot set pending cert.");
                     }
                     break;
                 default: {
@@ -5391,6 +5427,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             mNetworkAgent = mWifiInjector.makeWifiNetworkAgent(nc, mLinkProperties, naConfig,
                     mNetworkFactory.getProvider(), new WifiNetworkAgentCallback());
             mWifiScoreReport.setNetworkAgent(mNetworkAgent);
+            if (SdkLevel.isAtLeastT()) {
+                mQosPolicyRequestHandler.setNetworkAgent(mNetworkAgent);
+            }
 
             // We must clear the config BSSID, as the wifi chipset may decide to roam
             // from this point on and having the BSSID specified in the network block would
@@ -6630,27 +6669,32 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private static class ConnectNetworkMessage {
         public final NetworkUpdateResult result;
         public final ActionListenerWrapper listener;
+        public final String packageName;
 
-        ConnectNetworkMessage(NetworkUpdateResult result, ActionListenerWrapper listener) {
+        ConnectNetworkMessage(NetworkUpdateResult result, ActionListenerWrapper listener,
+                String packageName) {
             this.result = result;
             this.listener = listener;
+            this.packageName = packageName;
         }
     }
 
     /** Trigger network connection and provide status via the provided callback. */
     public void connectNetwork(NetworkUpdateResult result, ActionListenerWrapper wrapper,
-            int callingUid) {
+            int callingUid, @NonNull String packageName) {
         Message message =
-                obtainMessage(CMD_CONNECT_NETWORK, new ConnectNetworkMessage(result, wrapper));
+                obtainMessage(CMD_CONNECT_NETWORK,
+                new ConnectNetworkMessage(result, wrapper, packageName));
         message.sendingUid = callingUid;
         sendMessage(message);
     }
 
     /** Trigger network save and provide status via the provided callback. */
     public void saveNetwork(NetworkUpdateResult result, ActionListenerWrapper wrapper,
-            int callingUid) {
+            int callingUid, @NonNull String packageName) {
         Message message =
-                obtainMessage(CMD_SAVE_NETWORK, new ConnectNetworkMessage(result, wrapper));
+                obtainMessage(CMD_SAVE_NETWORK,
+                new ConnectNetworkMessage(result, wrapper, packageName));
         message.sendingUid = callingUid;
         sendMessage(message);
     }

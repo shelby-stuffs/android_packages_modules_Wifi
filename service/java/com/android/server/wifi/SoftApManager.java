@@ -971,8 +971,7 @@ public class SoftApManager implements ActiveModeManager {
                                     newSingleApBand |= availableBand;
                                 }
                             }
-                            // Fall back to Single AP if the current concurrency combination can't
-                            // support a Bridged AP.
+                            // Fall back to Single AP if it's not possible to create a Bridged AP.
                             if (!mWifiNative.isItPossibleToCreateBridgedApIface(mRequestorWs)) {
                                 isFallbackToSingleAp = true;
                             }
@@ -1438,8 +1437,7 @@ public class SoftApManager implements ActiveModeManager {
                     IntentFilter filter = new IntentFilter();
                     filter.addAction(Intent.ACTION_POWER_CONNECTED);
                     filter.addAction(Intent.ACTION_POWER_DISCONNECTED);
-                    mContext.registerReceiver(mBatteryChargingReceiver, filter,
-                            Context.RECEIVER_NOT_EXPORTED);
+                    mContext.registerReceiver(mBatteryChargingReceiver, filter);
                     mIsCharging = mBatteryManager.isCharging();
                 }
                 mSarManager.setSapWifiState(WifiManager.WIFI_AP_STATE_ENABLED);

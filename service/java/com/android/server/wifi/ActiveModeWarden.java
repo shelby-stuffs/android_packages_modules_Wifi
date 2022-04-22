@@ -529,7 +529,7 @@ public class ActiveModeWarden {
                 // update to make sure we are in the correct mode
                 scanAlwaysModeChanged();
             }
-        }, new IntentFilter(LocationManager.MODE_CHANGED_ACTION), Context.RECEIVER_NOT_EXPORTED);
+        }, new IntentFilter(LocationManager.MODE_CHANGED_ACTION));
         mContext.registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -543,7 +543,7 @@ public class ActiveModeWarden {
                     airplaneModeToggled();
                 }
             }
-        }, new IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED), Context.RECEIVER_NOT_EXPORTED);
+        }, new IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED));
         mContext.registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -2017,6 +2017,22 @@ public class ActiveModeWarden {
                 ClientModeManager primaryManager = getPrimaryClientModeManager();
                 if (primaryManager instanceof DefaultClientModeManager) {
                     primaryManager = null;
+                }
+                // TODO(b/228529090): Remove this special code once root cause is resolved.
+                // Special case for holders with ENTER_CAR_MODE_PRIORITIZED. Only give them the
+                // primary STA to avoid the device getting into STA+STA state.
+                // In STA+STA wifi scans will result in high latency in the secondary STA.
+                if (requestInfo.clientRole == ROLE_CLIENT_LOCAL_ONLY
+                        && requestInfo.requestorWs != null) {
+                    WorkSource workSource = requestInfo.requestorWs;
+                    for (int i = 0; i < workSource.size(); i++) {
+                        int curUid = workSource.getUid(i);
+                        if (curUid != Process.SYSTEM_UID
+                                && mWifiPermissionsUtil.checkEnterCarModePrioritized(curUid)) {
+                            requestInfo.listener.onAnswer(primaryManager);
+                            return;
+                        }
+                    }
                 }
                 if (requestInfo.clientRole == ROLE_CLIENT_SECONDARY_TRANSIENT
                         && mDppManager.isSessionInProgress()) {

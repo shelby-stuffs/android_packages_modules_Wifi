@@ -18,6 +18,9 @@ package com.android.server.wifi;
 
 import static android.net.wifi.WifiManager.WIFI_FEATURE_OWE;
 
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP_BRIDGE;
+import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_STA;
 import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_NATIVE_SUPPORTED_FEATURES;
 
 import android.annotation.IntDef;
@@ -33,6 +36,7 @@ import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiAnnotations;
 import android.net.wifi.WifiAvailableChannel;
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiContext;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiSsid;
 import android.net.wifi.nl80211.DeviceWiphyCapabilities;
@@ -47,16 +51,19 @@ import android.os.WorkSource;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
+import android.util.SparseArray;
 
 import com.android.internal.annotations.Immutable;
 import com.android.internal.util.HexDump;
 import com.android.modules.utils.build.SdkLevel;
+import com.android.server.wifi.SupplicantStaIfaceHal.QosPolicyStatus;
 import com.android.server.wifi.hotspot2.NetworkDetail;
 import com.android.server.wifi.util.FrameParser;
 import com.android.server.wifi.util.InformationElementUtil;
 import com.android.server.wifi.util.NativeUtil;
 import com.android.server.wifi.util.NetdWrapper;
 import com.android.server.wifi.util.NetdWrapper.NetdEventObserver;
+import com.android.wifi.resources.R;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -98,6 +105,7 @@ public class WifiNative {
     private final Random mRandom;
     private final BuildProperties mBuildProperties;
     private final WifiInjector mWifiInjector;
+    private final WifiContext mContext;
     private NetdWrapper mNetdWrapper;
     private boolean mVerboseLoggingEnabled = false;
     private boolean mIsEnhancedOpenSupported = false;
@@ -125,6 +133,7 @@ public class WifiNative {
         mRandom = random;
         mBuildProperties = buildProperties;
         mWifiInjector = wifiInjector;
+        mContext = wifiInjector.getContext();
     }
 
     /**
@@ -1227,6 +1236,14 @@ public class WifiNative {
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
             }
+            if (mContext.getResources().getBoolean(
+                    R.bool.config_wifiNetworkCentricQosPolicyFeatureEnabled)) {
+                if (!mSupplicantStaIfaceHal.setNetworkCentricQosPolicyFeatureEnabled(
+                        iface.name, true)) {
+                    Log.e(TAG, "Failed to set QoS policy feature enabled for iface " + iface.name);
+                    return null;
+                }
+            }
             iface.networkObserver = new NetworkObserverInternal(iface.id);
             if (!registerNetworkObserver(iface.networkObserver)) {
                 Log.e(TAG, "Failed to register network observer on " + iface);
@@ -1465,6 +1482,14 @@ public class WifiNative {
                 teardownInterface(iface.name);
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return false;
+            }
+            if (mContext.getResources().getBoolean(
+                    R.bool.config_wifiNetworkCentricQosPolicyFeatureEnabled)) {
+                if (!mSupplicantStaIfaceHal.setNetworkCentricQosPolicyFeatureEnabled(
+                        iface.name, true)) {
+                    Log.e(TAG, "Failed to set QoS policy feature enabled for iface " + iface.name);
+                    return false;
+                }
             }
             iface.type = Iface.IFACE_TYPE_STA_FOR_CONNECTIVITY;
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
@@ -3362,13 +3387,26 @@ public class WifiNative {
             @WifiAvailableChannel.Filter int filter) {
         return mWifiVendorHal.getUsableChannels(band, mode, filter);
     }
+    /**
+     * Returns whether the device supports the requested
+     * {@link HalDeviceManager.HdmIfaceTypeForCreation} combo.
+     */
+    public boolean canDeviceSupportCreateTypeCombo(SparseArray<Integer> combo) {
+        synchronized (mLock) {
+            return mWifiVendorHal.canDeviceSupportCreateTypeCombo(combo);
+        }
+    }
 
     /**
      * Returns whether STA + AP concurrency is supported or not.
      */
     public boolean isStaApConcurrencySupported() {
         synchronized (mLock) {
-            return mWifiVendorHal.isStaApConcurrencySupported();
+            return mWifiVendorHal.canDeviceSupportCreateTypeCombo(
+                    new SparseArray<Integer>() {{
+                            put(HDM_CREATE_IFACE_STA, 1);
+                            put(HDM_CREATE_IFACE_AP, 1);
+                    }});
         }
     }
 
@@ -3377,7 +3415,10 @@ public class WifiNative {
      */
     public boolean isStaStaConcurrencySupported() {
         synchronized (mLock) {
-            return mWifiVendorHal.isStaStaConcurrencySupported();
+            return mWifiVendorHal.canDeviceSupportCreateTypeCombo(
+                    new SparseArray<Integer>() {{
+                            put(HDM_CREATE_IFACE_STA, 2);
+                    }});
         }
     }
 
@@ -3386,6 +3427,12 @@ public class WifiNative {
      */
     public boolean isItPossibleToCreateApIface(@NonNull WorkSource requestorWs) {
         synchronized (mLock) {
+            if (!isHalStarted()) {
+                return canDeviceSupportCreateTypeCombo(
+                        new SparseArray<Integer>() {{
+                            put(HDM_CREATE_IFACE_AP, 1);
+                        }});
+            }
             return mWifiVendorHal.isItPossibleToCreateApIface(requestorWs);
         }
     }
@@ -3395,6 +3442,12 @@ public class WifiNative {
      */
     public boolean isItPossibleToCreateBridgedApIface(@NonNull WorkSource requestorWs) {
         synchronized (mLock) {
+            if (!isHalStarted()) {
+                return canDeviceSupportCreateTypeCombo(
+                        new SparseArray<Integer>() {{
+                            put(HDM_CREATE_IFACE_AP_BRIDGE, 1);
+                        }});
+            }
             return mWifiVendorHal.isItPossibleToCreateBridgedApIface(requestorWs);
         }
     }
@@ -3404,6 +3457,12 @@ public class WifiNative {
      */
     public boolean isItPossibleToCreateStaIface(@NonNull WorkSource requestorWs) {
         synchronized (mLock) {
+            if (!isHalStarted()) {
+                return canDeviceSupportCreateTypeCombo(
+                        new SparseArray<Integer>() {{
+                            put(HDM_CREATE_IFACE_STA, 1);
+                        }});
+            }
             return mWifiVendorHal.isItPossibleToCreateStaIface(requestorWs);
         }
     }
@@ -4483,6 +4542,30 @@ public class WifiNative {
      */
     public SecurityParams getCurrentNetworkSecurityParams(@NonNull String ifaceName) {
         return mSupplicantStaIfaceHal.getCurrentNetworkSecurityParams(ifaceName);
+    }
+
+    /**
+     * Sends a QoS policy response.
+     *
+     * @param ifaceName Name of the interface.
+     * @param qosPolicyRequestId Dialog token to identify the request.
+     * @param morePolicies Flag to indicate more QoS policies can be accommodated.
+     * @param qosPolicyStatusList List of framework QosPolicyStatus objects.
+     * @return true if response is sent successfully, false otherwise.
+     */
+    public boolean sendQosPolicyResponse(String ifaceName, int qosPolicyRequestId,
+            boolean morePolicies, @NonNull List<QosPolicyStatus> qosPolicyStatusList) {
+        return mSupplicantStaIfaceHal.sendQosPolicyResponse(ifaceName, qosPolicyRequestId,
+                morePolicies, qosPolicyStatusList);
+    }
+
+    /**
+     * Indicates the removal of all active QoS policies configured by the AP.
+     *
+     * @param ifaceName Name of the interface.
+     */
+    public boolean removeAllQosPolicies(String ifaceName) {
+        return mSupplicantStaIfaceHal.removeAllQosPolicies(ifaceName);
     }
 
     /**
