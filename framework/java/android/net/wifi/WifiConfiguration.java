@@ -1836,6 +1836,16 @@ public class WifiConfiguration implements Parcelable {
 
     /**
      * Set the MAC randomization setting for this network.
+     * <p>
+     * Caller must satify one of the following conditions:
+     * </p>
+     * <ul>
+     * <li>Have {@code android.Manifest.permission#NETWORK_SETTINGS} permission.</li>
+     * <li>Have {@code android.Manifest.permission#NETWORK_SETUP_WIZARD} permission.</li>
+     * <li>Be in Demo Mode.</li>
+     * <li>Be the creator adding or updating a passpoint network.</li>
+     * <li>Be an admin updating their own network.</li>
+     * </ul>
      */
     public void setMacRandomizationSetting(@MacRandomizationSetting int macRandomizationSetting) {
         this.macRandomizationSetting = macRandomizationSetting;
@@ -3471,6 +3481,7 @@ public class WifiConfiguration implements Parcelable {
             sbuf.append("bssidAllowlist unset");
         }
         sbuf.append("\n");
+        sbuf.append("IsDppConfigurator: ").append(this.mIsDppConfigurator).append("\n");
         sbuf.append("ShareThisAp: ").append(this.shareThisAp).append("\n");
         return sbuf.toString();
     }
@@ -3999,7 +4010,7 @@ public class WifiConfiguration implements Parcelable {
         dest.writeBoolean(restricted);
         dest.writeParcelable(mSubscriptionGroup, flags);
         dest.writeList(mBssidAllowlist);
-        dest.writeInt(mIsDppConfigurator ? 1 : 0);
+        dest.writeBoolean(mIsDppConfigurator);
         dest.writeByteArray(mDppPrivateEcKey);
         dest.writeByteArray(mDppConnector);
         dest.writeByteArray(mDppCSignKey);
@@ -4095,7 +4106,7 @@ public class WifiConfiguration implements Parcelable {
                 config.restricted = in.readBoolean();
                 config.mSubscriptionGroup = in.readParcelable(null);
                 config.mBssidAllowlist = in.readArrayList(MacAddress.class.getClassLoader());
-                config.mIsDppConfigurator = in.readInt() != 0;
+                config.mIsDppConfigurator = in.readBoolean();
                 config.mDppPrivateEcKey = in.createByteArray();
                 config.mDppConnector = in.createByteArray();
                 config.mDppCSignKey = in.createByteArray();

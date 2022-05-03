@@ -19,9 +19,11 @@ package com.android.server.wifi;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -48,6 +50,7 @@ import org.mockito.Captor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 import java.util.ArrayList;
@@ -62,7 +65,9 @@ public class QosPolicyRequestHandlerTest {
     private TestLooper mLooper;
     private Handler mNetworkAgentHandler;
     @Mock WifiNetworkAgent mWifiNetworkAgent;
+    @Mock WifiNetworkAgent mWifiNetworkAgentAlt;
     @Mock WifiNative mWifiNative;
+    @Mock ClientModeImpl mClientModeImpl;
     @Mock HandlerThread mHandlerThread;
 
     @Captor ArgumentCaptor<List<QosPolicyStatus>> mQosStatusListCaptor;
@@ -75,17 +80,21 @@ public class QosPolicyRequestHandlerTest {
         mLooper = new TestLooper();
         when(mHandlerThread.getLooper()).thenReturn(mLooper.getLooper());
         mQosPolicyRequestHandler = new QosPolicyRequestHandler(
-                TEST_IFACE_NAME, mWifiNative, mHandlerThread);
+                TEST_IFACE_NAME, mWifiNative, mClientModeImpl, mHandlerThread);
         mQosPolicyRequestHandler.setNetworkAgent(mWifiNetworkAgent);
         mNetworkAgentHandler = new Handler(mLooper.getLooper());
 
         // Accept any policy sent to the NetworkAgent.
-        doAnswer((Answer<Void>) invocation -> {
-            Object[] args = invocation.getArguments();
-            DscpPolicy policy = (DscpPolicy) args[0];
-            mNetworkAgentHandler.post(() -> mQosPolicyRequestHandler.setQosPolicyStatus(
-                    policy.getPolicyId(), NetworkAgent.DSCP_POLICY_STATUS_SUCCESS));
-            return null;
+        doAnswer(new Answer() {
+            @Override
+            public Object answer(InvocationOnMock invocation) throws Throwable {
+
+                Object[] args = invocation.getArguments();
+                DscpPolicy policy = (DscpPolicy) args[0];
+                mNetworkAgentHandler.post(() -> mQosPolicyRequestHandler.setQosPolicyStatus(
+                        policy.getPolicyId(), NetworkAgent.DSCP_POLICY_STATUS_SUCCESS));
+                return null;
+            }
         }).when(mWifiNetworkAgent).sendAddDscpPolicy(any(DscpPolicy.class));
         doAnswer((Answer<Void>) invocation -> {
             Object[] args = invocation.getArguments();
@@ -305,5 +314,65 @@ public class QosPolicyRequestHandlerTest {
                 eq(QOS_REQUEST_DIALOG_TOKEN + 2), eq(true), mQosStatusListCaptor.capture());
         verify(mWifiNative).sendQosPolicyResponse(eq(TEST_IFACE_NAME),
                 eq(QOS_REQUEST_DIALOG_TOKEN + 3), eq(true), mQosStatusListCaptor.capture());
+    }
+
+    /*
+     * Tests that if the existing network agent is replaced by a new one (ex. in the case of a NUD
+     * failure), we clear out the queue and reset all existing policies.
+     */
+    @Test
+    public void testNetworkAgentReplacedDuringProcessing() throws Exception {
+        ArrayList<QosPolicyRequest> policies = new ArrayList();
+        policies.add(createQosPolicyRequest(1, SupplicantStaIfaceHal.QOS_POLICY_REQUEST_ADD, 0,
+                TEST_INET_ADDR /* srcIp */, null, null, null, null));
+        policies.add(createQosPolicyRequest(2, SupplicantStaIfaceHal.QOS_POLICY_REQUEST_ADD, 0,
+                null, null, 1337 /* srcPort */, null, null));
+        policies.add(createQosPolicyRequest(3, SupplicantStaIfaceHal.QOS_POLICY_REQUEST_ADD, 0,
+                null, null, null, new int[]{15, 256} /* dstPortRange */, null));
+
+        mQosPolicyRequestHandler.queueQosPolicyRequest(QOS_REQUEST_DIALOG_TOKEN, policies);
+        mQosPolicyRequestHandler.queueQosPolicyRequest(QOS_REQUEST_DIALOG_TOKEN + 1, policies);
+        mQosPolicyRequestHandler.setNetworkAgent(mWifiNetworkAgentAlt);
+        mLooper.dispatchAll();
+
+        verify(mWifiNative, never()).sendQosPolicyResponse(eq(TEST_IFACE_NAME),
+                eq(QOS_REQUEST_DIALOG_TOKEN), anyBoolean(), any());
+        verify(mWifiNative, never()).sendQosPolicyResponse(eq(TEST_IFACE_NAME),
+                eq(QOS_REQUEST_DIALOG_TOKEN + 1), anyBoolean(), any());
+        verify(mClientModeImpl).clearQueuedQosMessages();
+        verify(mWifiNetworkAgentAlt).sendRemoveAllDscpPolicies();
+        verify(mWifiNative).removeAllQosPolicies(TEST_IFACE_NAME);
+    }
+
+    /*
+     * Tests that if we time out while waiting for a response from the network agent,
+     * we clear out the queue and reset all existing policies.
+     */
+    @Test
+    public void testRequestTimesOutDuringProcessing() throws Exception {
+        // Do not respond to any remove requests for this test case.
+        doNothing().when(mWifiNetworkAgent).sendRemoveDscpPolicy(anyInt());
+        ArrayList<QosPolicyRequest> removePolicies = new ArrayList();
+        removePolicies.add(createQosPolicyRequest(1,
+                SupplicantStaIfaceHal.QOS_POLICY_REQUEST_REMOVE, 0, null, null, null, null, null));
+
+        ArrayList<QosPolicyRequest> addPolicies = new ArrayList();
+        addPolicies.add(createQosPolicyRequest(1, SupplicantStaIfaceHal.QOS_POLICY_REQUEST_ADD, 0,
+                TEST_INET_ADDR /* srcIp */, null, null, null, null));
+
+        mQosPolicyRequestHandler.queueQosPolicyRequest(QOS_REQUEST_DIALOG_TOKEN, removePolicies);
+        mQosPolicyRequestHandler.queueQosPolicyRequest(QOS_REQUEST_DIALOG_TOKEN + 1, addPolicies);
+        mLooper.dispatchAll();
+
+        mLooper.moveTimeForward(QosPolicyRequestHandler.PROCESSING_TIMEOUT_MILLIS + 1);
+        mLooper.dispatchAll();
+
+        verify(mWifiNative, never()).sendQosPolicyResponse(eq(TEST_IFACE_NAME),
+                eq(QOS_REQUEST_DIALOG_TOKEN), anyBoolean(), any());
+        verify(mWifiNative, never()).sendQosPolicyResponse(eq(TEST_IFACE_NAME),
+                eq(QOS_REQUEST_DIALOG_TOKEN + 1), anyBoolean(), any());
+        verify(mClientModeImpl).clearQueuedQosMessages();
+        verify(mWifiNetworkAgent).sendRemoveAllDscpPolicies();
+        verify(mWifiNative).removeAllQosPolicies(TEST_IFACE_NAME);
     }
 }

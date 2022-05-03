@@ -37,6 +37,7 @@ import android.net.wifi.WifiAnnotations;
 import android.net.wifi.WifiAvailableChannel;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiContext;
+import android.net.wifi.WifiManager;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiSsid;
 import android.net.wifi.nl80211.DeviceWiphyCapabilities;
@@ -2922,9 +2923,9 @@ public class WifiNative {
      */
     public boolean startDppConfiguratorInitiator(@NonNull String ifaceName, int peerBootstrapId,
             int ownBootstrapId, @NonNull String ssid, String password, String psk,
-            int netRole, int securityAkm)  {
+            int netRole, int securityAkm, byte[] privEcKey)  {
         return mSupplicantStaIfaceHal.startDppConfiguratorInitiator(ifaceName, peerBootstrapId,
-                ownBootstrapId, ssid, password, psk, netRole, securityAkm);
+                ownBootstrapId, ssid, password, psk, netRole, securityAkm, privEcKey);
     }
 
     /**
@@ -2976,6 +2977,13 @@ public class WifiNative {
          * @param bandList List of bands the Enrollee supports.
          */
         void onFailure(int dppStatusCode, String ssid, String channelList, int[] bandList);
+
+        /**
+         * DPP Configurator Private keys update.
+         *
+         * @param key Configurator's private EC key.
+         */
+        void onDppConfiguratorKeyUpdate(byte[] key);
     }
 
     /**
@@ -3453,6 +3461,22 @@ public class WifiNative {
     }
 
     /**
+     * Returns whether creating a single AP does not require destroying an existing iface, but
+     * creating a bridged AP does.
+     */
+    public boolean shouldDowngradeToSingleApForConcurrency(@NonNull WorkSource requestorWs) {
+        synchronized (mLock) {
+            if (!mWifiVendorHal.isHalStarted()) {
+                return false;
+            }
+            return !mWifiVendorHal.canDeviceSupportAdditionalIface(HDM_CREATE_IFACE_AP_BRIDGE,
+                    requestorWs)
+                    && mWifiVendorHal.canDeviceSupportAdditionalIface(HDM_CREATE_IFACE_AP,
+                    requestorWs);
+        }
+    }
+
+    /**
      * Returns whether a new STA iface can be created or not.
      */
     public boolean isItPossibleToCreateStaIface(@NonNull WorkSource requestorWs) {
@@ -3533,9 +3557,18 @@ public class WifiNative {
      * @return bitmask defined by WifiManager.WIFI_FEATURE_*
      */
     private long getSupportedFeatureSetInternal(@NonNull String ifaceName) {
-        return mSupplicantStaIfaceHal.getAdvancedCapabilities(ifaceName)
+        long featureSet = mSupplicantStaIfaceHal.getAdvancedCapabilities(ifaceName)
                 | mWifiVendorHal.getSupportedFeatureSet(ifaceName)
                 | mSupplicantStaIfaceHal.getWpaDriverFeatureSet(ifaceName);
+        if (SdkLevel.isAtLeastT()) {
+            if (((featureSet & WifiManager.WIFI_FEATURE_DPP) != 0)
+                    && mContext.getResources().getBoolean(R.bool.config_wifiDppAkmSupported)) {
+                // Set if DPP is filled by supplicant and DPP AKM is enabled by overlay.
+                featureSet |= WifiManager.WIFI_FEATURE_DPP_AKM;
+                Log.v(TAG, ": DPP AKM supported");
+            }
+        }
+        return featureSet;
     }
 
     /**
@@ -4566,6 +4599,19 @@ public class WifiNative {
      */
     public boolean removeAllQosPolicies(String ifaceName) {
         return mSupplicantStaIfaceHal.removeAllQosPolicies(ifaceName);
+    }
+
+    /**
+     * Generate DPP credential for network access
+     *
+     * @param ifaceName Name of the interface.
+     * @param ssid ssid of the network
+     * @param privEcKey Private EC Key for DPP Configurator
+     * Returns true when operation is successful. On error, false is returned.
+     */
+    public boolean generateSelfDppConfiguration(@NonNull String ifaceName, @NonNull String ssid,
+            byte[] privEcKey) {
+        return mSupplicantStaIfaceHal.generateSelfDppConfiguration(ifaceName, ssid, privEcKey);
     }
 
     /**
