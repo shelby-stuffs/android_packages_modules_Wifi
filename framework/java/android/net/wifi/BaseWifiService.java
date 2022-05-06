@@ -848,16 +848,6 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public int getSoftApWifiStandard() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isVht8ssCapableDevice() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean setWifiScoringEnabled(boolean enabled) {
         throw new UnsupportedOperationException();
     }
