@@ -139,6 +139,7 @@ public class HostapdHalHidlImp implements IHostapdHal {
         mEventHandler = handler;
         mServiceManagerDeathRecipient = new ServiceManagerDeathRecipient();
         mHostapdDeathRecipient = new HostapdDeathRecipient();
+        mHostapdVendorDeathRecipient = new HostapdVendorDeathRecipient();
         Log.d(TAG, "init HostapdHalHidlImp");
     }
 
