@@ -2406,6 +2406,11 @@ public class WifiConfiguration implements Parcelable {
         private SecurityParams mCandidateSecurityParams;
 
         /**
+         * Used to cache the last used security params for the candidate.
+         */
+        private SecurityParams mLastUsedSecurityParams;
+
+        /**
          * Indicate whether this network is visible in latest Qualified Network Selection. This
          * means there is scan result found related to this Configuration and meet the minimum
          * requirement. The saved network need not join latest Qualified Network Selection. For
@@ -2502,6 +2507,24 @@ public class WifiConfiguration implements Parcelable {
          */
         public SecurityParams getCandidateSecurityParams() {
             return mCandidateSecurityParams;
+        }
+
+        /**
+         * set the last used security type of the network
+         * @param params value to set to mLastUsedSecurityParams
+         * @hide
+         */
+        public void setLastUsedSecurityParams(SecurityParams params) {
+            mLastUsedSecurityParams = params;
+        }
+
+        /**
+         * get the last used security type of the network
+         * @return return the security params
+         * @hide
+         */
+        public SecurityParams getLastUsedSecurityParams() {
+            return mLastUsedSecurityParams;
         }
 
         /**
@@ -2842,6 +2865,7 @@ public class WifiConfiguration implements Parcelable {
             setCandidate(source.getCandidate());
             setCandidateScore(source.getCandidateScore());
             setCandidateSecurityParams(source.getCandidateSecurityParams());
+            setLastUsedSecurityParams(source.getLastUsedSecurityParams());
             setConnectChoice(source.getConnectChoice());
             setConnectChoiceRssi(source.getConnectChoiceRssi());
             setHasEverConnected(source.hasEverConnected());
@@ -2849,7 +2873,7 @@ public class WifiConfiguration implements Parcelable {
         }
 
         /** @hide */
-        public void writeToParcel(Parcel dest) {
+        public void writeToParcel(Parcel dest, int flags) {
             dest.writeInt(getNetworkSelectionStatus());
             dest.writeInt(getNetworkSelectionDisableReason());
             for (int index = DISABLED_NONE; index < NETWORK_SELECTION_DISABLED_MAX;
@@ -2867,6 +2891,8 @@ public class WifiConfiguration implements Parcelable {
             }
             dest.writeInt(hasEverConnected() ? 1 : 0);
             dest.writeInt(hasNeverDetectedCaptivePortal() ? 1 : 0);
+            dest.writeParcelable(getCandidateSecurityParams(), flags);
+            dest.writeParcelable(getLastUsedSecurityParams(), flags);
         }
 
         /** @hide */
@@ -2887,6 +2913,8 @@ public class WifiConfiguration implements Parcelable {
             }
             setHasEverConnected(in.readInt() != 0);
             setHasNeverDetectedCaptivePortal(in.readInt() != 0);
+            setCandidateSecurityParams((SecurityParams) in.readParcelable(null));
+            setLastUsedSecurityParams((SecurityParams) in.readParcelable(null));
         }
     }
 
@@ -3280,6 +3308,10 @@ public class WifiConfiguration implements Parcelable {
                 .append(mNetworkSelectionStatus.hasEverConnected()).append("\n");
         sbuf.append(" hasNeverDetectedCaptivePortal: ")
                 .append(mNetworkSelectionStatus.hasNeverDetectedCaptivePortal()).append("\n");
+        sbuf.append(" mCandidateSecurityParams: ")
+                .append(mNetworkSelectionStatus.getCandidateSecurityParams());
+        sbuf.append(" mLastUsedSecurityParams: ")
+                .append(mNetworkSelectionStatus.getLastUsedSecurityParams());
 
         if (this.numAssociation > 0) {
             sbuf.append(" numAssociation ").append(this.numAssociation).append("\n");
@@ -3929,7 +3961,7 @@ public class WifiConfiguration implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(networkId);
         dest.writeInt(status);
-        mNetworkSelectionStatus.writeToParcel(dest);
+        mNetworkSelectionStatus.writeToParcel(dest, flags);
         dest.writeString(SSID);
         dest.writeString(BSSID);
         dest.writeInt(shareThisAp ? 1 : 0);
@@ -3963,7 +3995,7 @@ public class WifiConfiguration implements Parcelable {
 
         dest.writeInt(mSecurityParamsList.size());
         mSecurityParamsList.stream()
-                .forEach(params -> params.writeToParcel(dest, flags));
+                .forEach(params -> dest.writeParcelable(params, flags));
 
         dest.writeParcelable(enterpriseConfig, flags);
 
@@ -4060,7 +4092,7 @@ public class WifiConfiguration implements Parcelable {
 
                 int numSecurityParams = in.readInt();
                 for (int i = 0; i < numSecurityParams; i++) {
-                    config.mSecurityParamsList.add(SecurityParams.createFromParcel(in));
+                    config.mSecurityParamsList.add(in.readParcelable(null));
                 }
 
                 config.enterpriseConfig = in.readParcelable(null);
