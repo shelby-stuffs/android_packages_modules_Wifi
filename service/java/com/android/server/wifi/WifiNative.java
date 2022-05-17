@@ -974,7 +974,9 @@ public class WifiNative {
      * teardown any existing iface.
      */
     private String createApIface(@NonNull Iface iface, @NonNull WorkSource requestorWs,
-            @SoftApConfiguration.BandType int band, boolean isBridged, int type) {
+            @SoftApConfiguration.BandType int band, boolean isBridged,
+            @NonNull SoftApManager softApManager,
+            int type) {
         synchronized (mLock) {
             if (mWifiVendorHal.isVendorHalSupported()) {
                 // Hostapd vendor V1_2: bridge iface setup start
@@ -983,12 +985,12 @@ public class WifiNative {
                                           || (isBridged && mHostapdHal.useVendorHostapdHal());
                 Log.i(TAG, "CreateApIface - vendor bridge=" + mVendorBridgeModeActive);
                 if (isVendorBridgeModeActive()) {
-                    return createVendorBridgeIface(iface, requestorWs, band);
+                    return createVendorBridgeIface(iface, requestorWs, softApManager, band);
                 }
                 // Hostapd vendor V1_2: bridge iface setup end
                 return mWifiVendorHal.createApIface(
                         new InterfaceDestoyedListenerInternal(iface.id), requestorWs,
-                        band, isBridged);
+                        band, isBridged, softApManager);
             } else {
                 Log.i(TAG, "Vendor Hal not supported, ignoring createApIface.");
                 return handleIfaceCreationWhenVendorHalNotSupported(iface);
@@ -1332,17 +1334,22 @@ public class WifiNative {
      * @param interfaceCallback Associated callback for notifying status changes for the iface.
      * @param requestorWs Requestor worksource.
      * @param isBridged Whether or not AP interface is a bridge interface.
+     * @param softApManager SoftApManager of the request.
      * @return Returns the name of the allocated interface, will be null on failure.
      */
     public String setupInterfaceForSoftApMode(
             @NonNull InterfaceCallback interfaceCallback, @NonNull WorkSource requestorWs,
-            @SoftApConfiguration.BandType int band, boolean isBridged) {
-        return setupInterfaceForSoftApMode(interfaceCallback, requestorWs, band, isBridged, -1);
+            @SoftApConfiguration.BandType int band, boolean isBridged,
+            @NonNull SoftApManager softApManager) {
+        return setupInterfaceForSoftApMode(interfaceCallback, requestorWs, band, isBridged,
+            softApManager, -1);
     }
 
     public String setupInterfaceForSoftApMode(
             @NonNull InterfaceCallback interfaceCallback, @NonNull WorkSource requestorWs,
-            @SoftApConfiguration.BandType int band, boolean isBridged, int type) {
+            @SoftApConfiguration.BandType int band, boolean isBridged,
+            @NonNull SoftApManager softApManager,
+            int type) {
         synchronized (mLock) {
             if (!startHal()) {
                 Log.e(TAG, "Failed to start Hal");
@@ -1360,7 +1367,7 @@ public class WifiNative {
                 return null;
             }
             iface.externalListener = interfaceCallback;
-            iface.name = createApIface(iface, requestorWs, band, isBridged, type);
+            iface.name = createApIface(iface, requestorWs, band, isBridged, softApManager, type);
             if (TextUtils.isEmpty(iface.name)) {
                 Log.e(TAG, "Failed to create AP iface in vendor HAL");
                 mIfaceMgr.removeIface(iface.id);
@@ -4404,16 +4411,19 @@ public class WifiNative {
 
     private String createVendorBridgeIface(@NonNull Iface iface,
             @NonNull WorkSource requestorWs,
+            @NonNull SoftApManager softApManager,
             @SoftApConfiguration.BandType int band) {
 
         // create 2 Ap interfaces
         mdualApInterfaces[0] = mWifiVendorHal.createApIface(
-              new InterfaceDestoyedListenerInternal(iface.id), requestorWs, band, false);
+              new InterfaceDestoyedListenerInternal(iface.id), requestorWs, band, false,
+              softApManager);
         if (TextUtils.isEmpty(mdualApInterfaces[0])) {
             return null;
         }
         mdualApInterfaces[1] = mWifiVendorHal.createApIface(
-              new InterfaceDestoyedListenerInternal(iface.id), requestorWs, band, false);
+              new InterfaceDestoyedListenerInternal(iface.id), requestorWs, band, false,
+              softApManager);
         if (TextUtils.isEmpty(mdualApInterfaces[1])) {
             mWifiVendorHal.removeApIface(mdualApInterfaces[0]);
             return null;
