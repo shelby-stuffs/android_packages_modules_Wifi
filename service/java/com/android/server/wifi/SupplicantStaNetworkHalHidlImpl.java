@@ -278,8 +278,7 @@ public class SupplicantStaNetworkHalHidlImpl {
             if (config == null) return false;
             /** SSID */
             if (config.SSID != null) {
-                String ssid = WifiGbk.getRealSsid(config); // wifigbk++
-                if (!setSsid(NativeUtil.decodeSsid(ssid))) {
+                if (!setSsid(NativeUtil.decodeSsid(config.SSID))) {
                     Log.e(TAG, "failed to set SSID: " + config.SSID);
                     return false;
                 }

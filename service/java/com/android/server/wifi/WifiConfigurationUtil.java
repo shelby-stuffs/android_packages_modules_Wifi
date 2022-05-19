@@ -62,8 +62,7 @@ public class WifiConfigurationUtil {
      */
     private static final int ENCLOSING_QUOTES_LEN = 2;
     private static final int SSID_UTF_8_MIN_LEN = 1 + ENCLOSING_QUOTES_LEN;
-    private static final int SSID_UTF_8_MAX_LEN = // wifigbk++
-                        WifiGbk.MAX_SSID_UTF_LENGTH + ENCLOSING_QUOTES_LEN;
+    private static final int SSID_UTF_8_MAX_LEN = 32 + ENCLOSING_QUOTES_LEN;
     private static final int SSID_HEX_MIN_LEN = 2;
     private static final int SSID_HEX_MAX_LEN = 64;
     private static final int PSK_ASCII_MIN_LEN = 8 + ENCLOSING_QUOTES_LEN;
