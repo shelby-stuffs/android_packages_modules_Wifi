@@ -236,7 +236,7 @@ public class ConnectedFreqManager {
      * @param configKey
      */
     public void removeNetwork(String configKey) {
-        if (configKey != null && !TextUtils.isEmpty(configKey))
+        if (configKey != null && !TextUtils.isEmpty(configKey) && mNetworkList != null)
             mNetworkList.remove(configKey);
     }
 
