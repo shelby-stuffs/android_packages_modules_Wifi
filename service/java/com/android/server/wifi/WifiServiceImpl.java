@@ -1216,8 +1216,8 @@ public class WifiServiceImpl extends BaseWifiService {
     @AnyThread
     private void setWifiEnabledInternal(String packageName, boolean enable,
             int callingUid, int callingPid, boolean isPrivileged) {
-        mLog.info("setWifiEnabled package=% uid=% enable=%").c(packageName)
-                .c(callingUid).c(enable).flush();
+        mLog.info("setWifiEnabled package=% uid=% enable=% isPrivileged=%").c(packageName)
+                .c(callingUid).c(enable).c(isPrivileged).flush();
         long ident = Binder.clearCallingIdentity();
         try {
             if (!mSettingsStore.handleWifiToggled(enable)) {
@@ -3210,7 +3210,7 @@ public class WifiServiceImpl extends BaseWifiService {
             hasPermission = mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid);
         }
         if (!hasPermission) {
-            throw new SecurityException(TAG + ": Permission denied");
+            throw new SecurityException(TAG + "Uid " + uid + ": Permission denied");
         }
         if (isVerboseLoggingEnabled()) {
             mLog.info("setSsidsAllowlist uid=%").c(uid).flush();
@@ -3233,7 +3233,7 @@ public class WifiServiceImpl extends BaseWifiService {
             hasPermission = mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid);
         }
         if (!hasPermission) {
-            throw new SecurityException(TAG + ": Permission denied");
+            throw new SecurityException(TAG + " Uid " + uid + ": Permission denied");
         }
         if (isVerboseLoggingEnabled()) {
             mLog.info("getSsidsAllowlist uid=%").c(uid).flush();
@@ -3633,6 +3633,12 @@ public class WifiServiceImpl extends BaseWifiService {
         if (!isTargetSdkLessThanQOrPrivileged(
                 packageName, Binder.getCallingPid(), callingUid)) {
             mLog.info("enableNetwork not allowed for uid=%").c(callingUid).flush();
+            return false;
+        }
+        WifiConfiguration configuration = mWifiConfigManager.getConfiguredNetwork(netId);
+        if (mWifiPermissionsUtil.isAdminRestrictedNetwork(configuration)) {
+            mLog.info("enableNetwork not allowed for admin restricted network Id=%")
+                    .c(netId).flush();
             return false;
         }
 
@@ -6106,7 +6112,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (!mWifiPermissionsUtil.checkRequestCompanionProfileAutomotiveProjectionPermission(uid)
                 || !mWifiPermissionsUtil.checkCallersLocationPermission(packageName, featureId,
                 uid, false, null)) {
-            throw new SecurityException("Caller has no permission");
+            throw new SecurityException(TAG + " Caller uid " + uid + " has no permission");
         }
         if (isVerboseLoggingEnabled()) {
             mLog.info("setExternalPnoScanRequest uid=%").c(uid).flush();
@@ -6157,7 +6163,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (!mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 && !mWifiPermissionsUtil.checkNetworkStackPermission(uid)
                 && !mWifiPermissionsUtil.checkMainlineNetworkStackPermission(uid)) {
-            throw new SecurityException("Caller has no permission");
+            throw new SecurityException("Caller uid " + uid + " has no permission");
         }
 
         if (isVerboseLoggingEnabled()) {
@@ -6891,7 +6897,8 @@ public class WifiServiceImpl extends BaseWifiService {
         enforceAccessPermission();
         int callingUid = getMockableCallingUid();
         if (!mWifiPermissionsUtil.checkManageWifiInterfacesPermission(callingUid)) {
-            throw new SecurityException("Missing MANAGE_WIFI_INTERFACES permission");
+            throw new SecurityException(
+                    TAG + " Uid " + callingUid + " Missing MANAGE_WIFI_INTERFACES permission");
         }
         mWifiPermissionsUtil.checkPackage(callingUid, packageName);
         mWifiThreadRunner.post(() -> {
