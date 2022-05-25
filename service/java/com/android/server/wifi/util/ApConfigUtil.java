@@ -884,7 +884,7 @@ public class ApConfigUtil {
             features |= SoftApCapability.SOFTAP_FEATURE_WPA3_OWE_TRANSITION;
         }
 
-        if (isWpa3OweSupported(context)) {
+        if (isOweSupported(context)) {
             Log.d(TAG, "Update Softap capability, add OWE feature support");
             features |= SoftApCapability.SOFTAP_FEATURE_WPA3_OWE;
         }
@@ -1065,14 +1065,14 @@ public class ApConfigUtil {
     }
 
     /**
-     * Helper function to get OWE support or not.
+     * Helper function to get OWE is support or not.
      *
      * @param context the caller context used to get value from resource file.
      * @return true if supported, false otherwise.
      */
-    public static boolean isWpa3OweSupported(@NonNull Context context) {
+    public static boolean isOweSupported(@NonNull Context context) {
         return context.getResources().getBoolean(
-                R.bool.config_vendor_wifi_softap_owe_supported);
+                R.bool.config_wifiSoftapOweSupported);
     }
 
     /**
@@ -1360,7 +1360,6 @@ public class ApConfigUtil {
     public static boolean isNonPasswordAP(int security) {
         return (security == SoftApConfiguration.SECURITY_TYPE_OPEN
                 || security == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION
-                || security == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE
-                || security == SoftApConfiguration.SECURITY_TYPE_OWE);
+                || security == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE);
     }
 }

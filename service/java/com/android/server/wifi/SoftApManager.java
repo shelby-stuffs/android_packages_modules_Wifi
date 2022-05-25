@@ -449,11 +449,7 @@ public class SoftApManager implements ActiveModeManager {
 
     public boolean isBridgedMode() {
         return (SdkLevel.isAtLeastS() && mCurrentSoftApConfiguration != null
-                && (mCurrentSoftApConfiguration.getBands().length > 1
-                    || (mCurrentSoftApConfiguration.getSecurityType()
-                        == SoftApConfiguration.SECURITY_TYPE_OWE
-                       && (mCurrentSoftApConfiguration.getBand()
-                           & SoftApConfiguration.BAND_6GHZ) == 0)));
+                && (mCurrentSoftApConfiguration.getBands().length > 1));
     }
 
     private boolean isBridgeRequired() {

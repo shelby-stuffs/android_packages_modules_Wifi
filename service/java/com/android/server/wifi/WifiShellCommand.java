@@ -1883,7 +1883,7 @@ public class WifiShellCommand extends BasicShellCommandHandler {
             configBuilder.setPassphrase(null,
                     SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION);
         } else if (TextUtils.equals(type, "owe")) {
-            configBuilder.setPassphrase(null, SoftApConfiguration.SECURITY_TYPE_OWE);
+            configBuilder.setPassphrase(null, SoftApConfiguration.SECURITY_TYPE_WPA3_OWE);
         } else {
             throw new IllegalArgumentException("Unknown network type " + type);
         }
