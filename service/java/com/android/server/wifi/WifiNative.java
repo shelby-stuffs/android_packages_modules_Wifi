@@ -4525,7 +4525,10 @@ public class WifiNative {
                 Log.e(TAG, "Failed to set interface up - " + bridgeInterface);
                 return false;
             }
-        } else if (mHostapdHal.useVendorHostapdHal()) {
+        } else if (mHostapdHal.useVendorHostapdHal() ||
+                   /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+                   (HostapdHalHidlImp.serviceDeclared() && config != null &&
+                    config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE)) {
             if (!mHostapdHal.addVendorAccessPoint(ifaceName, config, callback::onFailure)) {
                 Log.e(TAG, "Failed to addVendorAP - " + ifaceName);
                 return false;

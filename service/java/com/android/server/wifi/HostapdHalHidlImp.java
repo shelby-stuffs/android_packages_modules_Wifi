@@ -1387,6 +1387,7 @@ public class HostapdHalHidlImp implements IHostapdHal {
                   vendor.qti.hardware.wifi.hostapd.V1_2.IHostapdVendor.VendorEncryptionType.SAE_TRANSITION;
                 break;
             case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION:
+            case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE:
                 encryptionType = vendor.qti.hardware.wifi.hostapd.V1_1.IHostapdVendor.VendorEncryptionType.OWE;
                 break;
             default:
