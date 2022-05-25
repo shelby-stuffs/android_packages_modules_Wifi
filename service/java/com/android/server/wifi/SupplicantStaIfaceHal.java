@@ -113,6 +113,7 @@ public class SupplicantStaIfaceHal {
 
     private final Object mLock = new Object();
     private boolean mVerboseLoggingEnabled = false;
+    private int mhalNetworksSize = 0;
 
     // Supplicant HAL interface objects
     private IServiceManager mIServiceManager = null;
@@ -1211,6 +1212,12 @@ public class SupplicantStaIfaceHal {
             }
             if (!saveSuccess) {
                 loge("Failed to save variables for: " + config.getProfileKey());
+                if (mhalNetworksSize > 0) {
+                    logd("UTF-8 or GBK encoding network profile is added, " +
+                            "do not remove all networks");
+                    return null;
+                }
+
                 if (!removeAllNetworks(ifaceName)) {
                     loge("Failed to remove all networks on failure.");
                 }
@@ -1233,7 +1240,7 @@ public class SupplicantStaIfaceHal {
      */
     public boolean connectToNetwork(@NonNull String ifaceName, @NonNull WifiConfiguration config) {
         synchronized (mLock) {
-            int halNetworksSize = 0;
+            mhalNetworksSize = 0;
             logd("connectToNetwork " + config.getProfileKey());
             WifiConfiguration currentConfig = getCurrentNetworkLocalConfig(ifaceName);
             if (WifiConfigurationUtil.isSameNetwork(config, currentConfig)) {
@@ -1274,7 +1281,7 @@ public class SupplicantStaIfaceHal {
                             .getKey());
                     } else {
                         pair2.first.enable(true);
-                        halNetworksSize ++;
+                        mhalNetworksSize++;
                     }
                 } catch (IllegalArgumentException e) { /* empty */ }
                 // wifigbk--
@@ -1289,10 +1296,10 @@ public class SupplicantStaIfaceHal {
                     pair = pair2;
                 } else {
                     pair.first.enable(true);
-                    halNetworksSize ++;
+                    mhalNetworksSize++;
                     // wifigbk--
                 }
-                pair.first.setHalNetworksSize(halNetworksSize);
+                pair.first.setHalNetworksSize(mhalNetworksSize);
                 mCurrentNetworkRemoteHandles.put(ifaceName, pair.first);
                 mCurrentNetworkLocalConfigs.put(ifaceName, pair.second);
             }
@@ -1317,7 +1324,7 @@ public class SupplicantStaIfaceHal {
             }
 
             // wifgbk++
-            if (halNetworksSize == 2) {
+            if (mhalNetworksSize == 2) {
                 if (!reconnect(ifaceName)) {
                     loge("Failed to reconnect network configuration: " + config.getKey());
                     return false;
