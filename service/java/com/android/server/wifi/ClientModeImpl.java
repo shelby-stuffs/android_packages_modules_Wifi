@@ -867,6 +867,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mNotificationManager,
                 mWifiInjector.getWifiDialogManager(),
                 isTrustOnFirstUseSupported(),
+                mWifiGlobals.isInsecureEnterpriseConfigurationAllowed(),
                 mInsecureEapNetworkHandlerCallbacksImpl,
                 mInterfaceName,
                 getHandler());
