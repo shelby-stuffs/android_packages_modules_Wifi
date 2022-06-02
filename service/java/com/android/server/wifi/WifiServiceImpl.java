@@ -6323,24 +6323,6 @@ public class WifiServiceImpl extends BaseWifiService {
         return mWifiThreadRunner.call(()-> mWifiInjector.getWakeupController().isEnabled(), false);
     }
 
-    /*
-     * Gets SoftAP Wi-Fi Standard
-     * @return Wi-Fi standard if SoftAp enabled or -1.
-     */
-    @Override
-    public int getSoftApWifiStandard() {
-        return -1;
-    }
-
-    /*
-     * Check if the driver supports 11ax ready
-     * @return {true} if supported, {false} otherwise.
-     */
-    @Override
-    public boolean isVht8ssCapableDevice() {
-        return false;
-    }
-
     /**
      * See {@link android.net.wifi.WifiManager#setCarrierNetworkOffloadEnabled(int, boolean, boolean)}
      */
