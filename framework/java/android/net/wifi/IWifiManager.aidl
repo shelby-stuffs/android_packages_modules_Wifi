@@ -384,10 +384,6 @@ interface IWifiManager
 
     List<WifiAvailableChannel> getUsableChannels(int band, int mode, int filter);
 
-    int getSoftApWifiStandard();
-
-    boolean isVht8ssCapableDevice();
-
     boolean isExtendingWifi();
 
     boolean isWifiCoverageExtendFeatureEnabled();
