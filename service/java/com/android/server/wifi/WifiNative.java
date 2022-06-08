@@ -4488,6 +4488,14 @@ public class WifiNative {
         return true;
     }
 
+    public boolean useVendorHostapdHalForOwe(SoftApConfiguration config) {
+        return mHostapdHal.useVendorHostapdHal() ||
+            /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+            (HostapdHalHidlImp.serviceDeclared() && config != null
+            && (config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE
+            || config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION));
+    }
+
     private boolean addAccessPoint(@NonNull String ifaceName,
           @NonNull SoftApConfiguration config, boolean isMetered, SoftApHalCallback callback) {
         if (isVendorBridgeModeActive()) {
