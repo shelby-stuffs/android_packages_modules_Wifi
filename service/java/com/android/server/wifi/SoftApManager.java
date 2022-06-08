@@ -1460,6 +1460,17 @@ public class SoftApManager implements ActiveModeManager {
                 mConnectedClientWithApInfoMap.clear();
                 mPendingDisconnectClients.clear();
                 mEverReportMetricsForMaxClient = false;
+                if (mWifiNative.useVendorHostapdHalForOwe(mCurrentSoftApConfiguration)) {
+                        if (!mSoftApTimeoutMessageMap.containsKey(mApInterfaceName)) {
+                            mSoftApTimeoutMessageMap.put(mApInterfaceName, new WakeupMessage(
+                                   mContext, mStateMachine.getHandler(),
+                                   SOFT_AP_SEND_MESSAGE_TIMEOUT_TAG + mApInterfaceName,
+                                   SoftApStateMachine.CMD_NO_ASSOCIATED_STATIONS_TIMEOUT));
+                            Log.d(getTag(), "Created map timeout entry for " + mApInterfaceName);
+                        }
+                    Log.d(getTag(), "Use Vendor Hostapd Hal. Schedule timeout");
+                    rescheduleTimeoutMessages(mApInterfaceName);
+                }
             }
 
             @Override
