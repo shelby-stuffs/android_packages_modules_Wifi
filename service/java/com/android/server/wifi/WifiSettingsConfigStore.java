@@ -125,9 +125,6 @@ public class WifiSettingsConfigStore {
      */
     public static final Key<String> WIFI_STATIC_CHIP_INFO = new Key<>("wifi_static_chip_info", "");
 
-    public static final Key<Boolean> WIFI_COVERAGE_EXTEND_FEATURE_ENABLED =
-            new Key<>("wifi_coverage_extend_feature_enabled", false);
-
     /******** Wifi shared pref keys ***************/
 
     private final Context mContext;
