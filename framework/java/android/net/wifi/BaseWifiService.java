@@ -866,21 +866,6 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public boolean isExtendingWifi() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isWifiCoverageExtendFeatureEnabled() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void enableWifiCoverageExtendFeature(boolean enable) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean isWifiPasspointEnabled() {
         throw new UnsupportedOperationException();
     }

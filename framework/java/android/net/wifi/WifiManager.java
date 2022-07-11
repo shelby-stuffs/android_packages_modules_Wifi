@@ -9402,50 +9402,6 @@ public class WifiManager {
     }
 
     /**
-     * Check the WifiSharing mode.
-     *
-     * @return true if Current Sta network connected with extending coverage
-     * option. false if it is not.
-     *
-     * @hide no intent to publish
-     */
-     public boolean isExtendingWifi() {
-         try {
-             return mService.isExtendingWifi();
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
-
-    /**
-     * Check Wifi coverage extend feature enabled or not.
-     *
-     * @return true if Wifi extend feature is enabled.
-     *
-     * @hide no intent to publish
-     */
-     public boolean isWifiCoverageExtendFeatureEnabled() {
-         try {
-             return mService.isWifiCoverageExtendFeatureEnabled();
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
-
-    /**
-     * Enable/disable Wifi coverage extend feature.
-     *
-     * @hide no intent to publish
-     */
-     public void enableWifiCoverageExtendFeature(boolean enable) {
-         try {
-             mService.enableWifiCoverageExtendFeature(enable);
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
-
-    /**
      * If the device supports Wi-Fi Passpoint, the user can explicitly enable or disable it.
      * That status can be queried using this method.
      * @return {@code true} if Wi-Fi Passpoint is enabled
