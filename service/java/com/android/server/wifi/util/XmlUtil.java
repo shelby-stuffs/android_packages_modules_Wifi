@@ -2212,6 +2212,8 @@ public class XmlUtil {
                 }
                 if (!ApConfigUtil.isNonPasswordAP(securityType)) {
                     softApConfigBuilder.setPassphrase(passphrase, securityType);
+                } else {
+                    softApConfigBuilder.setPassphrase(null, securityType);
                 }
                 if (!autoShutdownEnabledTagPresent) {
                     // Migrate data out of settings.
