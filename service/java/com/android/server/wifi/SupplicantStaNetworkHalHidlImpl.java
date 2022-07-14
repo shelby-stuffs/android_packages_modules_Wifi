@@ -30,6 +30,7 @@ import android.net.wifi.WifiSsid;
 import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
+import android.telephony.SubscriptionManager;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.wifi.util.ArrayUtils;
@@ -137,6 +138,7 @@ public class SupplicantStaNetworkHalHidlImpl {
     private String mWapiCertSuite;
     private long mAdvanceKeyMgmtFeatures;
     private ISupplicantVendorStaNetwork mISupplicantVendorStaNetwork;
+    private final WifiCarrierInfoManager mWifiCarrierInfoManager;
 
     SupplicantStaNetworkHalHidlImpl(ISupplicantStaNetwork iSupplicantStaNetwork, String ifaceName,
             Context context, WifiMonitor monitor, WifiGlobals wifiGlobals,
@@ -147,6 +149,7 @@ public class SupplicantStaNetworkHalHidlImpl {
         mWifiMonitor = monitor;
         mWifiGlobals = wifiGlobals;
         mAdvanceKeyMgmtFeatures = advanceKeyMgmtFeature;
+        mWifiCarrierInfoManager = WifiInjector.getInstance().getWifiCarrierInfoManager();
     }
 
     /**
@@ -491,6 +494,14 @@ public class SupplicantStaNetworkHalHidlImpl {
                     return true;
                 } else if (!saveWifiEnterpriseConfig(config.SSID, config.enterpriseConfig)) {
                     return false;
+                } else if (config.enterpriseConfig.isAuthenticationSimBased()) {
+                    /* SIM number for EAP_PROXY */
+                    int simIndex = mWifiCarrierInfoManager
+                               .getMatchingSimSlotIndex(config.carrierId, config.subscriptionId);
+                    if (simIndex != SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                            && !setVendorSimNumber(simIndex + 1)) {
+                         Log.e(TAG, config.SSID + ": failed to set VendorSimNumber : " + simIndex + 1);
+                    }
                 }
             }
 
