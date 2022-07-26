@@ -155,7 +155,11 @@ public class WifiCountryCode {
     private class CountryChangeListenerInternal implements ChangeListener {
         @Override
         public void onDriverCountryCodeChanged(String country) {
-            if (TextUtils.equals(country, mLastActiveDriverCountryCode)) {
+            if (SdkLevel.isAtLeastT()) {
+                if (TextUtils.equals(country, mDriverCountryCode)) {
+                    return;
+                }
+            } else if (TextUtils.equals(country, mLastActiveDriverCountryCode)) {
                 return;
             }
             Log.i(TAG, "Receive onDriverCountryCodeChanged " + country);
