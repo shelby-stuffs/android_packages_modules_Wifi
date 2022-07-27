@@ -1336,6 +1336,131 @@ public class HalDeviceManager {
         }
     }
 
+    /**
+     * Registers event listeners on all IWifiChips after a successful start!
+     *
+     * We don't need the listeners since any callbacks are just confirmation of status codes we
+     * obtain directly from mode changes or interface creation/deletion.
+     *
+     * Relies (to the degree we care) on the service removing all listeners when Wi-Fi is stopped.
+     */
+    private void initIWifiChipListeners() {
+        if (mDbg) Log.d(TAG, "initIWifiChipListeners");
+
+        synchronized (mLock) {
+            try {
+                Mutable<Boolean> statusOk = new Mutable<>(false);
+                Mutable<ArrayList<Integer>> chipIdsResp = new Mutable<>();
+
+                // get all chip IDs
+                mWifi.getChipIds((WifiStatus status, ArrayList<Integer> chipIds) -> {
+                    statusOk.value = false;
+                    if (status.code == WifiStatusCode.SUCCESS) {
+                        if (chipIds == null) {
+                            Log.wtf(TAG, "getChipIds failed, chipIds is null");
+                            return;
+                        }
+                        statusOk.value = true;
+                    }
+                    if (statusOk.value) {
+                        chipIdsResp.value = chipIds;
+                    } else {
+                        Log.e(TAG, "getChipIds failed: " + statusString(status));
+                    }
+                });
+                if (!statusOk.value) {
+                    return;
+                }
+
+                Log.d(TAG, "getChipIds=" + chipIdsResp.value);
+                if (chipIdsResp.value.size() == 0) {
+                    Log.e(TAG, "Should have at least 1 chip!");
+                    return;
+                }
+
+                // register a callback for each chip
+                Mutable<IWifiChip> chipResp = new Mutable<>();
+                for (Integer chipId: chipIdsResp.value) {
+                    mWifi.getChip(chipId, (WifiStatus status, IWifiChip chip) -> {
+                        statusOk.value = false;
+                        if (status.code == WifiStatusCode.SUCCESS) {
+                            if (chip == null) {
+                                Log.wtf(TAG, "getChip failed, chip " + chipId + " is null");
+                            }
+                            statusOk.value = true;
+                        }
+                        if (statusOk.value) {
+                            chipResp.value = chip;
+                        } else {
+                            Log.e(TAG, "getChip failed: " + statusString(status));
+                        }
+                    });
+                    if (!statusOk.value) {
+                        continue; // still try next one?
+                    }
+
+                    android.hardware.wifi.V1_4.IWifiChipEventCallback.Stub callback =
+                            new android.hardware.wifi.V1_4.IWifiChipEventCallback.Stub() {
+                                @Override
+                                public void onChipReconfigured(int modeId) {
+                                    if (mDbg) Log.d(TAG, "onChipReconfigured: modeId=" + modeId);
+                                    mEventHandler.post(() -> {
+                                        reloadAllChipInfo();
+                                    });
+                                }
+
+                                @Override
+                                public void onChipReconfigureFailure(WifiStatus status) {
+                                    if (mDbg) Log.e(TAG, "onChipReconfigureFailure: status=" + statusString(status));
+                                }
+
+                                @Override
+                                public void onIfaceAdded(int type, String name) {
+                                    if (mDbg) Log.d(TAG, "onIfaceAdded: type=" + type + ", name=" + name);
+                                }
+
+                                @Override
+                                public void onIfaceRemoved(int type, String name) {
+                                    if (mDbg) Log.d(TAG, "onIfaceRemoved: type=" + type + ", name=" + name);
+                                }
+
+                                @Override
+                                public void onDebugRingBufferDataAvailable(
+                                        WifiDebugRingBufferStatus status,
+                                        ArrayList<Byte> data) {}
+
+                                @Override
+                                public void onDebugErrorAlert(int errorCode,
+                                        ArrayList<Byte> debugData)
+                                        throws RemoteException {}
+
+                                @Override
+                                public void onRadioModeChange(
+                                        ArrayList<android.hardware.wifi.V1_2.IWifiChipEventCallback.RadioModeInfo>
+                                        radioModeInfoList) {}
+
+                                @Override
+                                public void onRadioModeChange_1_4(ArrayList<RadioModeInfo> radioModeInfoList) {}
+                            };
+                    android.hardware.wifi.V1_4.IWifiChip chip14 =
+                            android.hardware.wifi.V1_4.IWifiChip.castFrom(chipResp.value);
+                    if (chip14 == null) {
+                        Log.e(TAG, "V1_4.IWifiChip is null");
+                        return;
+                    }
+                    WifiStatus status = chip14.registerEventCallback_1_4(callback);
+                    if (status.code != WifiStatusCode.SUCCESS) {
+                        Log.e(TAG, "registerEventCallback_1_4 failed: " + statusString(status));
+                        continue; // still try next one?
+                    }
+                }
+            } catch (RemoteException e) {
+                Log.e(TAG, "initIWifiChipListeners: exception: " + e);
+                return;
+            }
+        }
+    }
+
     @Nullable
     private WifiChipInfo[] mCachedWifiChipInfos = null;
 
@@ -1362,6 +1487,22 @@ public class HalDeviceManager {
      */
     private WifiChipInfo[] getAllChipInfo() {
         if (VDBG) Log.d(TAG, "getAllChipInfo");
+
+        boolean shouldUseCachedStaticChipCombination = getStaticChipInfos().length > 0;
+        return getAllChipInfo(shouldUseCachedStaticChipCombination);
+    }
+
+
+    /**
+     * Get current information about all the chips in the system: modes, current mode (if any), and
+     * any existing interfaces.
+     *
+     * Intended to be called whenever we need to configure the chips - information is NOT cached (to
+     * reduce the likelihood that we get out-of-sync).
+     */
+    private WifiChipInfo[] getAllChipInfo(boolean useCachedStaticChipCombination) {
+        if (VDBG) Log.d(TAG, "getAllChipInfo useCachedStaticChipCombination:"
+                             + useCachedStaticChipCombination);
 
         synchronized (mLock) {
             if (!isWifiStarted()) {
@@ -1649,6 +1790,15 @@ public class HalDeviceManager {
                     chipInfo.ifaces[HDM_CREATE_IFACE_AP_BRIDGE] = bridgedApIfaces;
                     chipInfo.ifaces[HDM_CREATE_IFACE_P2P] = p2pIfaces;
                     chipInfo.ifaces[HDM_CREATE_IFACE_NAN] = nanIfaces;
+
+
+                    if (useCachedStaticChipCombination) {
+                        for (StaticChipInfo staticChipInfo : getStaticChipInfos()) {
+                            if (staticChipInfo.getChipId() != chipId)
+                                continue;
+                            chipInfo.availableModes = staticChipInfo.getAvailableModes();
+                        }
+                    }
                 }
                 return chipsInfo;
             } catch (RemoteException e) {
@@ -1846,17 +1996,14 @@ public class HalDeviceManager {
                         WifiStatus status = mWifi.start();
                         if (status.code == WifiStatusCode.SUCCESS) {
                             initIWifiChipDebugListeners();
+                            initIWifiChipListeners();
                             managerStatusListenerDispatch();
                             if (triedCount != 0) {
                                 Log.d(TAG, "start IWifi succeeded after trying "
                                          + triedCount + " times");
                             }
                             WifiChipInfo[] wifiChipInfos = getAllChipInfo();
-                            if (wifiChipInfos != null) {
-                                mCachedStaticChipInfos =
-                                        convertWifiChipInfoToStaticChipInfos(getAllChipInfo());
-                                saveStaticChipInfoToStore(mCachedStaticChipInfos);
-                            } else {
+                            if (wifiChipInfos == null) {
                                 Log.e(TAG, "Started wifi but could not get current chip info.");
                             }
                             return true;
@@ -3475,6 +3622,36 @@ public class HalDeviceManager {
             }
 
             return true;
+        }
+    }
+
+    private static boolean usingDriverAdvertisedIfaceCombination = false;
+
+    /**
+     * Reload the availableChip combination once driver advertised combinations are available.
+     *
+     * This reload should happen once every boot up (first interface load).
+     * Both static entries and cached entries are updated.
+     */
+    private void reloadAllChipInfo() {
+        // Do not reload if already done once after boot up.
+        if (usingDriverAdvertisedIfaceCombination) return;
+
+        synchronized (mLock) {
+            // Get Chip Interface Combinations from WifiHal.
+            WifiChipInfo[] wifiChipInfos = getAllChipInfo(false);
+
+            if (wifiChipInfos == null) {
+                Log.e(TAG, "reloadAllChipInfo: no chip info found");
+                return;
+            }
+
+            Log.d(TAG, "reloadAllChipInfo with Driver Advertised IfaceCombination");
+
+            mCachedStaticChipInfos = convertWifiChipInfoToStaticChipInfos(wifiChipInfos);
+            saveStaticChipInfoToStore(mCachedStaticChipInfos);
+            mCachedWifiChipInfos = null;
+            usingDriverAdvertisedIfaceCombination = true;
         }
     }
 }
