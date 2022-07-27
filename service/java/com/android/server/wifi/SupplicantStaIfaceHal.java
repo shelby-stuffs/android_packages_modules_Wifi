@@ -1240,7 +1240,6 @@ public class SupplicantStaIfaceHal {
      */
     public boolean connectToNetwork(@NonNull String ifaceName, @NonNull WifiConfiguration config) {
         synchronized (mLock) {
-            mhalNetworksSize = 0;
             logd("connectToNetwork " + config.getProfileKey());
             WifiConfiguration currentConfig = getCurrentNetworkLocalConfig(ifaceName);
             if (WifiConfigurationUtil.isSameNetwork(config, currentConfig)) {
@@ -1261,6 +1260,7 @@ public class SupplicantStaIfaceHal {
                     mCurrentNetworkLocalConfigs.put(ifaceName, new WifiConfiguration(config));
                 }
             } else {
+                mhalNetworksSize = 0;
                 mCurrentNetworkRemoteHandles.remove(ifaceName);
                 mCurrentNetworkLocalConfigs.remove(ifaceName);
                 mLinkedNetworkLocalAndRemoteConfigs.remove(ifaceName);
