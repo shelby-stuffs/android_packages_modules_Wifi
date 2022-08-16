@@ -287,6 +287,7 @@ public class WifiServiceImpl extends BaseWifiService {
     private final SimRequiredNotifier mSimRequiredNotifier;
     private final MakeBeforeBreakManager mMakeBeforeBreakManager;
     private final LastCallerInfoManager mLastCallerInfoManager;
+    private boolean mIsBootComplete;
 
     /**
      * The wrapper of SoftApCallback is used in WifiService internally.
@@ -563,6 +564,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mCountryCode.registerListener(new CountryCodeListenerProxy());
             mTetheredSoftApTracker.handleBootCompleted();
             mWifiInjector.getSarManager().handleBootCompleted();
+            mIsBootComplete = true;
 
             handleBootCompletedForCoverageExtendFeature();
         });
@@ -1310,10 +1312,8 @@ public class WifiServiceImpl extends BaseWifiService {
         private boolean mIsBridgedMode = false;
         // TODO: We need to maintain two capability. One for LTE + SAP and one for WIFI + SAP
         private SoftApCapability mTetheredSoftApCapability = null;
-        private boolean mIsBootComplete = false;
 
         public void handleBootCompleted() {
-            mIsBootComplete = true;
             updateAvailChannelListInSoftApCapability();
         }
 
@@ -3834,8 +3834,12 @@ public class WifiServiceImpl extends BaseWifiService {
     public int handleShellCommand(@NonNull ParcelFileDescriptor in,
             @NonNull ParcelFileDescriptor out, @NonNull ParcelFileDescriptor err,
             @NonNull String[] args) {
-        WifiShellCommand shellCommand =  new WifiShellCommand(mWifiInjector, this, mContext,
-                mWifiGlobals, mWifiThreadRunner);
+        if (!mIsBootComplete) {
+            Log.w(TAG, "Received shell command when boot is not complete!");
+            return -1;
+        }
+
+        WifiShellCommand shellCommand =  mWifiInjector.makeWifiShellCommand(this);
         return shellCommand.exec(this, in.getFileDescriptor(), out.getFileDescriptor(),
                 err.getFileDescriptor(), args);
     }
