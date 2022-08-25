@@ -867,6 +867,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mNotificationManager,
                 mWifiInjector.getWifiDialogManager(),
                 isTrustOnFirstUseSupported(),
+                mWifiGlobals.isInsecureEnterpriseConfigurationAllowed(),
                 mInsecureEapNetworkHandlerCallbacksImpl,
                 mInterfaceName,
                 getHandler());
@@ -1306,12 +1307,13 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      */
     private void connectToUserSelectNetwork(int netId, int uid, boolean forceReconnect,
             @NonNull String packageName) {
-        logd("connectToUserSelectNetwork netId " + netId + ", uid " + uid + ", package "
-                + packageName + ", forceReconnect = " + forceReconnect);
         if (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)) {
             mIsUserSelected = true;
         }
+        logd("connectToUserSelectNetwork netId " + netId + ", uid " + uid + ", package "
+                + packageName + ", forceReconnect = " + forceReconnect + ", isUserSelected = "
+                + mIsUserSelected);
         updateSaeAutoUpgradeFlagForUserSelectNetwork(netId);
         if (!forceReconnect && (mLastNetworkId == netId || mTargetNetworkId == netId)) {
             // We're already connecting/connected to the user specified network, don't trigger a
@@ -1383,11 +1385,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mRxTimeLastReport = mRxTime;
         int period = (int) (now - mLastOntimeReportTimeStamp);
         mLastOntimeReportTimeStamp = now;
-        sb.append(String.format("[on:%d tx:%d rx:%d period:%d]", on, tx, rx, period));
+        sb.append("[on:" + on + " tx:" + tx + " rx:" + rx + " period:" + period + "]");
         // Report stats since Screen State Changed
         on = mOnTime - mOnTimeScreenStateChange;
         period = (int) (now - mLastScreenStateChangeTimeStamp);
-        sb.append(String.format(" from screen [on:%d period:%d]", on, period));
+        sb.append(" from screen [on:" + on + " period:" + period + "]");
         return sb.toString();
     }
 
@@ -2009,16 +2011,19 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 sb.append(" f=").append(mWifiInfo.getFrequency());
                 sb.append(" sc=").append(mWifiInfo.getScore());
                 sb.append(" link=").append(mWifiInfo.getLinkSpeed());
-                sb.append(String.format(" tx=%.1f,", mWifiInfo.getSuccessfulTxPacketsPerSecond()));
-                sb.append(String.format(" %.1f,", mWifiInfo.getRetriedTxPacketsPerSecond()));
-                sb.append(String.format(" %.1f ", mWifiInfo.getLostTxPacketsPerSecond()));
-                sb.append(String.format(" rx=%.1f", mWifiInfo.getSuccessfulRxPacketsPerSecond()));
-                sb.append(String.format(" bcn=%d", mRunningBeaconCount));
+                sb.append(" tx=").append(
+                        ((int) (mWifiInfo.getSuccessfulTxPacketsPerSecond() * 10)) / 10.0);
+                sb.append(", ").append(
+                        ((int) (mWifiInfo.getRetriedTxPacketsPerSecond() * 10)) / 10.0);
+                sb.append(", ").append(((int) (mWifiInfo.getLostTxPacketsPerSecond() * 10)) / 10.0);
+                sb.append(" rx=").append(
+                        ((int) (mWifiInfo.getSuccessfulRxPacketsPerSecond() * 10)) / 10.0);
+                sb.append(" bcn=" + mRunningBeaconCount);
                 report = reportOnTime();
                 if (report != null) {
                     sb.append(" ").append(report);
                 }
-                sb.append(String.format(" score=%d", mWifiInfo.getScore()));
+                sb.append(" score=" + mWifiInfo.getScore());
                 break;
             case CMD_START_CONNECT:
                 sb.append(" ");
@@ -2103,7 +2108,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 if (mWifiInfo.getBSSID() != null) {
                     sb.append(" ").append(mWifiInfo.getBSSID());
                 }
-                sb.append(String.format(" bcn=%d", mRunningBeaconCount));
+                sb.append(" bcn=" + mRunningBeaconCount);
                 break;
             case CMD_UPDATE_LINKPROPERTIES:
                 sb.append(" ");
@@ -2446,7 +2451,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * Fetch link layer stats, RSSI, linkspeed, and frequency on current connection
      * and update Network capabilities
      */
-    private WifiLinkLayerStats updateLinkLayerStatsRssiSpeedFrequencyCapabilities() {
+    private WifiLinkLayerStats updateLinkLayerStatsRssiSpeedFrequencyCapabilities(long txBytes,
+            long rxBytes) {
         WifiLinkLayerStats stats = getWifiLinkLayerStats();
         WifiNl80211Manager.SignalPollResult pollResult = mWifiNative.signalPoll(mInterfaceName);
         if (pollResult == null) {
@@ -2508,7 +2514,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 // TODO (b/162602799): Do we need to change the update frequency?
                 sendRssiChangeBroadcast(newRssi);
             }
-            updateLinkBandwidthAndCapabilities(stats, newSignalLevel != mLastSignalLevel);
+            updateLinkBandwidthAndCapabilities(stats, newSignalLevel != mLastSignalLevel, txBytes,
+                    rxBytes);
             mLastSignalLevel = newSignalLevel;
         } else {
             mWifiInfo.setRssi(WifiInfo.INVALID_RSSI);
@@ -2526,9 +2533,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     // Update the link bandwidth. If the link bandwidth changes by a large amount or signal level
     // changes, also update network capabilities.
     private void updateLinkBandwidthAndCapabilities(WifiLinkLayerStats stats,
-            boolean hasSignalLevelChanged) {
+            boolean hasSignalLevelChanged, long txBytes, long rxBytes) {
         WifiScoreCard.PerNetwork network = mWifiScoreCard.lookupNetwork(mWifiInfo.getSSID());
-        network.updateLinkBandwidth(mLastLinkLayerStats, stats, mWifiInfo);
+        network.updateLinkBandwidth(mLastLinkLayerStats, stats, mWifiInfo, txBytes, rxBytes);
         int newTxKbps = network.getTxLinkBandwidthKbps();
         int newRxKbps = network.getRxLinkBandwidthKbps();
         int txDeltaKbps = Math.abs(newTxKbps - mLastTxKbps);
@@ -3179,7 +3186,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 WifiScoreCard.NetworkConnectionStats recentStats = mWifiScoreCard.lookupNetwork(
                         ssid).getRecentStats();
                 if (recentStats.getCount(WifiScoreCard.CNT_CONSECUTIVE_CONNECTION_FAILURE)
-                        >= WifiBlocklistMonitor.NUM_CONSECUTIVE_FAILURES_PER_NETWORK_EXP_BACKOFF) {
+                        >= WifiBlocklistMonitor.NUM_CONSECUTIVE_FAILURES_PER_NETWORK_EXP_BACKOFF
+                        && configuration.getNetworkSelectionStatus().isNetworkEnabled()) {
                     mWifiConfigManager.updateNetworkSelectionStatus(mTargetNetworkId,
                             WifiConfiguration.NetworkSelectionStatus.DISABLED_CONSECUTIVE_FAILURES);
                 }
@@ -4916,6 +4924,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                             anonymousIdentity);
                             if (decoratedPseudonym != null) {
                                 anonymousIdentity = decoratedPseudonym;
+                                // propagate to the supplicant to avoid using
+                                // the original anonymous identity for firmware
+                                // roaming.
+                                mWifiNative.setEapAnonymousIdentity(mInterfaceName,
+                                        anonymousIdentity);
                             }
                             if (mVerboseLoggingEnabled) {
                                 log("EAP Pseudonym: " + anonymousIdentity);
@@ -5642,7 +5655,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         if (isPrimary()) {
                             mLinkProbeManager.resetOnScreenTurnedOn();
                         }
-                        updateLinkLayerStatsRssiSpeedFrequencyCapabilities();
+                        long txBytes = mFacade.getTotalTxBytes() - mFacade.getMobileTxBytes();
+                        long rxBytes = mFacade.getTotalRxBytes() - mFacade.getMobileRxBytes();
+                        updateLinkLayerStatsRssiSpeedFrequencyCapabilities(txBytes, rxBytes);
                         sendMessageDelayed(obtainMessage(CMD_RSSI_POLL, mRssiPollToken, 0),
                                 mWifiGlobals.getPollRssiIntervalMillis());
                     }
@@ -5787,13 +5802,16 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
          */
         private WifiLinkLayerStats updateLinkLayerStatsRssiDataStallScoreReport() {
             // Get Info and continue polling
-            WifiLinkLayerStats stats = updateLinkLayerStatsRssiSpeedFrequencyCapabilities();
+            long txBytes = mFacade.getTotalTxBytes() - mFacade.getMobileTxBytes();
+            long rxBytes = mFacade.getTotalRxBytes() - mFacade.getMobileRxBytes();
+            WifiLinkLayerStats stats = updateLinkLayerStatsRssiSpeedFrequencyCapabilities(txBytes,
+                    rxBytes);
             mWifiMetrics.updateWifiUsabilityStatsEntries(mInterfaceName, mWifiInfo, stats);
             // checkDataStallAndThroughputSufficiency() should be called before
             // mWifiScoreReport.calculateAndReportScore() which needs the latest throughput
             int statusDataStall = mWifiDataStall.checkDataStallAndThroughputSufficiency(
                     mInterfaceName, mLastConnectionCapabilities, mLastLinkLayerStats, stats,
-                    mWifiInfo);
+                    mWifiInfo, txBytes, rxBytes);
             if (mDataStallTriggerTimeMs == -1
                     && statusDataStall != WifiIsUnusableEvent.TYPE_UNKNOWN) {
                 mDataStallTriggerTimeMs = mClock.getElapsedSinceBootMillis();
@@ -6892,10 +6910,19 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         selectCandidateSecurityParamsIfNecessary(config, scanResults);
 
         if (mWifiGlobals.isConnectedMacRandomizationEnabled()) {
-            if (config.macRandomizationSetting != WifiConfiguration.RANDOMIZATION_NONE) {
-                configureRandomizedMacAddress(config);
-            } else {
+            boolean isMacRandomizationForceDisabled = isMacRandomizationForceDisabledOnSsid(config);
+            if (config.macRandomizationSetting == WifiConfiguration.RANDOMIZATION_NONE
+                    || isMacRandomizationForceDisabled) {
                 setCurrentMacToFactoryMac(config);
+            } else {
+                configureRandomizedMacAddress(config);
+            }
+            if (isMacRandomizationForceDisabled
+                    && config.macRandomizationSetting != WifiConfiguration.RANDOMIZATION_NONE) {
+                // update WifiConfigManager to disable MAC randomization so Settings show the right
+                // MAC randomization information.
+                config.macRandomizationSetting = WifiConfiguration.RANDOMIZATION_NONE;
+                mWifiConfigManager.addOrUpdateNetwork(config, Process.SYSTEM_UID);
             }
         }
 
@@ -6909,6 +6936,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             // Use anonymous@<realm> when pseudonym is not available
             config.enterpriseConfig.setAnonymousIdentity(anonAtRealm);
         }
+    }
+
+    private boolean isMacRandomizationForceDisabledOnSsid(WifiConfiguration config) {
+        Set<String> unsupportedSsids = new ArraySet<>(mContext.getResources().getStringArray(
+                R.array.config_wifiForceDisableMacRandomizationSsidList));
+        return unsupportedSsids.contains(config.SSID);
     }
 
     private void setConfigurationsPriorToIpClientProvisioning(WifiConfiguration config) {
