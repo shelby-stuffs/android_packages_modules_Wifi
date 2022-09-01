@@ -2249,6 +2249,7 @@ public class HalDeviceManager {
             StringBuilder sb = new StringBuilder();
             sb.append("{chipInfo=").append(chipInfo).append(", chipModeId=").append(chipModeId)
                     .append(", interfacesToBeRemovedFirst=").append(interfacesToBeRemovedFirst)
+                    .append(", interfacesToBeDowngraded=").append(interfacesToBeDowngraded)
                     .append(")");
             return sb.toString();
         }
@@ -2371,7 +2372,8 @@ public class HalDeviceManager {
      * Note: both proposals are 'acceptable' bases on priority criteria.
      *
      * Criteria:
-     * - Proposal is better if it means removing fewer high priority interfaces
+     * - Proposal is better if it means removing fewer high priority interfaces, or downgrades the
+     *   fewest interfaces.
      */
     private boolean compareIfaceCreationData(IfaceCreationData val1, IfaceCreationData val2) {
         if (VDBG) Log.d(TAG, "compareIfaceCreationData: val1=" + val1 + ", val2=" + val2);
@@ -2415,6 +2417,14 @@ public class HalDeviceManager {
                 }
                 return true;
             }
+        }
+
+        int val1NumIFacesToBeDowngraded = val1.interfacesToBeDowngraded != null
+                ? val1.interfacesToBeDowngraded.size() : 0;
+        int val2NumIFacesToBeDowngraded = val2.interfacesToBeDowngraded != null
+                ? val2.interfacesToBeDowngraded.size() : 0;
+        if (val1NumIFacesToBeDowngraded != val2NumIFacesToBeDowngraded) {
+            return val1NumIFacesToBeDowngraded < val2NumIFacesToBeDowngraded;
         }
 
         // arbitrary - flip a coin
