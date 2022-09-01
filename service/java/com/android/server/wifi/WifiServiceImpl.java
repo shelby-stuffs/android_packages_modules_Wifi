@@ -727,7 +727,7 @@ public class WifiServiceImpl extends BaseWifiService {
     public void handleBootCompleted() {
         mWifiThreadRunner.post(() -> {
             Log.d(TAG, "Handle boot completed");
-
+            mIsBootComplete = true;
             // Register for system broadcasts.
             IntentFilter intentFilter = new IntentFilter();
             intentFilter.addAction(Intent.ACTION_USER_REMOVED);
@@ -797,7 +797,6 @@ public class WifiServiceImpl extends BaseWifiService {
             mTetheredSoftApTracker.handleBootCompleted();
             mLohsSoftApTracker.handleBootCompleted();
             mWifiInjector.getSarManager().handleBootCompleted();
-            mIsBootComplete = true;
 
             handleBootCompletedForCoverageExtendFeature();
         });
