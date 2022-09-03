@@ -85,6 +85,7 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 import android.view.Display;
 
 import androidx.annotation.NonNull;
@@ -1066,6 +1067,11 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                     printWifiNetworkSuggestions(pw, suggestions);
                     return 0;
                 }
+                case "allow-root-to-get-local-only-cmm": {
+                    boolean enabled = getNextArgRequiredTrueOrFalse("enabled", "disabled");
+                    mActiveModeWarden.allowRootToGetLocalOnlyCmm(enabled);
+                    return 0;
+                }
                 case "add-request": {
                     Pair<String, NetworkRequest> result = buildNetworkRequest(pw);
                     String ssid = result.first;
@@ -1205,6 +1211,11 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 case "set-emergency-call-state": {
                     boolean enabled = getNextArgRequiredTrueOrFalse("enabled", "disabled");
                     mActiveModeWarden.emergencyCallStateChanged(enabled);
+                    return 0;
+                }
+                case "set-emergency-scan-request": {
+                    boolean enabled = getNextArgRequiredTrueOrFalse("enabled", "disabled");
+                    mWifiService.setEmergencyScanRequestInProgress(enabled);
                     return 0;
                 }
                 case "trigger-recovery": {
@@ -1789,20 +1800,61 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 } else if (preferredBand.equals("any")) {
                     configBuilder.setBand(SoftApConfiguration.BAND_2GHZ
                             | SoftApConfiguration.BAND_5GHZ | SoftApConfiguration.BAND_6GHZ);
-                } else if (preferredBand.equals("bridged")) {
-                    if (SdkLevel.isAtLeastS()) {
-                        int[] dualBands = new int[] {
-                                SoftApConfiguration.BAND_2GHZ, SoftApConfiguration.BAND_5GHZ};
-                        configBuilder.setBands(dualBands);
-                    } else {
+                } else if (preferredBand.startsWith("bridged")) {
+                    if (!SdkLevel.isAtLeastS()) {
                         throw new IllegalArgumentException(
-                                "-b bridged option is not supported before S");
+                               "-b bridged* option is not supported before S");
+                    }
+                    switch (preferredBand) {
+                        case "bridged":
+                            // fall through
+                        case "bridged_2_5":
+                            configBuilder.setBands(new int[] {
+                                    SoftApConfiguration.BAND_2GHZ, SoftApConfiguration.BAND_5GHZ});
+                            break;
+                        case "bridged_2_6":
+                            configBuilder.setBands(new int[] {
+                                    SoftApConfiguration.BAND_2GHZ, SoftApConfiguration.BAND_6GHZ});
+                            break;
+                        case "bridged_5_6":
+                            configBuilder.setBands(new int[] {
+                                    SoftApConfiguration.BAND_5GHZ, SoftApConfiguration.BAND_6GHZ});
+                            break;
+                        default:
+                            throw new IllegalArgumentException("Invalid bridged band option "
+                                    + preferredBand);
                     }
                 } else {
                     throw new IllegalArgumentException("Invalid band option " + preferredBand);
                 }
             } else if (SdkLevel.isAtLeastT() && option.equals("-x")) {
                 configBuilder.setWifiSsid(WifiSsid.fromString(ssidStr));
+            } else if (option.equals("-f")) {
+                SparseIntArray channels = new SparseIntArray();
+                while (getRemainingArgsCount() > 0) {
+                    int apChannelMHz;
+                    try {
+                        apChannelMHz = Integer.parseInt(getNextArgRequired());
+                    } catch (NumberFormatException e) {
+                        throw new IllegalArgumentException(
+                                "-f option requires a valid channel frequency");
+                    }
+                    channels.put(ApConfigUtil.convertFrequencyToBand(apChannelMHz),
+                            ScanResult.convertFrequencyMhzToChannelIfSupported(apChannelMHz));
+                }
+                if (channels.size() == 0) {
+                    throw new IllegalArgumentException(
+                            "-f option requires a valid channel frequency atleast");
+                }
+                if (SdkLevel.isAtLeastS()) {
+                    configBuilder.setChannels(channels);
+                } else {
+                    if (channels.size() > 1) {
+                        throw new IllegalArgumentException(
+                                "dual channels are not supported before S");
+                    }
+                    configBuilder.setChannel(channels.valueAt(0), channels.keyAt(0));
+                }
             } else {
                 pw.println("Ignoring unknown option " + option);
             }
@@ -2294,7 +2346,8 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    Turns on the default connected scorer.");
         pw.println("    Note: Will clear any external scorer set.");
         pw.println("  start-softap <ssid> (open|wpa2|wpa3|wpa3_transition|owe|owe_transition) "
-                + "<passphrase> [-b 2|5|6|any|bridged]");
+                + "<passphrase> [-b 2|5|6|any|bridged|bridged_2_5|bridged_2_6|bridged_5_6] [-x]"
+                + " [-f <int> [<int>]]");
         pw.println("    Start softap with provided params");
         pw.println("    Note that the shell command doesn't activate internet tethering. In some "
                 + "devices, internet sharing is possible when Wi-Fi STA is also enabled and is"
@@ -2304,16 +2357,28 @@ public class WifiShellCommand extends BasicShellCommandHandler {
                 + "network.");
         pw.println("        - Use 'open', 'owe', 'owe_transition' for networks with no passphrase");
         pw.println("        - Use 'wpa2', 'wpa3', 'wpa3_transition' for networks with passphrase");
-        pw.println("    -b 2|5|6|any|bridged - select the preferred band.");
+        pw.println("    -b 2|5|6|any|bridged|bridged_2_5|bridged_2_6|bridged_5_6 - select the"
+                + " preferred bands.");
         pw.println("        - Use '2' to select 2.4GHz band as the preferred band");
         pw.println("        - Use '5' to select 5GHz band as the preferred band");
         pw.println("        - Use '6' to select 6GHz band as the preferred band");
         pw.println("        - Use 'any' to indicate no band preference");
         pw.println("        - Use 'bridged' to indicate bridged AP which enables APs on both "
                 + "2.4G + 5G");
+        pw.println("        - Use 'bridged_2_5' to indicate bridged AP which enables APs on both "
+                + "2.4G + 5G");
+        pw.println("        - Use 'bridged_2_6' to indicate bridged AP which enables APs on both "
+                + "2.4G + 6G");
+        pw.println("        - Use 'bridged_5_6' to indicate bridged AP which enables APs on both "
+                + "5G + 6G");
         pw.println("    Note: If the band option is not provided, 2.4GHz is the preferred band.");
         pw.println("          The exact channel is auto-selected by FW unless overridden by "
-                + "force-softap-channel command");
+                + "force-softap-channel command or '-f <int> <int>' option");
+        pw.println("    -f <int> <int> - force exact channel frequency for operation channel");
+        pw.println("    Note: -f <int> <int> - must be the last option");
+        pw.println("          For example:");
+        pw.println("          Use '-f 2412' to enable single Soft Ap on 2412");
+        pw.println("          Use '-f 2412 5745' to enable bridged dual Soft Ap on 2412 and 5745");
         pw.println("    -x - Specifies the SSID as hex digits instead of plain text (T and above)");
         pw.println("  stop-softap");
         pw.println("    Stop softap (hotspot)");
@@ -2457,6 +2522,9 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    each on a separate line.");
         pw.println("  settings-reset");
         pw.println("    Initiates wifi settings reset");
+        pw.println("  allow-root-to-get-local-only-cmm enabled|disabled");
+        pw.println("    sets whether the shell running as root could use the local-only secondary "
+                + "STA");
         pw.println("  add-request [-g] [-i] [-n] [-s] <ssid> open|owe|wpa2|wpa3 [<passphrase>]"
                 + " [-b <bssid>] [-d <band=2|5|6|60>]");
         pw.println("    Add a network request with provided params");
@@ -2502,6 +2570,8 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("    Sets whether we are in the middle of an emergency call.");
         pw.println("Equivalent to receiving the "
                 + "TelephonyManager.ACTION_EMERGENCY_CALL_STATE_CHANGED broadcast.");
+        pw.println("  set-emergency-scan-request enabled|disabled");
+        pw.println("    Sets whether there is a emergency scan request in progress.");
         pw.println("  network-suggestions-set-as-carrier-provider <packageName> yes|no");
         pw.println("    Set the <packageName> work as carrier provider or not.");
         pw.println("  is-network-suggestions-set-as-carrier-provider <packageName>");
@@ -2545,20 +2615,39 @@ public class WifiShellCommand extends BasicShellCommandHandler {
         pw.println("  set-passpoint-enabled enabled|disabled");
         pw.println("    Sets whether Passpoint should be enabled or disabled");
         pw.println("  start-lohs <ssid> (open|wpa2|wpa3|wpa3_transition|owe|owe_transition) "
-                + "<passphrase> [-b 2|5|6|any]");
+                + "<passphrase> [-b 2|5|6|any|bridged|bridged_2_5|bridged_2_6|bridged_5_6] [-x]"
+                + " [-f <int> [<int>]])");
         pw.println("    Start local only softap (hotspot) with provided params");
         pw.println("    <ssid> - SSID of the network");
         pw.println("    open|wpa2|wpa3|wpa3_transition|owe|owe_transition - Security type of the "
                 + "network.");
         pw.println("        - Use 'open', 'owe', 'owe_transition' for networks with no passphrase");
         pw.println("        - Use 'wpa2', 'wpa3', 'wpa3_transition' for networks with passphrase");
-        pw.println("    -b 2|5|6|any|bridged - select the preferred band.");
+        pw.println("    -b 2|5|6|any|bridged|bridged_2_5|bridged_2_6|bridged_5_6 - select the "
+                + "preferred bands.");
         pw.println("        - Use '2' to select 2.4GHz band as the preferred band");
         pw.println("        - Use '5' to select 5GHz band as the preferred band");
         pw.println("        - Use '6' to select 6GHz band as the preferred band");
         pw.println("        - Use 'any' to indicate no band preference");
         pw.println("        - Use 'bridged' to indicate bridged AP which enables APs on both "
                 + "2.4G + 5G");
+        pw.println("        - Use 'bridged_2_5' to indicate bridged AP which enables APs on both "
+                + "2.4G + 5G");
+        pw.println("        - Use 'bridged_2_6' to indicate bridged AP which enables APs on both "
+                + "2.4G + 6G");
+        pw.println("        - Use 'bridged_5_6' to indicate bridged AP which enables APs on both "
+                + "5G + 6G");
+        pw.println("    Note: If the band option is not provided, 2.4GHz is the preferred band.");
+        pw.println("          The exact channel is auto-selected by FW unless overridden by "
+                + "force-softap-channel command or '-f <int> <int>' option");
+        pw.println("    -f <int> <int> - force exact channel frequency for operation channel");
+        pw.println("    Note: -f <int> <int> - must be the last option");
+        pw.println("          For example:");
+        pw.println("          Use '-f 2412' to enable single Soft Ap on 2412");
+        pw.println("          Use '-f 2412 5745' to enable bridged dual lohs on 2412 and 5745");
+        pw.println("    -x - Specifies the SSID as hex digits instead of plain text (T and above)");
+        pw.println("  stop-softap");
+        pw.println("    Stop softap (hotspot)");
         pw.println("    Note: If the band option is not provided, 2.4GHz is the preferred band.");
         pw.println("  stop-lohs");
         pw.println("    Stop local only softap (hotspot)");
