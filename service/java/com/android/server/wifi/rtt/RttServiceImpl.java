@@ -52,6 +52,7 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.WorkSource;
 import android.os.WorkSource.WorkChain;
+import android.text.TextUtils;
 import android.util.Log;
 import android.util.SparseIntArray;
 
@@ -59,8 +60,11 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.WakeupMessage;
 import com.android.modules.utils.BasicShellCommandHandler;
 import com.android.modules.utils.build.SdkLevel;
+import com.android.server.wifi.BuildProperties;
 import com.android.server.wifi.Clock;
+import com.android.server.wifi.FrameworkFacade;
 import com.android.server.wifi.HalDeviceManager;
+import com.android.server.wifi.SystemBuildProperties;
 import com.android.server.wifi.WifiRttControllerHal;
 import com.android.server.wifi.WifiSettingsConfigStore;
 import com.android.server.wifi.proto.nano.WifiMetricsProto;
@@ -86,7 +90,8 @@ import java.util.Map;
 public class RttServiceImpl extends IWifiRttManager.Stub {
     private static final String TAG = "RttServiceImpl";
     private static final boolean VDBG = false; // STOPSHIP if true
-    private boolean mDbg = false;
+    private boolean mVerboseLoggingEnabled = false;
+    private boolean mVerboseHalLoggingEnabled = false;
 
     private final Context mContext;
     private final RttShellCommand mShellCommand;
@@ -100,6 +105,8 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
     private PowerManager mPowerManager;
     private int mBackgroundProcessExecGapMs;
     private long mLastRequestTimestamp;
+    private final BuildProperties mBuildProperties;
+    private FrameworkFacade mFrameworkFacade;
 
     private RttServiceSynchronized mRttServiceSynchronized;
 
@@ -110,9 +117,6 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
     @VisibleForTesting
     public static final long HAL_AWARE_RANGING_TIMEOUT_MS = 10_000; // 10 sec
 
-    // Default value for RTT background throttling interval.
-    private static final long DEFAULT_BACKGROUND_PROCESS_EXEC_GAP_MS = 1_800_000; // 30 min
-
     // arbitrary, larger than anything reasonable
     /* package */ static final int MAX_QUEUED_PER_UID = 20;
 
@@ -120,7 +124,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
             new WifiRttControllerHal.RttControllerRangingResultsCallback() {
                 @Override
                 public void onRangingResults(int cmdId, List<RangingResult> rangingResults) {
-                    if (mDbg) Log.d(TAG, "onRangingResults: cmdId=" + cmdId);
+                    if (mVerboseLoggingEnabled) Log.d(TAG, "onRangingResults: cmdId=" + cmdId);
                     mRttServiceSynchronized.mHandler.post(() -> {
                         mRttServiceSynchronized.onRangingResults(cmdId, rangingResults);
                     });
@@ -131,7 +135,9 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
             new HalDeviceManager.InterfaceRttControllerLifecycleCallback() {
                 @Override
                 public void onNewRttController(WifiRttControllerHal controller) {
-                    if (mDbg) Log.d(TAG, "onNewRttController: controller=" + controller);
+                    if (mVerboseLoggingEnabled) {
+                        Log.d(TAG, "onNewRttController: controller=" + controller);
+                    }
                     mWifiRttControllerHal = controller;
                     mWifiRttControllerHal.registerRangingResultsCallback(mRangingResultsCallback);
                     enableIfPossible();
@@ -139,7 +145,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
 
                 @Override
                 public void onRttControllerDestroyed() {
-                    if (mDbg) Log.d(TAG, "onRttControllerDestroyed");
+                    if (mVerboseLoggingEnabled) Log.d(TAG, "onRttControllerDestroyed");
                     mWifiRttControllerHal = null;
                     disable();
                 }
@@ -147,8 +153,17 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
 
     public RttServiceImpl(Context context) {
         mContext = context;
+        mBuildProperties = new SystemBuildProperties();
+        mFrameworkFacade = new FrameworkFacade();
         mShellCommand = new RttShellCommand();
         mShellCommand.reset();
+    }
+
+    private void updateVerboseLoggingEnabled() {
+        final int verboseAlwaysOnLevel = mContext.getResources().getInteger(
+                R.integer.config_wifiVerboseLoggingAlwaysOnLevel);
+        mVerboseLoggingEnabled = mFrameworkFacade.isVerboseLoggingAlwaysOn(verboseAlwaysOnLevel,
+                mBuildProperties) || mVerboseHalLoggingEnabled;
     }
 
     /*
@@ -300,8 +315,9 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     String action = intent.getAction();
-                    if (mDbg) Log.v(TAG, "BroadcastReceiver: action=" + action);
-
+                    if (mVerboseLoggingEnabled) {
+                        Log.v(TAG, "BroadcastReceiver: action=" + action);
+                    }
                     if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(action)) {
                         if (mPowerManager.isDeviceIdleMode()) {
                             disable();
@@ -326,7 +342,9 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
             mContext.registerReceiver(new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (mDbg) Log.v(TAG, "onReceive: MODE_CHANGED_ACTION: intent=" + intent);
+                    if (mVerboseLoggingEnabled) {
+                        Log.v(TAG, "onReceive: MODE_CHANGED_ACTION: intent=" + intent);
+                    }
                     if (mWifiPermissionsUtil.isLocationModeEnabled()) {
                         enableIfPossible();
                     } else {
@@ -350,12 +368,20 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
         });
     }
 
-    private void enableVerboseLogging(boolean verbose) {
-        mDbg = verbose;
-        if (VDBG) {
-            mDbg = true; // just override
+    private void enableVerboseLogging(boolean verboseEnabled) {
+        mVerboseHalLoggingEnabled = verboseEnabled || VDBG;
+        updateVerboseLoggingEnabled();
+        mRttMetrics.enableVerboseLogging(mVerboseLoggingEnabled);
+        if (mWifiRttControllerHal != null) {
+            mWifiRttControllerHal.enableVerboseLogging(mVerboseLoggingEnabled);
         }
-        mRttMetrics.mDbg = mDbg;
+    }
+
+    /**
+     * Handles the transition to boot completed phase
+     */
+    public void handleBootCompleted() {
+        updateVerboseLoggingEnabled();
     }
 
     /*
@@ -511,7 +537,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
         IBinder.DeathRecipient dr = new IBinder.DeathRecipient() {
             @Override
             public void binderDied() {
-                if (mDbg) Log.v(TAG, "binderDied: uid=" + uid);
+                if (mVerboseLoggingEnabled) Log.v(TAG, "binderDied: uid=" + uid);
                 binder.unlinkToDeath(this, 0);
 
                 mRttServiceSynchronized.mHandler.post(() -> {
@@ -810,7 +836,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
                 }
             }
 
-            if (mDbg) {
+            if (mVerboseLoggingEnabled) {
                 Log.v(TAG, "isRequestorSpamming: ws=" + ws + ", someone is spamming: " + counts);
             }
             return true;
@@ -875,7 +901,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
                 return;
             }
 
-            if (!preExecThrottleCheck(nextRequest.workSource)) {
+            if (!preExecThrottleCheck(nextRequest.workSource, nextRequest.callingPackage)) {
                 Log.w(TAG, "RttServiceSynchronized.startRanging: execution throttled - nextRequest="
                         + nextRequest + ", mRttRequesterInfo=" + mRttRequesterInfo);
                 try {
@@ -927,7 +953,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
          *
          * Returns true to permit execution, false to abort it.
          */
-        private boolean preExecThrottleCheck(WorkSource ws) {
+        private boolean preExecThrottleCheck(WorkSource ws, String callingPackage) {
             if (VDBG) Log.v(TAG, "preExecThrottleCheck: ws=" + ws);
 
             // are all UIDs running in the background or is at least 1 in the foreground?
@@ -955,6 +981,16 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
                     }
 
                     if (uidImportance <= IMPORTANCE_FOREGROUND_SERVICE) {
+                        allUidsInBackground = false;
+                        break;
+                    }
+                }
+            }
+            if (allUidsInBackground) {
+                String[] exceptionList = mContext.getResources().getStringArray(
+                        R.array.config_wifiBackgroundRttThrottleExceptionList);
+                for (String packageName : exceptionList) {
+                    if (TextUtils.equals(packageName, callingPackage)) {
                         allUidsInBackground = false;
                         break;
                     }
@@ -1199,7 +1235,7 @@ public class RttServiceImpl extends IWifiRttManager.Stub {
                 RangingResult resultForRequest = resultEntries.get(peer.macAddress);
                 if (resultForRequest == null || resultForRequest.getStatus()
                         != WifiRttControllerHal.FRAMEWORK_RTT_STATUS_SUCCESS) {
-                    if (mDbg) {
+                    if (mVerboseLoggingEnabled) {
                         Log.v(TAG, "postProcessResults: missing=" + peer.macAddress);
                     }
 
