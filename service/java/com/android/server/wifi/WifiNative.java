@@ -1005,7 +1005,7 @@ public class WifiNative {
      * @return list of instance name when succeed, otherwise null.
      */
     @Nullable
-    private List<String> getBridgedApInstances(@NonNull String ifaceName) {
+    public List<String> getBridgedApInstances(@NonNull String ifaceName) {
         synchronized (mLock) {
             if (isVendorBridgeModeActive() && !TextUtils.isEmpty(mdualApInterfaces[0])
                 && !TextUtils.isEmpty(mdualApInterfaces[1])) {
