@@ -116,6 +116,7 @@ public class WifiNative {
     private boolean mUseFakeScanDetails;
     private final ArrayList<ScanDetail> mFakeScanDetails = new ArrayList<>();
     private long mCachedFeatureSet;
+    private boolean mQosPolicyFeatureEnabled = false;
 
     public WifiNative(WifiVendorHal vendorHal,
                       SupplicantStaIfaceHal staIfaceHal, HostapdHal hostapdHal,
@@ -1004,7 +1005,7 @@ public class WifiNative {
      * @return list of instance name when succeed, otherwise null.
      */
     @Nullable
-    private List<String> getBridgedApInstances(@NonNull String ifaceName) {
+    public List<String> getBridgedApInstances(@NonNull String ifaceName) {
         synchronized (mLock) {
             if (isVendorBridgeModeActive() && !TextUtils.isEmpty(mdualApInterfaces[0])
                 && !TextUtils.isEmpty(mdualApInterfaces[1])) {
@@ -1240,10 +1241,10 @@ public class WifiNative {
             }
             if (mContext.getResources().getBoolean(
                     R.bool.config_wifiNetworkCentricQosPolicyFeatureEnabled)) {
-                if (!mSupplicantStaIfaceHal.setNetworkCentricQosPolicyFeatureEnabled(
-                        iface.name, true)) {
-                    Log.e(TAG, "Failed to set QoS policy feature enabled for iface " + iface.name);
-                    return null;
+                mQosPolicyFeatureEnabled = mSupplicantStaIfaceHal
+                        .setNetworkCentricQosPolicyFeatureEnabled(iface.name, true);
+                if (!mQosPolicyFeatureEnabled) {
+                    Log.e(TAG, "Failed to enable QoS policy feature for iface " + iface.name);
                 }
             }
             iface.networkObserver = new NetworkObserverInternal(iface.id);
@@ -1490,10 +1491,10 @@ public class WifiNative {
             }
             if (mContext.getResources().getBoolean(
                     R.bool.config_wifiNetworkCentricQosPolicyFeatureEnabled)) {
-                if (!mSupplicantStaIfaceHal.setNetworkCentricQosPolicyFeatureEnabled(
-                        iface.name, true)) {
-                    Log.e(TAG, "Failed to set QoS policy feature enabled for iface " + iface.name);
-                    return false;
+                mQosPolicyFeatureEnabled = mSupplicantStaIfaceHal
+                        .setNetworkCentricQosPolicyFeatureEnabled(iface.name, true);
+                if (!mQosPolicyFeatureEnabled) {
+                    Log.e(TAG, "Failed to enable QoS policy feature for iface " + iface.name);
                 }
             }
             iface.type = Iface.IFACE_TYPE_STA_FOR_CONNECTIVITY;
@@ -1812,10 +1813,10 @@ public class WifiNative {
             List<NativeScanResult> nativeResults) {
         ArrayList<ScanDetail> results = new ArrayList<>();
         for (NativeScanResult result : nativeResults) {
-            WifiSsid wifiSsid = WifiSsid.fromBytes(result.getSsid());
+            WifiSsid originalSsid = WifiSsid.fromBytes(result.getSsid());
             MacAddress bssidMac = result.getBssid();
             if (bssidMac == null) {
-                Log.e(TAG, "Invalid MAC (BSSID) for SSID " + wifiSsid);
+                Log.e(TAG, "Invalid MAC (BSSID) for SSID " + originalSsid);
                 continue;
             }
             String bssid = bssidMac.toString();
@@ -1834,7 +1835,9 @@ public class WifiNative {
                 continue;
             }
 
-            ScanDetail scanDetail = new ScanDetail(networkDetail, wifiSsid, bssid, flags,
+            WifiSsid translatedSsid = mWifiInjector.getSsidTranslator()
+                    .getTranslatedSsidAndRecordBssidCharset(originalSsid, bssidMac);
+            ScanDetail scanDetail = new ScanDetail(networkDetail, translatedSsid, bssid, flags,
                     result.getSignalMbm() / 100, result.getFrequencyMhz(), result.getTsf(), ies,
                     null, result.getInformationElements());
             ScanResult scanResult = scanDetail.getScanResult();
@@ -3228,7 +3231,7 @@ public class WifiNative {
 
         @Override
         public int hashCode() {
-            return Objects.hash(ssid, flags, auth_bit_field, frequencies);
+            return Objects.hash(ssid, flags, auth_bit_field, Arrays.hashCode(frequencies));
         }
 
         android.net.wifi.nl80211.PnoNetwork toNativePnoNetwork() {
@@ -3975,7 +3978,8 @@ public class WifiNative {
      */
     @Immutable
     public static final class TxFateReport extends FateReport {
-        TxFateReport(byte fate, long driverTimestampUSec, byte frameType, byte[] frameBytes) {
+        public TxFateReport(byte fate, long driverTimestampUSec, byte frameType,
+                byte[] frameBytes) {
             super(fate, driverTimestampUSec, frameType, frameBytes);
         }
 
@@ -4018,7 +4022,8 @@ public class WifiNative {
      */
     @Immutable
     public static final class RxFateReport extends FateReport {
-        RxFateReport(byte fate, long driverTimestampUSec, byte frameType, byte[] frameBytes) {
+        public RxFateReport(byte fate, long driverTimestampUSec, byte frameType,
+                byte[] frameBytes) {
             super(fate, driverTimestampUSec, frameType, frameBytes);
         }
 
@@ -4592,6 +4597,13 @@ public class WifiNative {
     }
 
     /**
+     * Check if the network-centric QoS policy feature was successfully enabled.
+     */
+    public boolean isQosPolicyFeatureEnabled() {
+        return mQosPolicyFeatureEnabled;
+    }
+
+    /**
      * Sends a QoS policy response.
      *
      * @param ifaceName Name of the interface.
@@ -4602,6 +4614,10 @@ public class WifiNative {
      */
     public boolean sendQosPolicyResponse(String ifaceName, int qosPolicyRequestId,
             boolean morePolicies, @NonNull List<QosPolicyStatus> qosPolicyStatusList) {
+        if (!mQosPolicyFeatureEnabled) {
+            Log.e(TAG, "Unable to send QoS policy response, feature is not enabled");
+            return false;
+        }
         return mSupplicantStaIfaceHal.sendQosPolicyResponse(ifaceName, qosPolicyRequestId,
                 morePolicies, qosPolicyStatusList);
     }
@@ -4612,6 +4628,10 @@ public class WifiNative {
      * @param ifaceName Name of the interface.
      */
     public boolean removeAllQosPolicies(String ifaceName) {
+        if (!mQosPolicyFeatureEnabled) {
+            Log.e(TAG, "Unable to remove all QoS policies, feature is not enabled");
+            return false;
+        }
         return mSupplicantStaIfaceHal.removeAllQosPolicies(ifaceName);
     }
 

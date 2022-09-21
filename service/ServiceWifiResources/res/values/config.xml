@@ -565,6 +565,10 @@
     <integer translatable="false" name="config_wifiDisableReasonAuthenticationFailureThreshold"> 3 </integer>
     <integer translatable="false" name="config_wifiDisableReasonDhcpFailureThreshold"> 2 </integer>
     <integer translatable="false" name="config_wifiDisableReasonNetworkNotFoundThreshold"> 2 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonNoInternetTemporaryThreshold"> 1 </integer>
+
+    <!-- Base duration to set a network disabled after validation failure happen-->
+    <integer translatable="false" name="config_wifiDisableReasonNoInternetTemporaryDurationMs"> 600000 </integer>
 
     <!-- List of constants that indicate the number of consecutive failures per type needed to block a BSSID.
     A blocked BSSID will not be considered in network selection and firmware roaming.-->
@@ -585,6 +589,9 @@
     ie. 5/10/20/40/80/160/320/640 minutes - capped at 640 minutes because the default for
     config_wifiBssidBlocklistMonitorFailureStreakCap is set to 7-->
     <integer translatable="false" name="config_wifiBssidBlocklistMonitorBaseBlockDurationMs"> 300000 </integer>
+
+    <!-- Base duration to block a bssid after validation failure happen-->
+    <integer translatable="false" name="config_wifiBssidBlocklistMonitorValidationFailureBaseBlockDurationMs"> 300000 </integer>
 
     <!-- Base duration to block a BSSID after the external connected scorer sets wifi as unusable.
     The block duration is increased exponentially if the same BSSID is repeated marked as unusable.
@@ -940,4 +947,20 @@
         -->
     </string-array>
 
+    <!-- Lists each alternate character set per locale language for SSID translation to UTF-8. This
+         will translate all SSIDs encoded with the specified character set from the native layer
+         into UTF-8 SSIDs. The translated SSIDs are then converted back to the original character
+         set when passed back to the native layer. This effectively switches all non-UTF-8 APs into
+         UTF-8 APs from the perspective of the framework and apps, and is intended to provide
+         backwards compatibility with apps that only work with UTF-8 SSIDs. Values must be in the
+         form of the locale language and canonical java.nio Charset name, separated by a comma. If
+         the locale language is "all", then the character set will apply to all locale languages
+         that do not specify their own character set. -->
+    <string-array translatable="false" name="config_wifiCharsetsForSsidTranslation">
+        <!-- Below is a sample configuration for this list:
+        <item>all,EUC-JP</item>
+        <item>zh,GBK</item>
+        <item>ko,EUC-KR</item>
+        -->
+    </string-array>
 </resources>
