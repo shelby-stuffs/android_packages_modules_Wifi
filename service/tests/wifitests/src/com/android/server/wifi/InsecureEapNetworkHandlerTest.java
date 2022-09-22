@@ -71,7 +71,7 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
     private static final int ACTION_TAP = 2;
     private static final String WIFI_IFACE_NAME = "wlan-test-9";
     private static final int FRAMEWORK_NETWORK_ID = 2;
-    private static final String TEST_SSID = "test_ssid";
+    private static final String TEST_SSID = "\"test_ssid\"";
 
     @Mock WifiContext mContext;
     @Mock WifiConfigManager mWifiConfigManager;
@@ -105,10 +105,10 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         when(mContext.getText(anyInt())).thenReturn("TestStr");
         when(mContext.getWifiOverlayApkPkgName()).thenReturn("test.com.android.wifi.resources");
         when(mContext.getResources()).thenReturn(mResources);
-        when(mWifiDialogManager.createSimpleDialogWithUrl(
+        when(mWifiDialogManager.createLegacySimpleDialogWithUrl(
                 any(), any(), any(), anyInt(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(mTofuAlertDialog);
-        when(mWifiDialogManager.createSimpleDialog(
+        when(mWifiDialogManager.createLegacySimpleDialog(
                 any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(mTofuAlertDialog);
 
@@ -223,7 +223,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         setupTest(config, isAtLeastT, isTrustOnFirstUseSupported);
         assertTrue(mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
         verify(mCallbacks).onError(eq(config.SSID));
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
     }
 
     /**
@@ -345,7 +347,7 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
                 (byte) 0x12, (byte) 0x34, (byte) 0x56, (byte) 0x78,
                 (byte) 0x90, (byte) 0xab, (byte) 0xcd, (byte) 0xef});
 
-        when(mockCert.getBasicConstraints()).thenReturn(isCa ? 99 : 0);
+        when(mockCert.getBasicConstraints()).thenReturn(isCa ? 99 : -1);
         return mockCert;
     }
 
@@ -468,7 +470,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         assertEquals(needUserApproval,
                 mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
         verify(mCallbacks).onError(eq(config.SSID));
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
     }
 
     /**
@@ -496,7 +500,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         assertEquals(needUserApproval,
                 mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
         verify(mCallbacks).onError(eq(config.SSID));
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
     }
 
     /**
@@ -545,7 +551,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
 
         assertTrue(mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
         verify(mCallbacks).onError(eq(config.SSID));
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
     }
 
     /**
@@ -568,7 +576,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
 
         assertTrue(mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
         verify(mCallbacks).onError(eq(config.SSID));
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
     }
 
     /**
@@ -593,6 +603,29 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
                 mHandler);
         X509Certificate mockSelfSignedCert = generateMockCert("self", "self", false);
         mInsecureEapNetworkHandler.setPendingCertificate("NotExist", 0, mockSelfSignedCert);
+    }
+
+    @Test
+    public void testExistingCertChainIsClearedOnPreparingNewConnection() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        boolean isAtLeastT = true, isTrustOnFirstUseSupported = true, isUserSelected = true;
+        boolean needUserApproval = true;
+
+        WifiConfiguration config = prepareWifiConfiguration(isAtLeastT);
+        setupTest(config, isAtLeastT, isTrustOnFirstUseSupported);
+
+        // Missing root CA cert.
+        mInsecureEapNetworkHandler.setPendingCertificate(config.SSID, 0,
+                generateMockCert("server", "ca", false));
+
+        // The wrong cert chain should be cleared after this call.
+        mInsecureEapNetworkHandler.prepareConnection(config);
+
+        X509Certificate mockSelfSignedCert = generateMockCert("self", "self", false);
+        mInsecureEapNetworkHandler.setPendingCertificate(config.SSID, 0, mockSelfSignedCert);
+
+        assertTrue(mInsecureEapNetworkHandler.startUserApprovalIfNecessary(isUserSelected));
+        verify(mCallbacks, never()).onError(any());
     }
 
     @Test
@@ -648,7 +681,9 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
                 any(), eq(mHandler));
         mTestAlarmManager.dispatch(InsecureEapNetworkHandler.NOTIFICATION_WAITING_TIMER_TAG);
         mLooper.dispatchAll();
-        verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                eq(WifiConfiguration.NetworkSelectionStatus
+                        .DISABLED_BY_WIFI_MANAGER));
         verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
     }
 
@@ -677,7 +712,7 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         if (isUserSelected) {
             ArgumentCaptor<WifiDialogManager.SimpleDialogCallback> dialogCallbackCaptor =
                     ArgumentCaptor.forClass(WifiDialogManager.SimpleDialogCallback.class);
-            verify(mWifiDialogManager).createSimpleDialogWithUrl(
+            verify(mWifiDialogManager).createLegacySimpleDialogWithUrl(
                     any(), any(), any(), anyInt(), anyInt(), any(), any(), any(),
                     dialogCallbackCaptor.capture(), any());
             if (action == ACTION_ACCEPT) {
@@ -699,7 +734,7 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
                 br.onReceive(mContext, intent);
                 ArgumentCaptor<WifiDialogManager.SimpleDialogCallback> dialogCallbackCaptor =
                         ArgumentCaptor.forClass(WifiDialogManager.SimpleDialogCallback.class);
-                verify(mWifiDialogManager).createSimpleDialogWithUrl(
+                verify(mWifiDialogManager).createLegacySimpleDialogWithUrl(
                         any(), any(), any(), anyInt(), anyInt(), any(), any(), any(),
                         dialogCallbackCaptor.capture(), any());
                 if (action == ACTION_ACCEPT) {
@@ -723,7 +758,8 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
         }
 
         if (action == ACTION_ACCEPT) {
-            verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(true));
+            verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                    eq(WifiConfiguration.NetworkSelectionStatus.DISABLED_NONE));
             if (isTrustOnFirstUseSupported) {
                 verify(mWifiConfigManager).updateCaCertificate(
                         eq(config.networkId), eq(expectedCaCert), eq(expectedServerCert));
@@ -733,10 +769,12 @@ public class InsecureEapNetworkHandlerTest extends WifiBaseTest {
             }
             verify(mCallbacks).onAccept(eq(config.SSID));
         } else if (action == ACTION_REJECT) {
-            verify(mWifiConfigManager).allowAutojoin(eq(config.networkId), eq(false));
+            verify(mWifiConfigManager).updateNetworkSelectionStatus(eq(config.networkId),
+                    eq(WifiConfiguration.NetworkSelectionStatus
+                            .DISABLED_BY_WIFI_MANAGER));
             verify(mCallbacks).onReject(eq(config.SSID));
         } else if (action == ACTION_TAP) {
-            verify(mWifiDialogManager).createSimpleDialogWithUrl(
+            verify(mWifiDialogManager).createLegacySimpleDialogWithUrl(
                     any(), any(), any(), anyInt(), anyInt(), any(), any(), any(), any(), any());
             verify(mTofuAlertDialog).launchDialog();
         }

@@ -3983,6 +3983,10 @@ public class WifiManager {
      * or {@link WifiManager.ActiveCountryCodeChangedCallback#onCountryCodeInactive()}
      * on registration.
      *
+     * Note: When the global location setting is off or the caller does not have runtime location
+     * permission, caller will not receive the callback even if caller register callback succeeded.
+     *
+     *
      * Caller can remove a previously registered callback using
      * {@link WifiManager#unregisterActiveCountryCodeChangedCallback(
      * ActiveCountryCodeChangedCallback)}.
@@ -4813,7 +4817,7 @@ public class WifiManager {
      * If the LocalOnlyHotspot cannot be created, the {@link LocalOnlyHotspotCallback#onFailed(int)}
      * method will be called. Example failures include errors bringing up the network or if
      * there is an incompatible operating mode.  For example, if the user is currently using Wifi
-     * Tethering to provide an upstream to another device, LocalOnlyHotspot will not start due to
+     * Tethering to provide an upstream to another device, LocalOnlyHotspot may not start due to
      * an incompatible mode. The possible error codes include:
      * {@link LocalOnlyHotspotCallback#ERROR_NO_CHANNEL},
      * {@link LocalOnlyHotspotCallback#ERROR_GENERIC},
@@ -6371,9 +6375,18 @@ public class WifiManager {
     }
 
     /**
-     * Enable/disable auto-join globally.
-     * When auto-join is disabled globally via this API, the user toggling wifi will re-enable
-     * auto-join.
+     * Control whether the device will automatically search for and connect to Wi-Fi networks -
+     * auto-join Wi-Fi networks. Disabling this option will not impact manual connections - i.e.
+     * the user will still be able to manually select and connect to a Wi-Fi network. Disabling
+     * this option significantly impacts the device connectivity and is a restricted operation
+     * (see below for permissions). Note that disabling this operation will also disable
+     * connectivity initiated scanning operations.
+     * <p>
+     * Disabling the auto-join configuration is a temporary operation (with the exception of a
+     * DO/PO caller): it will be reset (to enabled) when the device reboots or the user toggles
+     * Wi-Fi off/on. When the caller is a DO/PO then toggling Wi-Fi will not reset the
+     * configuration. Additionally, if a DO/PO disables auto-join then it cannot be (re)enabled by
+     * a non-DO/PO caller.
      *
      * @param allowAutojoin true to allow auto-join, false to disallow auto-join
      *
@@ -6383,7 +6396,12 @@ public class WifiManager {
      */
     public void allowAutojoinGlobal(boolean allowAutojoin) {
         try {
-            mService.allowAutojoinGlobal(allowAutojoin);
+            Bundle extras = new Bundle();
+            if (SdkLevel.isAtLeastS()) {
+                extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                        mContext.getAttributionSource());
+            }
+            mService.allowAutojoinGlobal(allowAutojoin, mContext.getOpPackageName(), extras);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

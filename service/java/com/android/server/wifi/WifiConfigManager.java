@@ -76,6 +76,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -161,7 +162,7 @@ public class WifiConfigManager {
          * Invoked when user connect choice is removed.
          * @param choiceKey The network profile key of the user connect choice that was removed.
          */
-        default void onConnectChoiceRemoved(String choiceKey){ }
+        default void onConnectChoiceRemoved(@NonNull String choiceKey){ }
 
         /**
          * Invoke when security params changed, especially when NetworkTransitionDisable event
@@ -557,12 +558,8 @@ public class WifiConfigManager {
                 mRandomizedMacAddressMapping.remove(config.getNetworkKey());
             }
         }
-        MacAddress result = mMacAddressUtil.calculatePersistentMac(config.getNetworkKey(),
-                mMacAddressUtil.obtainMacRandHashFunction(Process.WIFI_UID));
-        if (result == null) {
-            result = mMacAddressUtil.calculatePersistentMac(config.getNetworkKey(),
-                    mMacAddressUtil.obtainMacRandHashFunction(Process.WIFI_UID));
-        }
+        MacAddress result = mMacAddressUtil.calculatePersistentMacForSta(config.getNetworkKey(),
+                Process.WIFI_UID);
         if (result == null) {
             Log.wtf(TAG, "Failed to generate MAC address from KeyStore even after retrying. "
                     + "Using locally generated MAC address instead.");
@@ -1115,7 +1112,13 @@ public class WifiConfigManager {
     private void mergeWithInternalWifiConfiguration(
             WifiConfiguration internalConfig, WifiConfiguration externalConfig) {
         if (externalConfig.SSID != null) {
-            internalConfig.SSID = externalConfig.SSID;
+            // Translate the SSID in case it is in hexadecimal for a translatable charset.
+            if (externalConfig.SSID.length() > 0 && externalConfig.SSID.charAt(0) != '\"') {
+                internalConfig.SSID = mWifiInjector.getSsidTranslator().getTranslatedSsid(
+                        WifiSsid.fromString(externalConfig.SSID)).toString();
+            } else {
+                internalConfig.SSID = externalConfig.SSID;
+            }
         }
         if (externalConfig.BSSID != null) {
             internalConfig.BSSID = externalConfig.BSSID.toLowerCase();
@@ -1191,7 +1194,6 @@ public class WifiConfigManager {
         internalConfig.trusted = externalConfig.trusted;
         internalConfig.oemPaid = externalConfig.oemPaid;
         internalConfig.oemPrivate = externalConfig.oemPrivate;
-        internalConfig.dbsSecondaryInternet = externalConfig.dbsSecondaryInternet;
         internalConfig.carrierMerged = externalConfig.carrierMerged;
         internalConfig.restricted = externalConfig.restricted;
 
@@ -1714,7 +1716,7 @@ public class WifiConfigManager {
         // will remove the enterprise keys when provider is uninstalled. Suggestion enterprise
         // networks will remove the enterprise keys when suggestion is removed.
         if (!config.fromWifiNetworkSuggestion && !config.isPasspoint() && config.isEnterprise()) {
-            mWifiKeyStore.removeKeys(config.enterpriseConfig);
+            mWifiKeyStore.removeKeys(config.enterpriseConfig, false);
         }
 
         // Do not remove the user choice when passpoint or suggestion networks are removed from
@@ -2893,10 +2895,16 @@ public class WifiConfigManager {
         networks.removeIf(config -> !config.hiddenSSID);
         networks.sort(mScanListComparator);
         // The most frequently connected network has the highest priority now.
+        Set<WifiSsid> ssidSet = new LinkedHashSet<>();
         for (WifiConfiguration config : networks) {
-            if (!autoJoinOnly || config.allowAutojoin) {
-                hiddenList.add(new WifiScanner.ScanSettings.HiddenNetwork(config.SSID));
+            if (autoJoinOnly && !config.allowAutojoin) {
+                continue;
             }
+            ssidSet.addAll(mWifiInjector.getSsidTranslator()
+                    .getAllPossibleOriginalSsids(WifiSsid.fromString(config.SSID)));
+        }
+        for (WifiSsid ssid : ssidSet) {
+            hiddenList.add(new WifiScanner.ScanSettings.HiddenNetwork(ssid.toString()));
         }
         return hiddenList;
     }
@@ -4038,22 +4046,6 @@ public class WifiConfigManager {
             return;
         }
         internalConfig.setSecurityParamsIsAddedByAutoUpgrade(securityType, isAddedByAutoUpgrade);
-        saveToStore(true);
-    }
-
-    /**
-     * This method updates whether or not a security is enabled.
-     *
-     * @param networkId networkId corresponding to the network to be updated.
-     * @param securityType the target security type
-     * @param enable indicates whether the type is enabled or not.
-     */
-    public void setSecurityParamsEnabled(int networkId, int securityType, boolean enable) {
-        WifiConfiguration internalConfig = getInternalConfiguredNetwork(networkId);
-        if (internalConfig == null) {
-            return;
-        }
-        internalConfig.setSecurityParamsEnabled(securityType, enable);
         saveToStore(true);
     }
 

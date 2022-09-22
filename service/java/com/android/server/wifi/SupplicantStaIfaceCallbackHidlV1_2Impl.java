@@ -29,6 +29,7 @@ import android.util.Log;
 import com.android.server.wifi.util.NativeUtil;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 
 abstract class SupplicantStaIfaceCallbackHidlV1_2Impl extends
         android.hardware.wifi.supplicant.V1_2.ISupplicantStaIfaceCallback.Stub {
@@ -36,14 +37,17 @@ abstract class SupplicantStaIfaceCallbackHidlV1_2Impl extends
     private final SupplicantStaIfaceHalHidlImpl mStaIfaceHal;
     private final String mIfaceName;
     private final Context mContext;
+    private final @NonNull SsidTranslator mSsidTranslator;
     private final SupplicantStaIfaceHalHidlImpl.SupplicantStaIfaceHalCallbackV1_1 mCallbackV11;
 
     SupplicantStaIfaceCallbackHidlV1_2Impl(@NonNull SupplicantStaIfaceHalHidlImpl staIfaceHal,
             @NonNull String ifaceName,
-            @NonNull Context context) {
+            @NonNull Context context,
+            @NonNull SsidTranslator ssidTranslator) {
         mStaIfaceHal = staIfaceHal;
         mIfaceName = ifaceName;
         mContext = context;
+        mSsidTranslator = ssidTranslator;
         // Create an older callback for function delegation,
         // and it would cascadingly create older one.
         mCallbackV11 = mStaIfaceHal.new SupplicantStaIfaceHalCallbackV1_1(mIfaceName);
@@ -170,8 +174,8 @@ abstract class SupplicantStaIfaceCallbackHidlV1_2Impl extends
         WifiConfiguration newWifiConfiguration = new WifiConfiguration();
 
         // Set up SSID
-        WifiSsid wifiSsid =
-                WifiSsid.fromBytes(NativeUtil.byteArrayFromArrayList(ssid));
+        WifiSsid wifiSsid = mSsidTranslator.getTranslatedSsid(
+                WifiSsid.fromBytes(NativeUtil.byteArrayFromArrayList(ssid)));
 
         newWifiConfiguration.SSID = wifiSsid.toString();
 
@@ -179,7 +183,7 @@ abstract class SupplicantStaIfaceCallbackHidlV1_2Impl extends
         if (password != null) {
             newWifiConfiguration.preSharedKey = "\"" + password + "\"";
         } else if (psk != null) {
-            newWifiConfiguration.preSharedKey = psk.toString();
+            newWifiConfiguration.preSharedKey = Arrays.toString(psk);
         }
 
         // Set up key management: SAE or PSK

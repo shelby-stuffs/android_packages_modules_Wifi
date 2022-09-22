@@ -60,6 +60,7 @@ import com.android.server.wifi.p2p.WifiP2pMetrics;
 import com.android.server.wifi.p2p.WifiP2pMonitor;
 import com.android.server.wifi.p2p.WifiP2pNative;
 import com.android.server.wifi.rtt.RttMetrics;
+import com.android.server.wifi.util.KeystoreWrapper;
 import com.android.server.wifi.util.LastCallerInfoManager;
 import com.android.server.wifi.util.LruConnectionTracker;
 import com.android.server.wifi.util.NetdWrapper;
@@ -181,6 +182,7 @@ public class WifiInjector {
     private final WifiConfigManager mWifiConfigManager;
     private final WifiConnectivityHelper mWifiConnectivityHelper;
     private final LocalLog mConnectivityLocalLog;
+    private final LocalLog mWifiAwareLocalLog;
     private final ThroughputScorer mThroughputScorer;
     private final WifiNetworkSelector mWifiNetworkSelector;
     private final SavedNetworkNominator mSavedNetworkNominator;
@@ -208,7 +210,7 @@ public class WifiInjector {
     private IpMemoryStore mIpMemoryStore;
     private final WifiThreadRunner mWifiThreadRunner;
     private final WifiBlocklistMonitor mWifiBlocklistMonitor;
-    private final MacAddressUtil mMacAddressUtil = new MacAddressUtil();
+    private final MacAddressUtil mMacAddressUtil = new MacAddressUtil(new KeystoreWrapper());
     private final MboOceController mMboOceController;
     private final WifiCarrierInfoManager mWifiCarrierInfoManager;
     private final WifiChannelUtilization mWifiChannelUtilizationScan;
@@ -245,6 +247,7 @@ public class WifiInjector {
     private final LastCallerInfoManager mLastCallerInfoManager;
     private final InterfaceConflictManager mInterfaceConflictManager;
     @NonNull private final WifiDialogManager mWifiDialogManager;
+    @NonNull private final SsidTranslator mSsidTranslator;
 
     public WifiInjector(WifiContext context) {
         if (context == null) {
@@ -285,6 +288,7 @@ public class WifiInjector {
         mWifiStateTracker = new WifiStateTracker(mBatteryStats);
         mWifiThreadRunner = new WifiThreadRunner(wifiHandler);
         mWifiDialogManager = new WifiDialogManager(mContext, mWifiThreadRunner, mFrameworkFacade);
+        mSsidTranslator = new SsidTranslator(mContext, wifiHandler);
         mWifiP2pServiceHandlerThread = new HandlerThread("WifiP2pService");
         mWifiP2pServiceHandlerThread.start();
         mPasspointProvisionerHandlerThread =
@@ -306,10 +310,11 @@ public class WifiInjector {
         mHalDeviceManager = new HalDeviceManager(mContext, mClock, this, wifiHandler);
         mInterfaceConflictManager = new InterfaceConflictManager(mContext, mFrameworkFacade,
                 mHalDeviceManager, mWifiThreadRunner, mWifiDialogManager);
-        mWifiVendorHal = new WifiVendorHal(mContext, mHalDeviceManager, wifiHandler, mWifiGlobals);
+        mWifiVendorHal = new WifiVendorHal(mContext, mHalDeviceManager, wifiHandler, mWifiGlobals,
+                mSsidTranslator);
         mSupplicantStaIfaceHal = new SupplicantStaIfaceHal(
                 mContext, mWifiMonitor, mFrameworkFacade, wifiHandler, mClock, mWifiMetrics,
-                mWifiGlobals);
+                mWifiGlobals, mSsidTranslator);
         mHostapdHal = new HostapdHal(mContext, wifiHandler);
         mWifiCondManager = (WifiNl80211Manager) mContext.getSystemService(
                 Context.WIFI_NL80211_SERVICE);
@@ -362,6 +367,9 @@ public class WifiInjector {
         mConnectivityLocalLog = new LocalLog(
                 mContext.getSystemService(ActivityManager.class).isLowRamDevice() ? maxLinesLowRam
                         : maxLinesHighRam);
+        mWifiAwareLocalLog = new LocalLog(
+                mContext.getSystemService(ActivityManager.class).isLowRamDevice() ? maxLinesLowRam
+                        : maxLinesHighRam);
         mWifiDiagnostics = new WifiDiagnostics(
                 mContext, this, mWifiNative, mBuildProperties,
                 new LastMileLogger(this), mClock, mWifiDiagnosticsHandlerThread.getLooper());
@@ -381,7 +389,8 @@ public class WifiInjector {
                 mLruConnectionTracker, this);
         mSettingsConfigStore = new WifiSettingsConfigStore(context, wifiHandler,
                 mSettingsMigrationDataHolder, mWifiConfigManager, mWifiConfigStore);
-        mSettingsStore = new WifiSettingsStore(mContext, mSettingsConfigStore);
+        mSettingsStore = new WifiSettingsStore(mContext, mSettingsConfigStore, mWifiThreadRunner,
+                mFrameworkFacade, mWifiNotificationManager, mDeviceConfigFacade);
         mWifiMetrics.setWifiConfigManager(mWifiConfigManager);
         mWifiMetrics.setWifiSettingsStore(mSettingsStore);
 
@@ -471,7 +480,7 @@ public class WifiInjector {
                 mClock, mConnectivityLocalLog, mWifiScoreCard, mWifiBlocklistMonitor,
                 mWifiChannelUtilizationScan, mPasspointManager, mMultiInternetManager,
                 mDeviceConfigFacade, mActiveModeWarden, mFrameworkFacade, mWifiGlobals,
-                mExternalPnoScanRequestManager);
+                mExternalPnoScanRequestManager, mSsidTranslator);
         mMboOceController = new MboOceController(makeTelephonyManager(), mActiveModeWarden);
         mCountryCode = new WifiCountryCode(mContext, mActiveModeWarden,
                 mCmiMonitor, mWifiNative, mSettingsConfigStore);
@@ -748,8 +757,8 @@ public class WifiInjector {
             @NonNull WorkSource requestorWs,
             @NonNull ActiveModeManager.SoftApRole role,
             boolean verboseLoggingEnabled) {
-        return new SoftApManager(mContext, mWifiHandlerThread.getLooper(),
-                mFrameworkFacade, mWifiNative, mCoexManager, makeBatteryManager(),
+        return new SoftApManager(mContext, mWifiHandlerThread.getLooper(), mFrameworkFacade,
+                mWifiNative, mCoexManager, makeBatteryManager(), mInterfaceConflictManager,
                 mCountryCode.getCountryCode(), listener, callback, mWifiApConfigStore,
                 config, mWifiMetrics, mSarManager, mWifiDiagnostics,
                 new SoftApNotifier(mContext, mFrameworkFacade, mWifiNotificationManager),
@@ -1119,6 +1128,11 @@ public class WifiInjector {
         return mWifiDialogManager;
     }
 
+    @NonNull
+    public SsidTranslator getSsidTranslator() {
+        return mSsidTranslator;
+    }
+
     public BuildProperties getBuildProperties() {
         return mBuildProperties;
     }
@@ -1145,5 +1159,15 @@ public class WifiInjector {
     @NonNull
     public BufferedReader createBufferedReader(String filename) throws FileNotFoundException {
         return new BufferedReader(new FileReader(filename));
+    }
+
+    @NonNull
+    public LocalLog getWifiAwareLocalLog() {
+        return mWifiAwareLocalLog;
+    }
+
+    @NonNull
+    public WifiKeyStore getWifiKeyStore() {
+        return mWifiKeyStore;
     }
 }
