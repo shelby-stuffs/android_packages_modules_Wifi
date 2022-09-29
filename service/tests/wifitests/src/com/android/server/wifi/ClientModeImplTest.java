@@ -142,7 +142,6 @@ import android.os.Message;
 import android.os.Messenger;
 import android.os.PowerManager;
 import android.os.Process;
-import android.os.UserHandle;
 import android.os.test.TestLooper;
 import android.provider.Settings;
 import android.telephony.TelephonyManager;
@@ -464,6 +463,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     static final WifiSsid TEST_WIFI_SSID1 = WifiSsid.fromUtf8Text(SSID_NO_QUOTE1);
     static final String   TEST_BSSID_STR = "01:02:03:04:05:06";
     static final String   TEST_BSSID_STR1 = "02:01:04:03:06:05";
+    static final String   TEST_BSSID_STR2 = "02:01:04:03:06:04";
     static final int      sFreq = 2437;
     static final int      sFreq1 = 5240;
     static final String   WIFI_IFACE_NAME = "mockWlan";
@@ -2787,18 +2787,26 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     @Test
-    public void testSyncGetCurrentNetwork() throws Exception {
-        // syncGetCurrentNetwork() returns null when disconnected
-        mLooper.startAutoDispatch();
-        assertNull(mCmi.syncGetCurrentNetwork());
-        mLooper.stopAutoDispatch();
-
+    public void testGetCurrentNetwork() throws Exception {
+        // getCurrentNetwork() returns null when disconnected
+        assertNull(mCmi.getCurrentNetwork());
         connect();
 
-        // syncGetCurrentNetwork() returns non-null Network when connected
-        mLooper.startAutoDispatch();
-        assertEquals(mNetwork, mCmi.syncGetCurrentNetwork());
-        mLooper.stopAutoDispatch();
+        assertEquals("L3ConnectedState", getCurrentState().getName());
+        // getCurrentNetwork() returns non-null Network when connected
+        assertEquals(mNetwork, mCmi.getCurrentNetwork());
+        // Now trigger disconnect
+        mCmi.disconnect();
+        DisconnectEventInfo disconnectEventInfo =
+                new DisconnectEventInfo(mConnectedNetwork.SSID, TEST_BSSID_STR, 0, false);
+        mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
+        mLooper.dispatchAll();
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(0, WifiSsid.fromUtf8Text(mConnectedNetwork.SSID),
+                        TEST_BSSID_STR, SupplicantState.DISCONNECTED));
+        mLooper.dispatchAll();
+        assertEquals("DisconnectedState", getCurrentState().getName());
+        assertNull(mCmi.getCurrentNetwork());
     }
 
     /**
@@ -8548,6 +8556,24 @@ public class ClientModeImplTest extends WifiBaseTest {
         info.links[1].staMacAddress = TEST_MLO_LINK_ADDR_1;
 
         when(mWifiNative.getConnectionMloLinksInfo(WIFI_IFACE_NAME)).thenReturn(info);
+    }
+
+    /**
+     * Verify Affiliated link BSSID matching
+     */
+    @Test
+    public  void testAffiliatedLinkBssidMatch() throws Exception {
+        setConnection();
+        setScanResultWithMloInfo();
+        // Associate
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+        // Validate Affiliated BSSID match
+        assertTrue(mCmi.isAffiliatedLinkBssid(MacAddress.fromString(TEST_BSSID_STR)));
+        assertTrue(mCmi.isAffiliatedLinkBssid(MacAddress.fromString(TEST_BSSID_STR1)));
+        assertFalse(mCmi.isAffiliatedLinkBssid(MacAddress.fromString(TEST_BSSID_STR2)));
     }
 
     /**

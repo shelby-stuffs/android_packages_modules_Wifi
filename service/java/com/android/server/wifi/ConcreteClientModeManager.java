@@ -26,6 +26,7 @@ import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
 import android.net.DhcpResultsParcelable;
+import android.net.MacAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -895,7 +896,8 @@ public class ConcreteClientModeManager implements ClientModeManager {
                             Log.e(getTag(), "Failed to create ClientInterface. Sit in Idle");
                             takeBugReportInterfaceFailureIfNeeded(
                                     "Wi-Fi BugReport (scan STA interface failure): please report "
-                                            + "it through BetterBug app");
+                                            + "it through BetterBug app",
+                                    "Failed to create client interface in idle state");
                             mModeListener.onStartFailure(ConcreteClientModeManager.this);
                             break;
                         }
@@ -961,7 +963,8 @@ public class ConcreteClientModeManager implements ClientModeManager {
                                     WifiManager.WIFI_STATE_UNKNOWN);
                             takeBugReportInterfaceFailureIfNeeded(
                                     "Wi-Fi BugReport (STA interface failure): please report it "
-                                            + "through BetterBug app");
+                                            + "through BetterBug app",
+                                    "Fail to switch to connection mode in started state");
                             mModeListener.onStartFailure(ConcreteClientModeManager.this);
                             break;
                         }
@@ -1205,9 +1208,9 @@ public class ConcreteClientModeManager implements ClientModeManager {
         }
     }
 
-    private void takeBugReportInterfaceFailureIfNeeded(String bugTitle) {
+    private void takeBugReportInterfaceFailureIfNeeded(String bugTitle, String bugDetail) {
         if (mWifiInjector.getDeviceConfigFacade().isInterfaceFailureBugreportEnabled()) {
-            mWifiInjector.getWifiDiagnostics().takeBugReport(bugTitle, bugTitle);
+            mWifiInjector.getWifiDiagnostics().takeBugReport(bugTitle, bugDetail);
         }
     }
 
@@ -1295,8 +1298,8 @@ public class ConcreteClientModeManager implements ClientModeManager {
     }
 
     @Override
-    public Network syncGetCurrentNetwork() {
-        return getClientMode().syncGetCurrentNetwork();
+    public Network getCurrentNetwork() {
+        return getClientMode().getCurrentNetwork();
     }
 
     @Override
@@ -1509,5 +1512,10 @@ public class ConcreteClientModeManager implements ClientModeManager {
     @Override
     public void updateCapabilities() {
         getClientMode().updateCapabilities();
+    }
+
+    @Override
+    public boolean isAffiliatedLinkBssid(MacAddress bssid) {
+        return getClientMode().isAffiliatedLinkBssid(bssid);
     }
 }

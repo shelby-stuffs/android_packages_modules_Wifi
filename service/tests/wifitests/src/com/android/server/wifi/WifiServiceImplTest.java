@@ -124,6 +124,7 @@ import android.net.DhcpInfo;
 import android.net.DhcpOption;
 import android.net.DhcpResultsParcelable;
 import android.net.MacAddress;
+import android.net.Network;
 import android.net.NetworkStack;
 import android.net.Uri;
 import android.net.wifi.CoexUnsafeChannel;
@@ -318,6 +319,8 @@ public class WifiServiceImplTest extends WifiBaseTest {
     private Bundle mAttribution = new Bundle();
     private static final String DPP_URI = "DPP:some_dpp_uri";
     private static final String DPP_PRODUCT_INFO = "DPP:some_dpp_uri_info";
+    private static final WorkSource SETTINGS_WORKSOURCE =
+            new WorkSource(Process.SYSTEM_UID, "system-service");
 
     private final ArgumentCaptor<BroadcastReceiver> mBroadcastReceiverCaptor =
             ArgumentCaptor.forClass(BroadcastReceiver.class);
@@ -2804,6 +2807,36 @@ public class WifiServiceImplTest extends WifiBaseTest {
         ConcreteClientModeManager secondaryCmm = mock(ConcreteClientModeManager.class);
         when(secondaryCmm.getRequestorWs())
                 .thenReturn(new WorkSource(Binder.getCallingUid(), TEST_PACKAGE));
+        when(secondaryCmm.syncRequestConnectionInfo()).thenReturn(wifiInfo);
+        when(mActiveModeWarden.getClientModeManagersInRoles(
+                ROLE_CLIENT_LOCAL_ONLY, ROLE_CLIENT_SECONDARY_LONG_LIVED))
+                .thenReturn(Arrays.asList(secondaryCmm));
+
+        mLooper.startAutoDispatch();
+        WifiInfo connectionInfo = parcelingRoundTrip(
+                mWifiServiceImpl.getConnectionInfo(TEST_PACKAGE, TEST_FEATURE_ID));
+        mLooper.stopAutoDispatchAndIgnoreExceptions();
+
+        assertEquals(TEST_SSID_WITH_QUOTES, connectionInfo.getSSID());
+        assertEquals(TEST_BSSID, connectionInfo.getBSSID());
+        assertEquals(TEST_NETWORK_ID, connectionInfo.getNetworkId());
+        assertEquals(TEST_FQDN, connectionInfo.getPasspointFqdn());
+        assertEquals(TEST_FRIENDLY_NAME, connectionInfo.getPasspointProviderFriendlyName());
+    }
+
+    /**
+     * Test that connected SSID and BSSID for secondary CMM are exposed to an app that requests
+     * the second STA on a device that supports STA + STA. The request WorkSource of CMM is settings
+     * promoted.
+     */
+    @Test
+    public void testConnectedIdsAreVisibleFromAppRequestingSecondaryCmmWIthPromotesSettingsWs()
+            throws Exception {
+        WifiInfo wifiInfo = setupForGetConnectionInfo();
+        ConcreteClientModeManager secondaryCmm = mock(ConcreteClientModeManager.class);
+        WorkSource ws = new WorkSource(Binder.getCallingUid(), TEST_PACKAGE);
+        ws.add(SETTINGS_WORKSOURCE);
+        when(secondaryCmm.getRequestorWs()).thenReturn(ws);
         when(secondaryCmm.syncRequestConnectionInfo()).thenReturn(wifiInfo);
         when(mActiveModeWarden.getClientModeManagersInRoles(
                 ROLE_CLIENT_LOCAL_ONLY, ROLE_CLIENT_SECONDARY_LONG_LIVED))
@@ -7738,7 +7771,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         when(originalCaller.getUid()).thenReturn(OTHER_TEST_UID);
         when(originalCaller.getPackageName()).thenReturn(TEST_PACKAGE_NAME_OTHER);
         when(attributionSource.getNext()).thenReturn(originalCaller);
-        // mock the original caller to be device admin
+        // mock the original caller to be device admin via the isAdmin check
         when(mWifiPermissionsUtil.isAdmin(OTHER_TEST_UID, TEST_PACKAGE_NAME_OTHER))
                 .thenReturn(true);
         mWifiServiceImpl.allowAutojoinGlobal(true, TEST_PACKAGE_NAME, mAttribution);
@@ -7751,6 +7784,13 @@ public class WifiServiceImplTest extends WifiBaseTest {
         mWifiServiceImpl.allowAutojoinGlobal(false, TEST_PACKAGE_NAME, mAttribution);
         mLooper.dispatchAll();
         verify(mWifiConnectivityManager).setAutoJoinEnabledExternal(false, false);
+
+        // mock the original caller to be device admin via the isLegacyDeviceAdmin check
+        when(mWifiPermissionsUtil.isLegacyDeviceAdmin(OTHER_TEST_UID, TEST_PACKAGE_NAME_OTHER))
+                .thenReturn(true);
+        mWifiServiceImpl.allowAutojoinGlobal(true, TEST_PACKAGE_NAME, mAttribution);
+        mLooper.dispatchAll();
+        verify(mWifiConnectivityManager, times(2)).setAutoJoinEnabledExternal(true, true);
     }
 
     @Test
@@ -10584,5 +10624,28 @@ public class WifiServiceImplTest extends WifiBaseTest {
         WifiConfiguration config = WifiConfigurationTestUtil.createOpenNetwork(TEST_SSID);
         assertEquals(-1, mWifiServiceImpl.addOrUpdateNetwork(config, TEST_PACKAGE_NAME,
                 mAttribution));
+    }
+
+    /**
+     * Tests that {@link WifiServiceImpl#getCurrentNetwork} throws
+     * {@link SecurityException} if the caller doesn't have the necessary permissions.
+     */
+    @Test(expected = SecurityException.class)
+    public void testGetCurrentNetworkNoPermission() throws Exception {
+        doThrow(SecurityException.class)
+                .when(mContext).enforceCallingOrSelfPermission(eq(ACCESS_WIFI_STATE), any());
+        mWifiServiceImpl.getCurrentNetwork();
+    }
+
+    /**
+     * Verifies that WifiServiceImpl#getCurrentNetwork() returns the current Wifi network.
+     */
+    @Test
+    public void testGetCurrentNetworkWithNetworkSettingsPermission() throws Exception {
+        when(mContext.checkPermission(eq(android.Manifest.permission.NETWORK_SETTINGS),
+                anyInt(), anyInt())).thenReturn(PackageManager.PERMISSION_GRANTED);
+        Network mockNetwork = mock(Network.class);
+        when(mActiveModeWarden.getCurrentNetwork()).thenReturn(mockNetwork);
+        assertEquals(mockNetwork, mWifiServiceImpl.getCurrentNetwork());
     }
 }

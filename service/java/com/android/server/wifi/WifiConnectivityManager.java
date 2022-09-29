@@ -32,6 +32,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.IpConfiguration;
 import android.net.MacAddress;
 import android.net.wifi.IPnoScanResultsCallback;
 import android.net.wifi.ScanResult;
@@ -63,6 +64,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.modules.utils.HandlerExecutor;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.hotspot2.PasspointManager;
+import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.wifi.resources.R;
 
 import java.io.FileDescriptor;
@@ -175,6 +177,7 @@ public class WifiConnectivityManager {
     private final DeviceConfigFacade mDeviceConfigFacade;
     private final ActiveModeWarden mActiveModeWarden;
     private final FrameworkFacade mFrameworkFacade;
+    private final WifiPermissionsUtil mWifiPermissionsUtil;
 
     private WifiScanner mScanner;
     private final MultiInternetManager mMultiInternetManager;
@@ -411,6 +414,16 @@ public class WifiConnectivityManager {
         localLog(listenerName + ":secondaryCmmCandidate "
                 + secondaryCmmCandidate.getNetworkSelectionStatus().getCandidate().SSID + " / "
                 + secondaryCmmCandidate.getNetworkSelectionStatus().getCandidate().BSSID);
+        // Check if secondary candidate is the same SSID and network id with primary.
+        final boolean isDbsAp = TextUtils.equals(primaryInfo.getSSID(),
+                secondaryCmmCandidate.SSID) && (primaryInfo.getNetworkId()
+                == secondaryCmmCandidate.networkId);
+        final boolean isUsingStaticIp =
+                (secondaryCmmCandidate.getIpAssignment() == IpConfiguration.IpAssignment.STATIC);
+        if (isDbsAp && isUsingStaticIp) {
+            localLog(listenerName + ": Can't connect to DBS AP with Static IP.");
+            return false;
+        }
 
         // At this point secondaryCmmCandidate must be multi internet.
         final WorkSource secondaryRequestorWs = mMultiInternetConnectionRequestorWs;
@@ -459,10 +472,6 @@ public class WifiConnectivityManager {
                     // Set the concrete client mode manager to secondary internet usage.
                     ConcreteClientModeManager ccm = (ConcreteClientModeManager) cm;
                     ccm.setSecondaryInternet(true);
-                    // Check if secondary candidate is the same SSID and network Id with primary.
-                    final boolean isDbsAp = TextUtils.equals(primaryInfo.getSSID(),
-                            secondaryCmmCandidate.SSID) && (primaryInfo.getNetworkId()
-                            == secondaryCmmCandidate.networkId);
                     ccm.setSecondaryInternetDbsAp(isDbsAp);
                     localLog(listenerName + ": WNS candidate(secondary)-"
                             + secondaryCmmCandidate.SSID + " / "
@@ -851,6 +860,9 @@ public class WifiConnectivityManager {
 
         @Override
         public void onResults(WifiScanner.ScanData[] results) {
+            if (mIsLocationModeEnabled) {
+                mExternalPnoScanRequestManager.onScanResultsAvailable(mScanDetails);
+            }
             if (!mWifiEnabled || !mAutoJoinEnabled) {
                 clearScanDetails();
                 mWaitForFullBandScanResults = false;
@@ -1078,6 +1090,9 @@ public class WifiConnectivityManager {
                 }
                 mScanDetails.add(new ScanDetail(result));
             }
+            if (mIsLocationModeEnabled) {
+                mExternalPnoScanRequestManager.onScanResultsAvailable(mScanDetails);
+            }
 
             // Create a new list to avoid looping call trigger concurrent exception.
             List<ScanDetail> scanDetailList = new ArrayList<>(mScanDetails);
@@ -1102,9 +1117,6 @@ public class WifiConnectivityManager {
                             resetLowRssiNetworkRetryDelay();
                         }
                     });
-            if (mIsLocationModeEnabled) {
-                mExternalPnoScanRequestManager.onPnoNetworkFound(results);
-            }
         }
     }
 
@@ -1228,7 +1240,8 @@ public class WifiConnectivityManager {
             FrameworkFacade frameworkFacade,
             WifiGlobals wifiGlobals,
             ExternalPnoScanRequestManager externalPnoScanRequestManager,
-            @NonNull SsidTranslator ssidTranslator) {
+            @NonNull SsidTranslator ssidTranslator,
+            WifiPermissionsUtil wifiPermissionsUtil) {
         mContext = context;
         mScoringParams = scoringParams;
         mConfigManager = configManager;
@@ -1255,6 +1268,7 @@ public class WifiConnectivityManager {
         mPowerManager = mContext.getSystemService(PowerManager.class);
         mExternalPnoScanRequestManager = externalPnoScanRequestManager;
         mSsidTranslator = ssidTranslator;
+        mWifiPermissionsUtil = wifiPermissionsUtil;
 
         // Listen for screen state change events.
         // TODO: We should probably add a shared broadcast receiver in the wifi stack which
@@ -2763,7 +2777,8 @@ public class WifiConnectivityManager {
             mOpenNetworkNotifier.handleConnectionFailure();
             // Only attempt to reconnect when connection on the primary CMM fails, since MBB
             // CMM will be destroyed after the connection failure.
-            if (clientModeManager.getRole() == ROLE_CLIENT_PRIMARY) {
+            if (clientModeManager.getRole() == ROLE_CLIENT_PRIMARY
+                    && !mWifiPermissionsUtil.isAdminRestrictedNetwork(config)) {
                 retryConnectionOnLatestCandidates(clientModeManager, bssid, config,
                         failureCode == FAILURE_AUTHENTICATION_FAILURE
                                 && failureReason == AUTH_FAILURE_EAP_FAILURE);

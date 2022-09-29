@@ -480,7 +480,7 @@ public class WifiInjector {
                 mClock, mConnectivityLocalLog, mWifiScoreCard, mWifiBlocklistMonitor,
                 mWifiChannelUtilizationScan, mPasspointManager, mMultiInternetManager,
                 mDeviceConfigFacade, mActiveModeWarden, mFrameworkFacade, mWifiGlobals,
-                mExternalPnoScanRequestManager, mSsidTranslator);
+                mExternalPnoScanRequestManager, mSsidTranslator, mWifiPermissionsUtil);
         mMboOceController = new MboOceController(makeTelephonyManager(), mActiveModeWarden);
         mCountryCode = new WifiCountryCode(mContext, mActiveModeWarden,
                 mCmiMonitor, mWifiNative, mSettingsConfigStore);
@@ -759,7 +759,7 @@ public class WifiInjector {
             boolean verboseLoggingEnabled) {
         return new SoftApManager(mContext, mWifiHandlerThread.getLooper(), mFrameworkFacade,
                 mWifiNative, mCoexManager, makeBatteryManager(), mInterfaceConflictManager,
-                mCountryCode.getCountryCode(), listener, callback, mWifiApConfigStore,
+                listener, callback, mWifiApConfigStore,
                 config, mWifiMetrics, mSarManager, mWifiDiagnostics,
                 new SoftApNotifier(mContext, mFrameworkFacade, mWifiNotificationManager),
                 mCmiMonitor, mActiveModeWarden, mClock.getElapsedSinceBootMillis(),
