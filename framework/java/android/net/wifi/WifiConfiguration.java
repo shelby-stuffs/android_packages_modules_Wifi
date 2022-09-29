@@ -1006,7 +1006,7 @@ public class WifiConfiguration implements Parcelable {
      */
     public int networkId;
 
-    // Fixme We need remove this field to use only Quality network selection status only
+    // TODO (b/235236813): Remove this field and use quality network selection status instead.
     /**
      * The current status of this network configuration entry.
      * @see Status
@@ -2367,6 +2367,8 @@ public class WifiConfiguration implements Parcelable {
          */
         private long mTemporarilyDisabledTimestamp = INVALID_NETWORK_SELECTION_DISABLE_TIMESTAMP;
 
+        private long mTemporarilyDisabledEndTime = INVALID_NETWORK_SELECTION_DISABLE_TIMESTAMP;
+
         /**
          * counter for each Network selection disable reason
          */
@@ -2745,8 +2747,7 @@ public class WifiConfiguration implements Parcelable {
         }
 
         /**
-         * @param timeStamp Set when current network is disabled in millisecond since January 1,
-         * 1970 00:00:00.0 UTC
+         * @param timeStamp Set when current network is disabled in millisecond since boot.
          * @hide
          */
         public void setDisableTime(long timeStamp) {
@@ -2754,11 +2755,28 @@ public class WifiConfiguration implements Parcelable {
         }
 
         /**
-         * Returns when the current network was disabled, in milliseconds since January 1,
-         * 1970 00:00:00.0 UTC.
+         * Returns when the current network was disabled, in milliseconds since boot.
          */
         public long getDisableTime() {
             return mTemporarilyDisabledTimestamp;
+        }
+
+        /**
+         * Set the expected time for this WifiConfiguration to get re-enabled.
+         * Timestamp is in milliseconds since boot.
+         * @hide
+         */
+        public void setDisableEndTime(long timestamp) {
+            mTemporarilyDisabledEndTime = timestamp;
+        }
+
+        /**
+         * Returns the expected time for this WifiConfiguration to get re-enabled.
+         * Timestamp is in milliseconds since boot.
+         * @hide
+         */
+        public long getDisableEndTime() {
+            return mTemporarilyDisabledEndTime;
         }
 
         /**
@@ -2860,6 +2878,7 @@ public class WifiConfiguration implements Parcelable {
                         source.mNetworkSeclectionDisableCounter[index];
             }
             mTemporarilyDisabledTimestamp = source.mTemporarilyDisabledTimestamp;
+            mTemporarilyDisabledEndTime = source.mTemporarilyDisabledEndTime;
             mNetworkSelectionBSSID = source.mNetworkSelectionBSSID;
             setSeenInLastQualifiedNetworkSelection(source.getSeenInLastQualifiedNetworkSelection());
             setCandidate(source.getCandidate());
@@ -2881,6 +2900,7 @@ public class WifiConfiguration implements Parcelable {
                 dest.writeInt(getDisableReasonCounter(index));
             }
             dest.writeLong(getDisableTime());
+            dest.writeLong(getDisableEndTime());
             dest.writeString(getNetworkSelectionBSSID());
             if (getConnectChoice() != null) {
                 dest.writeInt(CONNECT_CHOICE_EXISTS);
@@ -2904,6 +2924,7 @@ public class WifiConfiguration implements Parcelable {
                 setDisableReasonCounter(index, in.readInt());
             }
             setDisableTime(in.readLong());
+            setDisableEndTime(in.readLong());
             setNetworkSelectionBSSID(in.readString());
             if (in.readInt() == CONNECT_CHOICE_EXISTS) {
                 setConnectChoice(in.readString());
@@ -3277,6 +3298,7 @@ public class WifiConfiguration implements Parcelable {
                 .append(" CarrierId: ").append(this.carrierId)
                 .append(" SubscriptionId: ").append(this.subscriptionId)
                 .append(" SubscriptionGroup: ").append(this.mSubscriptionGroup)
+                .append(" Currently Connected: ").append(this.isCurrentlyConnected)
                 .append('\n');
 
 
@@ -3467,6 +3489,17 @@ public class WifiConfiguration implements Parcelable {
                 sbuf.append(" blackListed since <incorrect>");
             } else {
                 sbuf.append(" blackListed: ").append(Long.toString(diff / 1000)).append("sec ");
+            }
+        }
+        if (mNetworkSelectionStatus.getDisableEndTime()
+                != NetworkSelectionStatus.INVALID_NETWORK_SELECTION_DISABLE_TIMESTAMP) {
+            sbuf.append('\n');
+            long diff = mNetworkSelectionStatus.getDisableEndTime() - now_ms;
+            if (diff <= 0) {
+                sbuf.append(" blockListed remaining time <incorrect>");
+            } else {
+                sbuf.append(" blocklist end in: ").append(Long.toString(diff / 1000))
+                        .append("sec ");
             }
         }
         if (creatorUid != 0) sbuf.append(" cuid=" + creatorUid);
@@ -3953,6 +3986,7 @@ public class WifiConfiguration implements Parcelable {
             mDppConnector = source.mDppConnector.clone();
             mDppCSignKey = source.mDppCSignKey.clone();
             mDppNetAccessKey = source.mDppNetAccessKey.clone();
+            isCurrentlyConnected = source.isCurrentlyConnected;
         }
     }
 
@@ -4047,6 +4081,7 @@ public class WifiConfiguration implements Parcelable {
         dest.writeByteArray(mDppConnector);
         dest.writeByteArray(mDppCSignKey);
         dest.writeByteArray(mDppNetAccessKey);
+        dest.writeBoolean(isCurrentlyConnected);
     }
 
     /** Implement the Parcelable interface {@hide} */
@@ -4143,6 +4178,7 @@ public class WifiConfiguration implements Parcelable {
                 config.mDppConnector = in.createByteArray();
                 config.mDppCSignKey = in.createByteArray();
                 config.mDppNetAccessKey = in.createByteArray();
+                config.isCurrentlyConnected = in.readBoolean();
                 return config;
             }
 
@@ -4180,6 +4216,17 @@ public class WifiConfiguration implements Parcelable {
      * @hide
      */
     public boolean isMostRecentlyConnected = false;
+
+    /**
+     * Whether the network is currently connected or not.
+     * Note: May be true even if {@link #status} is not CURRENT, since a config
+     *       can be connected, but disabled for network selection.
+     * TODO (b/235236813): This field may be redundant, since we have information
+     *       like {@link #status} and quality network selection status. May need
+     *       to clean up the fields used for network selection.
+     * @hide
+     */
+    public boolean isCurrentlyConnected = false;
 
     /**
      * Whether the key mgmt indicates if the WifiConfiguration needs a preSharedKey or not.

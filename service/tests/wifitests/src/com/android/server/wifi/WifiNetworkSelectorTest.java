@@ -368,6 +368,29 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
     }
 
     @Test
+    public void testNetworkInsufficientWhenSufficiencyCheckDisabled() {
+        // mock current network to be connected
+        WifiConfiguration testConfig = WifiConfigurationTestUtil.createOpenNetwork();
+        when(mWifiInfo.getSupplicantState()).thenReturn(SupplicantState.COMPLETED);
+        when(mWifiConfigManager.getConfiguredNetwork(anyInt()))
+                .thenReturn(testConfig);
+
+        // verify the current network is sufficient
+        assertTrue(mWifiNetworkSelector.isNetworkSufficient(mWifiInfo));
+
+        // Set screen off and disable sufficiency check when the screen is off.
+        mWifiNetworkSelector.setScreenState(false);
+        mWifiNetworkSelector.setSufficiencyCheckEnabled(false, true);
+
+        // verify current network is no longer sufficient
+        assertFalse(mWifiNetworkSelector.isNetworkSufficient(mWifiInfo));
+
+        // Set screen on and verify the current network is sufficient again
+        mWifiNetworkSelector.setScreenState(true);
+        assertTrue(mWifiNetworkSelector.isNetworkSufficient(mWifiInfo));
+    }
+
+    @Test
     public void testNetworkInsufficientWhenMetered() {
         // mock current network to be connected
         WifiConfiguration testConfig = WifiConfigurationTestUtil.createOpenNetwork();
@@ -2065,7 +2088,7 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
         WifiConfiguration candidate = mWifiNetworkSelector.selectNetwork(candidates);
         // Check if the wifiConfig is updated with the latest
         verify(mWifiConfigManager).addOrUpdateNetwork(existingConfig,
-                existingConfig.creatorUid, existingConfig.creatorName);
+                existingConfig.creatorUid, existingConfig.creatorName, false);
         assertEquals(ssids[0], candidate.SSID);
     }
 

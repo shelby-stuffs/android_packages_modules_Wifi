@@ -1734,6 +1734,11 @@ public class WifiP2pManager {
      * stop through listener callbacks {@link ActionListener#onSuccess} or
      * {@link ActionListener#onFailure}.
      *
+     * <p> If P2P Group is in the process of being created, this call will fail (report failure via
+     * {@code listener}. The applicantion should listen to
+     * {@link #WIFI_P2P_CONNECTION_CHANGED_ACTION} to ensure the state is not
+     * {@link android.net.NetworkInfo.State#CONNECTING} and repeat calling when the state changes.
+     *
      * @param channel is the channel created at {@link #initialize}
      * @param listener for callbacks on success or failure. Can be null.
      */
@@ -2323,10 +2328,7 @@ public class WifiP2pManager {
      * @param channel is the channel created at {@link #initialize}
      * @param wfdInfo the Wifi Display information to set
      * @param listener for callbacks on success or failure. Can be null.
-     *
-     * @hide
      */
-    @SystemApi
     @RequiresPermission(android.Manifest.permission.CONFIGURE_WIFI_DISPLAY)
     public void setWfdInfo(@NonNull Channel channel, @NonNull WifiP2pWfdInfo wfdInfo,
             @Nullable ActionListener listener) {
@@ -2835,6 +2837,11 @@ public class WifiP2pManager {
      * {@link ExternalApproverRequestListener#onConnectionRequested(int, WifiP2pConfig, WifiP2pDevice)}
      * is called. When a WPS PIN is generated,
      * {@link ExternalApproverRequestListener#onPinGenerated(MacAddress, String)} is called.
+     * <p>
+     * The application must have {@link android.Manifest.permission#NEARBY_WIFI_DEVICES} with
+     * android:usesPermissionFlags="neverForLocation". If the application does not declare
+     * android:usesPermissionFlags="neverForLocation", then it must also have
+     * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
      *
      * @param c is the channel created at {@link #initialize(Context, Looper, ChannelListener)}.
      * @param deviceAddress the peer which is bound to the external approver.
@@ -2857,6 +2864,11 @@ public class WifiP2pManager {
     /**
      * Remove the external approver for a specific peer.
      *
+     * The application must have {@link android.Manifest.permission#NEARBY_WIFI_DEVICES} with
+     * android:usesPermissionFlags="neverForLocation". If the application does not declare
+     * android:usesPermissionFlags="neverForLocation", then it must also have
+     * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
+     *
      * @param c is the channel created at {@link #initialize(Context, Looper, ChannelListener)}.
      * @param deviceAddress the peer which is bound to the external approver.
      * @param listener for callback on success or failure.
@@ -2876,6 +2888,11 @@ public class WifiP2pManager {
 
     /**
      * Set the result for the incoming request from a specific peer.
+     *
+     * The application must have {@link android.Manifest.permission#NEARBY_WIFI_DEVICES} with
+     * android:usesPermissionFlags="neverForLocation". If the application does not declare
+     * android:usesPermissionFlags="neverForLocation", then it must also have
+     * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
      *
      * @param c is the channel created at {@link #initialize(Context, Looper, ChannelListener)}.
      * @param deviceAddress the peer which is bound to the external approver.
@@ -2898,6 +2915,11 @@ public class WifiP2pManager {
 
     /**
      * Set the result with PIN for the incoming request from a specific peer.
+     *
+     * The application must have {@link android.Manifest.permission#NEARBY_WIFI_DEVICES} with
+     * android:usesPermissionFlags="neverForLocation". If the application does not declare
+     * android:usesPermissionFlags="neverForLocation", then it must also have
+     * {@link android.Manifest.permission#ACCESS_FINE_LOCATION}.
      *
      * @param c is the channel created at {@link #initialize(Context, Looper, ChannelListener)}.
      * @param deviceAddress the peer which is bound to the external approver.

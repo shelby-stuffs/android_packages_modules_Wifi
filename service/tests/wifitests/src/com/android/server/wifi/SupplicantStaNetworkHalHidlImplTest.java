@@ -41,6 +41,7 @@ import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetworkCallback.Netwo
 import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetworkCallback.NetworkRequestEapSimUmtsAuthParams;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatus;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatusCode;
+import android.net.wifi.SecurityParams;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiEnterpriseConfig;
 import android.net.wifi.WifiManager;
@@ -977,6 +978,176 @@ public class SupplicantStaNetworkHalHidlImplTest extends WifiBaseTest {
         Map<String, String> networkExtras = new HashMap<>();
         assertTrue(mSupplicantNetwork.loadWifiConfiguration(loadConfig, networkExtras));
         WifiConfigurationTestUtil.assertConfigurationEqualForSupplicant(config, loadConfig);
+    }
+
+    /**
+     * Tests the PMF is disabled when the device supports multiple AKMs.
+     */
+    @Test
+    public void testPmfDisabledWhenAutoUpgradeOffloadIsSupportedAndSaeSelected() throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(true);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        // PSK and SAE is set and PMF is disable when SAE is selected.
+        assertEquals(ISupplicantStaNetwork.KeyMgmtMask.WPA_PSK,
+                (mSupplicantVariables.keyMgmtMask & ISupplicantStaNetwork.KeyMgmtMask.WPA_PSK));
+        assertEquals(android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork.KeyMgmtMask.SAE,
+                (mSupplicantVariables.keyMgmtMask & android.hardware.wifi.supplicant.V1_2
+                .ISupplicantStaNetwork.KeyMgmtMask.SAE));
+        assertEquals(false, mSupplicantVariables.requirePmf);
+    }
+
+    /**
+     * Tests the PMF is kept when the device does not support multiple AKMs.
+     */
+    @Test
+    public void testPmfEnabledWhenAutoUpgradeOffloadNotSupportedAndSaeSelected() throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(false);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        // Only SAE is set and PMF is enabled when SAE is selected.
+        assertEquals(0,
+                (mSupplicantVariables.keyMgmtMask & ISupplicantStaNetwork.KeyMgmtMask.WPA_PSK));
+        assertEquals(android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork.KeyMgmtMask.SAE,
+                (mSupplicantVariables.keyMgmtMask & android.hardware.wifi.supplicant.V1_2
+                .ISupplicantStaNetwork.KeyMgmtMask.SAE));
+        assertEquals(true, mSupplicantVariables.requirePmf);
+    }
+
+    /**
+     * Tests ciphers are merged when the device supports auto upgrade offload feature
+     * and when candidate security type is PSK.
+     */
+    @Test
+    public void testCiphersMergedWhenAutoUpgradeOffloadIsSupportedAndPskSelected()
+            throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(true);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        assertEquals(ISupplicantStaNetwork.PairwiseCipherMask.CCMP
+                | ISupplicantStaNetwork.PairwiseCipherMask.TKIP
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_256,
+                mSupplicantVariables.pairwiseCipherMask);
+        assertEquals(ISupplicantStaNetwork.GroupCipherMask.CCMP
+                | ISupplicantStaNetwork.GroupCipherMask.TKIP
+                | ISupplicantStaNetwork.GroupCipherMask.WEP40
+                | ISupplicantStaNetwork.GroupCipherMask.WEP104
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_256,
+                mSupplicantVariables.groupCipherMask);
+    }
+
+    /**
+     * Tests ciphers are not changed when the device does not supports auto upgrade offload feature
+     * and when candidate security type is PSK.
+     */
+    @Test
+    public void testCiphersNotChangedWhenAutoUpgradeOffloadNotSupportedAndPskSelected()
+            throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(false);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_PSK));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        assertEquals(ISupplicantStaNetwork.PairwiseCipherMask.CCMP
+                | ISupplicantStaNetwork.PairwiseCipherMask.TKIP,
+                mSupplicantVariables.pairwiseCipherMask);
+        assertEquals(ISupplicantStaNetwork.GroupCipherMask.CCMP
+                | ISupplicantStaNetwork.GroupCipherMask.TKIP
+                | ISupplicantStaNetwork.GroupCipherMask.WEP40
+                | ISupplicantStaNetwork.GroupCipherMask.WEP104,
+                mSupplicantVariables.groupCipherMask);
+    }
+
+    /**
+     * Tests ciphers are merged when the device supports auto upgrade offload feature
+     * and when candidate security type is SAE.
+     */
+    @Test
+    public void testCiphersMergedWhenAutoUpgradeOffloadIsSupportedAndSaeSelected()
+            throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(true);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        assertEquals(ISupplicantStaNetwork.PairwiseCipherMask.CCMP
+                | ISupplicantStaNetwork.PairwiseCipherMask.TKIP
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_256,
+                mSupplicantVariables.pairwiseCipherMask);
+        assertEquals(ISupplicantStaNetwork.GroupCipherMask.CCMP
+                | ISupplicantStaNetwork.GroupCipherMask.TKIP
+                | ISupplicantStaNetwork.GroupCipherMask.WEP40
+                | ISupplicantStaNetwork.GroupCipherMask.WEP104
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_256,
+                mSupplicantVariables.groupCipherMask);
+    }
+
+    /**
+     * Tests ciphers are not changed when the device does not supports auto upgrade offload feature
+     * and when candidate security type is SAE.
+     */
+    @Test
+    public void testCiphersNotChangedWhenAutoUpgradeOffloadNotSupportedAndSaeSelected()
+            throws Exception {
+        createSupplicantStaNetwork(SupplicantStaNetworkVersion.V1_4);
+        when(mWifiGlobals.isWpa3SaeUpgradeOffloadEnabled()).thenReturn(false);
+
+        WifiConfiguration config = WifiConfigurationTestUtil.createPskSaeNetwork();
+        config.getNetworkSelectionStatus().setCandidateSecurityParams(
+                SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE));
+        assertTrue(mSupplicantNetwork.saveWifiConfiguration(config));
+
+        assertEquals(ISupplicantStaNetwork.PairwiseCipherMask.CCMP
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.PairwiseCipherMask.GCMP_256,
+                mSupplicantVariables.pairwiseCipherMask);
+        assertEquals(ISupplicantStaNetwork.GroupCipherMask.CCMP
+                | android.hardware.wifi.supplicant.V1_4
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_128
+                | android.hardware.wifi.supplicant.V1_2
+                        .ISupplicantStaNetwork.GroupCipherMask.GCMP_256,
+                mSupplicantVariables.groupCipherMask);
     }
 
     /**

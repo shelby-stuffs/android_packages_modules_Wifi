@@ -127,7 +127,6 @@ public class WifiScoreCard {
     private final String mL2KeySeed;
     private MemoryStore mMemoryStore;
     private final DeviceConfigFacade mDeviceConfigFacade;
-    private final FrameworkFacade mFrameworkFacade;
     private final Context mContext;
     private final LocalLog mLocalLog = new LocalLog(256);
     private final long[][][] mL2ErrorAccPercent =
@@ -275,14 +274,13 @@ public class WifiScoreCard {
      * @param l2KeySeed is for making our L2Keys usable only on this device
      */
     public WifiScoreCard(Clock clock, String l2KeySeed, DeviceConfigFacade deviceConfigFacade,
-            FrameworkFacade frameworkFacade, Context context) {
+            Context context) {
         mClock = clock;
         mContext = context;
         mL2KeySeed = l2KeySeed;
         mPlaceholderPerBssid = new PerBssid("", MacAddress.fromString(DEFAULT_MAC_ADDRESS));
         mPlaceholderPerNetwork = new PerNetwork("");
         mDeviceConfigFacade = deviceConfigFacade;
-        mFrameworkFacade = frameworkFacade;
     }
 
     /**
@@ -1283,11 +1281,9 @@ public class WifiScoreCard {
          * Update link bandwidth estimates based on TrafficStats byte counts and radio on time
          */
         void updateLinkBandwidth(WifiLinkLayerStats oldStats, WifiLinkLayerStats newStats,
-                ExtendedWifiInfo wifiInfo) {
+                ExtendedWifiInfo wifiInfo, long txBytes, long rxBytes) {
             mBandwidthSampleValid[LINK_TX] = false;
             mBandwidthSampleValid[LINK_RX] = false;
-            long txBytes = mFrameworkFacade.getTotalTxBytes() - mFrameworkFacade.getMobileTxBytes();
-            long rxBytes = mFrameworkFacade.getTotalRxBytes() - mFrameworkFacade.getMobileRxBytes();
             // Sometimes TrafficStats byte counts return invalid values
             // Ignore next two polls if it happens
             boolean trafficValid = txBytes >= mLastTxBytes && rxBytes >= mLastRxBytes;
@@ -1443,7 +1439,7 @@ public class WifiScoreCard {
             int filterInKbps = mBandwidthSampleValid[link] ? mBandwidthSampleKbps[link] : avgKbps;
 
             long currTimeMs = mClock.getElapsedSinceBootMillis();
-            int timeDeltaSec = (int) (currTimeMs - mBandwidthSampleValidTimeMs[link]) / 1000;
+            int timeDeltaSec = (int) ((currTimeMs - mBandwidthSampleValidTimeMs[link]) / 1000);
 
             // If the operation condition changes since the last valid sample or the current sample
             // has higher BW, use a faster filter. Otherwise, use a slow filter

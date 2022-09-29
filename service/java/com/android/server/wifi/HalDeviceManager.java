@@ -53,6 +53,7 @@ import android.os.IHwBinder.DeathRecipient;
 import android.os.RemoteException;
 import android.os.WorkSource;
 import android.text.TextUtils;
+import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -112,6 +113,8 @@ public class HalDeviceManager {
     private ServiceManagerDeathRecipient mServiceManagerDeathRecipient;
     private boolean mIsBridgedSoftApSupported;
     private boolean mIsStaWithBridgedSoftApConcurrencySupported;
+    private boolean mWifiUserApprovalRequiredForD2dInterfacePriority;
+    private ArrayMap<IWifiIface, SoftApManager> mSoftApManagers = new ArrayMap<>();
 
     // cache the value for supporting vendor HAL or not
     private boolean mIsVendorHalSupported = false;
@@ -173,6 +176,8 @@ public class HalDeviceManager {
         mIsBridgedSoftApSupported = res.getBoolean(R.bool.config_wifiBridgedSoftApSupported);
         mIsStaWithBridgedSoftApConcurrencySupported =
                 res.getBoolean(R.bool.config_wifiStaWithBridgedSoftApConcurrencySupported);
+        mWifiUserApprovalRequiredForD2dInterfacePriority =
+                res.getBoolean(R.bool.config_wifiUserApprovalRequiredForD2dInterfacePriority);
         mClock = clock;
         mWifiInjector = wifiInjector;
         mEventHandler = handler;
@@ -266,8 +271,8 @@ public class HalDeviceManager {
      * Note: direct call to HIDL - failure is not-expected.
      */
     public void stop() {
-        stopWifi();
         synchronized (mLock) { // prevents race condition
+            stopWifi();
             mWifi = null;
         }
     }
@@ -356,49 +361,61 @@ public class HalDeviceManager {
     public IWifiApIface createApIface(
             long requiredChipCapabilities,
             @Nullable InterfaceDestroyedListener destroyedListener, @Nullable Handler handler,
-            @NonNull WorkSource requestorWs, boolean isBridged) {
-        return (IWifiApIface) createIface(isBridged ? HDM_CREATE_IFACE_AP_BRIDGE
+            @NonNull WorkSource requestorWs, boolean isBridged,
+            @NonNull SoftApManager softApManager) {
+        if (softApManager == null) {
+            Log.e(TAG, "Cannot create AP Iface with null SoftApManager");
+            return null;
+        }
+        IWifiApIface apIface = (IWifiApIface) createIface(isBridged ? HDM_CREATE_IFACE_AP_BRIDGE
                 : HDM_CREATE_IFACE_AP, requiredChipCapabilities, destroyedListener,
                 handler, requestorWs);
-    }
-
-    /**
-     * Create AP interface if possible (see createStaIface doc).
-     */
-    public IWifiApIface createApIface(
-            @Nullable InterfaceDestroyedListener destroyedListener, @Nullable Handler handler,
-            @NonNull WorkSource requestorWs, boolean isBridged) {
-        return (IWifiApIface) createApIface(CHIP_CAPABILITY_ANY,
-                destroyedListener, handler, requestorWs, isBridged);
+        if (apIface != null) {
+            mSoftApManagers.put(apIface, softApManager);
+        }
+        return apIface;
     }
 
     /**
      * Create P2P interface if possible (see createStaIface doc).
      */
-    public IWifiP2pIface createP2pIface(
+    public String createP2pIface(
             long requiredChipCapabilities,
             @Nullable InterfaceDestroyedListener destroyedListener,
             @Nullable Handler handler, @NonNull WorkSource requestorWs) {
-        return (IWifiP2pIface) createIface(HDM_CREATE_IFACE_P2P, requiredChipCapabilities,
-                destroyedListener, handler, requestorWs);
+        IWifiP2pIface iface = (IWifiP2pIface) createIface(HDM_CREATE_IFACE_P2P,
+                requiredChipCapabilities, destroyedListener, handler, requestorWs);
+        if (iface == null) {
+            return null;
+        }
+        String ifaceName = getName(iface);
+        if (TextUtils.isEmpty(ifaceName)) {
+            removeIface(iface);
+            return null;
+        }
+        mIWifiP2pIfaces.put(ifaceName, iface);
+        return ifaceName;
     }
 
     /**
      * Create P2P interface if possible (see createStaIface doc).
      */
-    public IWifiP2pIface createP2pIface(@Nullable InterfaceDestroyedListener destroyedListener,
+    public String createP2pIface(@Nullable InterfaceDestroyedListener destroyedListener,
             @Nullable Handler handler, @NonNull WorkSource requestorWs) {
-        return (IWifiP2pIface) createP2pIface(CHIP_CAPABILITY_ANY,
-                destroyedListener, handler, requestorWs);
+        return createP2pIface(CHIP_CAPABILITY_ANY, destroyedListener, handler, requestorWs);
     }
 
     /**
      * Create NAN interface if possible (see createStaIface doc).
      */
-    public IWifiNanIface createNanIface(@Nullable InterfaceDestroyedListener destroyedListener,
+    public WifiNanIface createNanIface(@Nullable InterfaceDestroyedListener destroyedListener,
             @Nullable Handler handler, @NonNull WorkSource requestorWs) {
-        return (IWifiNanIface) createIface(HDM_CREATE_IFACE_NAN, CHIP_CAPABILITY_ANY,
+        IWifiNanIface iface = (IWifiNanIface) createIface(HDM_CREATE_IFACE_NAN, CHIP_CAPABILITY_ANY,
                 destroyedListener, handler, requestorWs);
+        if (iface == null) {
+            return null;
+        }
+        return new WifiNanIface(iface);
     }
 
     /**
@@ -408,6 +425,27 @@ public class HalDeviceManager {
     public boolean removeIface(IWifiIface iface) {
         boolean success = removeIfaceInternal(iface, /* validateRttController */true);
         return success;
+    }
+
+    /**
+     * Wrapper around {@link #removeIface(IWifiIface)} for P2P ifaces.
+     */
+    public boolean removeP2pIface(String ifaceName) {
+        IWifiP2pIface iface = mIWifiP2pIfaces.get(ifaceName);
+        if (iface == null) return false;
+        if (!removeIface(iface)) {
+            Log.e(TAG, "Unable to remove p2p iface " + ifaceName);
+            return false;
+        }
+        mIWifiP2pIfaces.remove(ifaceName);
+        return true;
+    }
+
+    /**
+     * Wrapper around {@link #removeIface(IWifiIface)} for NAN ifaces.
+     */
+    public boolean removeNanIface(WifiNanIface iface) {
+        return removeIface(iface.getNanIface());
     }
 
     private InterfaceCacheEntry getInterfaceCacheEntry(IWifiIface iface) {
@@ -489,6 +527,15 @@ public class HalDeviceManager {
     }
 
     /**
+     * Wrapper around {@link #is24g5gDbsSupported(IWifiIface)} for P2P ifaces.
+     */
+    public boolean is24g5gDbsSupportedOnP2pIface(String ifaceName) {
+        IWifiP2pIface iface = mIWifiP2pIfaces.get(ifaceName);
+        if (iface == null) return false;
+        return is24g5gDbsSupported(iface);
+    }
+
+    /**
      * Indicate whether or not 5GHz/6GHz DBS is supported.
      *
      * @param iface The interface on the chip.
@@ -496,6 +543,15 @@ public class HalDeviceManager {
      */
     public boolean is5g6gDbsSupported(IWifiIface iface) {
         return isDbsSupported(iface, DBS_5G_6G_MASK);
+    }
+
+    /**
+     * Wrapper around {@link #is5g6gDbsSupported(IWifiIface)} for P2P ifaces.
+     */
+    public boolean is5g6gDbsSupportedOnP2pIface(String ifaceName) {
+        IWifiP2pIface iface = mIWifiP2pIfaces.get(ifaceName);
+        if (iface == null) return false;
+        return is5g6gDbsSupported(iface);
     }
 
     /**
@@ -508,7 +564,7 @@ public class HalDeviceManager {
      * iface or existing apps release their request for the iface). This API can be invoked multiple
      * times to replace the entire requestor info for the provided iface.
      *
-     * Note: This is is wholesale replace of the requestor info. The corresponding client is
+     * Note: This is a wholesale replacement of the requestor info. The corresponding client is
      * responsible for individual add/remove of apps in the WorkSource passed in.
      */
     public boolean replaceRequestorWs(@NonNull IWifiIface iface,
@@ -529,6 +585,24 @@ public class HalDeviceManager {
             cacheEntry.requestorWsHelper = mWifiInjector.makeWsHelper(newRequestorWs);
             return true;
         }
+    }
+
+    /**
+     * Wrapper around {@link #replaceRequestorWs(IWifiIface, WorkSource)} for P2P ifaces.
+     */
+    public boolean replaceRequestorWsForP2pIface(String ifaceName,
+            @NonNull WorkSource newRequestorWs) {
+        IWifiP2pIface iface = mIWifiP2pIfaces.get(ifaceName);
+        if (iface == null) return false;
+        return replaceRequestorWs(iface, newRequestorWs);
+    }
+
+    /**
+     * Wrapper around {@link #replaceRequestorWs(IWifiIface, WorkSource)} for NAN ifaces.
+     */
+    public boolean replaceRequestorWsForNanIface(@NonNull WifiNanIface iface,
+            @NonNull WorkSource newRequestorWs) {
+        return replaceRequestorWs(iface.getNanIface(), newRequestorWs);
     }
 
     /**
@@ -559,6 +633,10 @@ public class HalDeviceManager {
      * an existing RTT controller is destroyed (the previous copies must be discarded by the
      * recipient).
      *
+     * Each listener should maintain a single callback object to register here. The callback can
+     * be registered upon the listener's initialization, and re-registered on HDM status changes, if
+     * {@link #isStarted} is true.
+     *
      * @param callback InterfaceRttControllerLifecycleCallback object.
      * @param handler Handler on which to dispatch callback
      */
@@ -585,11 +663,11 @@ public class HalDeviceManager {
                 return;
             }
 
-            if (mIWifiRttController == null) {
-                mIWifiRttController = createRttControllerIfPossible();
+            if (mWifiRttControllerHal == null) {
+                mWifiRttControllerHal = createRttControllerIfPossible();
             }
-            if (mIWifiRttController != null) {
-                proxy.onNewRttController(mIWifiRttController);
+            if (mWifiRttControllerHal != null) {
+                proxy.onNewRttController(mWifiRttControllerHal);
             }
         }
     }
@@ -664,12 +742,12 @@ public class HalDeviceManager {
          *
          * @param controller The RTT controller object.
          */
-        void onNewRttController(@NonNull IWifiRttController controller);
+        void onNewRttController(@NonNull WifiRttControllerHal controller);
 
         /**
          * Called when the previously provided RTT controller is destroyed. Clients must discard
          * their copy. A new copy may be provided later by
-         * {@link #onNewRttController(IWifiRttController)}.
+         * {@link #onNewRttController(WifiRttControllerHal)}.
          */
         void onRttControllerDestroyed();
     }
@@ -788,6 +866,10 @@ public class HalDeviceManager {
 
         IfaceCreationData creationData;
         synchronized (mLock) {
+            if (mWifi == null) {
+                Log.e(TAG, "reportImpactToCreateIface: null IWifi -- ifaceType=" + createIfaceType);
+                return null;
+            }
             WifiChipInfo[] chipInfos = getAllChipInfo();
             if (chipInfos == null) {
                 Log.e(TAG, "createIface: no chip info found");
@@ -883,7 +965,8 @@ public class HalDeviceManager {
 
     private IServiceManager mServiceManager;
     private IWifi mWifi;
-    private IWifiRttController mIWifiRttController;
+    private WifiRttControllerHal mWifiRttControllerHal;
+    private HashMap<String, IWifiP2pIface> mIWifiP2pIfaces = new HashMap<>();
     private final WifiEventCallback mWifiEventCallback = new WifiEventCallback();
     private final WifiEventCallbackV15 mWifiEventCallbackV15 = new WifiEventCallbackV15();
     private final Set<ManagerStatusListenerProxy> mManagerStatusListeners = new HashSet<>();
@@ -1025,9 +1108,10 @@ public class HalDeviceManager {
         managerStatusListenerDispatch();
         dispatchAllDestroyedListeners();
 
-        mIWifiRttController = null;
+        mWifiRttControllerHal = null;
         dispatchRttControllerLifecycleOnDestroyed();
         mRttControllerLifecycleCallbacks.clear();
+        mIWifiP2pIfaces.clear();
     }
 
     private class ServiceManagerDeathRecipient implements DeathRecipient {
@@ -1137,6 +1221,35 @@ public class HalDeviceManager {
     }
 
     /**
+     * Register the wifi HAL event callback. Reset the Wifi HAL interface when it fails.
+     * @return true if success.
+     */
+    private boolean registerWifiHalEventCallback() {
+        try {
+            if (mWifi == null) {
+                Log.e(TAG, "registerWifiHalEventCallback called but mWifi is null!?");
+                return false;
+            }
+            WifiStatus status;
+            android.hardware.wifi.V1_5.IWifi iWifiV15 = getWifiServiceForV1_5Mockable(mWifi);
+            if (iWifiV15 != null) {
+                status = iWifiV15.registerEventCallback_1_5(mWifiEventCallbackV15);
+            } else {
+                status = mWifi.registerEventCallback(mWifiEventCallback);
+            }
+
+            if (status.code != WifiStatusCode.SUCCESS) {
+                Log.e(TAG, "IWifi.registerEventCallback failed: " + statusString(status));
+                mWifi = null;
+            }
+            return status.code == WifiStatusCode.SUCCESS;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Exception while operating on IWifi: " + e);
+        }
+        return false;
+    }
+
+    /**
      * Initialize IWifi and register death listener and event callback.
      *
      * - It is possible that IWifi is not ready - we have a listener on IServiceManager for it.
@@ -1166,21 +1279,13 @@ public class HalDeviceManager {
                     return;
                 }
 
-                WifiStatus status;
-                android.hardware.wifi.V1_5.IWifi iWifiV15 = getWifiServiceForV1_5Mockable(mWifi);
-                if (iWifiV15 != null) {
-                    status = iWifiV15.registerEventCallback_1_5(mWifiEventCallbackV15);
-                } else {
-                    status = mWifi.registerEventCallback(mWifiEventCallback);
-                }
-
-                if (status.code != WifiStatusCode.SUCCESS) {
-                    Log.e(TAG, "IWifi.registerEventCallback failed: " + statusString(status));
-                    mWifi = null;
+                // Stopping wifi just in case. This would also trigger the status callback.
+                // Stopping wifi invalidated the registered the event callback, register after the
+                // wifi stop.
+                stopWifi();
+                if (!registerWifiHalEventCallback()) {
                     return;
                 }
-                // Stopping wifi just in case. This would also trigger the status callback.
-                stopWifi();
                 mIsReady = true;
             } catch (RemoteException e) {
                 mWifi = null;
@@ -1513,7 +1618,9 @@ public class HalDeviceManager {
                             wifiApIfaceV15.getBridgedInstances((status, instances) -> {
                                 statusOk.value = status.code == WifiStatusCode.SUCCESS;
                                 if (statusOk.value) {
-                                    if (instances != null && !instances.isEmpty()) {
+                                    // Only count bridged APs with more than 1 instance as a bridged
+                                    // AP; 1 instance bridged APs will be counted as single AP.
+                                    if (instances != null && instances.size() > 1) {
                                         apIfaceInfo.createType = HDM_CREATE_IFACE_AP_BRIDGE;
                                         numBridgedAps.value++;
                                     }
@@ -1833,7 +1940,8 @@ public class HalDeviceManager {
                             }
                             return true;
                         } else if (status.code == WifiStatusCode.ERROR_NOT_AVAILABLE) {
-                            // Should retry. Hal might still be stopping.
+                            // Should retry. Hal might still be stopping. the registered event
+                            // callback will not be cleared.
                             Log.e(TAG, "Cannot start IWifi: " + statusString(status)
                                     + ", Retrying...");
                             try {
@@ -1844,6 +1952,7 @@ public class HalDeviceManager {
                             triedCount++;
                         } else {
                             // Should not retry on other failures.
+                            // Will be handled in the onFailure event.
                             Log.e(TAG, "Cannot start IWifi: " + statusString(status));
                             return false;
                         }
@@ -1861,22 +1970,19 @@ public class HalDeviceManager {
     private void stopWifi() {
         if (VDBG) Log.d(TAG, "stopWifi");
 
-        synchronized (mLock) {
-            try {
-                if (mWifi == null) {
-                    Log.w(TAG, "stopWifi called but mWifi is null!?");
-                } else {
-                    WifiStatus status = mWifi.stop();
-                    if (status.code != WifiStatusCode.SUCCESS) {
-                        Log.e(TAG, "Cannot stop IWifi: " + statusString(status));
-                    }
-
-                    // even on failure since WTF??
-                    teardownInternal();
+        try {
+            if (mWifi == null) {
+                Log.w(TAG, "stopWifi called but mWifi is null!?");
+            } else {
+                WifiStatus status = mWifi.stop();
+                if (status.code != WifiStatusCode.SUCCESS) {
+                    Log.e(TAG, "Cannot stop IWifi: " + statusString(status));
                 }
-            } catch (RemoteException e) {
-                Log.e(TAG, "stopWifi exception: " + e);
+                // even on failure since WTF??
+                teardownInternal();
             }
+        } catch (RemoteException e) {
+            Log.e(TAG, "stopWifi exception: " + e);
         }
     }
 
@@ -2035,12 +2141,16 @@ public class HalDeviceManager {
             if (chipInfos == null) {
                 Log.e(TAG, "createIface: no chip info found");
                 stopWifi(); // major error: shutting down
+                // Event callback has been invalidated in HAL stop, register it again.
+                registerWifiHalEventCallback();
                 return null;
             }
 
             if (!validateInterfaceCacheAndRetrieveRequestorWs(chipInfos)) {
                 Log.e(TAG, "createIface: local cache is invalid!");
                 stopWifi(); // major error: shutting down
+                // Event callback has been invalidated in HAL stop, register it again.
+                registerWifiHalEventCallback();
                 return null;
             }
 
@@ -2216,12 +2326,14 @@ public class HalDeviceManager {
         public WifiChipInfo chipInfo;
         public int chipModeId;
         public List<WifiIfaceInfo> interfacesToBeRemovedFirst;
+        public List<WifiIfaceInfo> interfacesToBeDowngraded;
 
         @Override
         public String toString() {
             StringBuilder sb = new StringBuilder();
             sb.append("{chipInfo=").append(chipInfo).append(", chipModeId=").append(chipModeId)
                     .append(", interfacesToBeRemovedFirst=").append(interfacesToBeRemovedFirst)
+                    .append(", interfacesToBeDowngraded=").append(interfacesToBeDowngraded)
                     .append(")");
             return sb.toString();
         }
@@ -2287,6 +2399,7 @@ public class HalDeviceManager {
 
         // possibly supported
         List<WifiIfaceInfo> interfacesToBeRemovedFirst = new ArrayList<>();
+        List<WifiIfaceInfo> interfacesToBeDowngraded = new ArrayList<>();
         for (int existingCreateType : CREATE_TYPES_BY_PRIORITY) {
             WifiIfaceInfo[] createTypeIfaces = chipInfo.ifaces[existingCreateType];
             int numExcessIfaces = createTypeIfaces.length - chipCreateTypeCombo[existingCreateType];
@@ -2295,6 +2408,25 @@ public class HalDeviceManager {
                 numExcessIfaces += 1;
             }
             if (numExcessIfaces > 0) { // may need to delete some
+                // Try downgrading bridged APs before we consider deleting them.
+                if (existingCreateType == HDM_CREATE_IFACE_AP_BRIDGE) {
+                    int availableSingleApCapacity = chipCreateTypeCombo[HDM_CREATE_IFACE_AP]
+                            - chipInfo.ifaces[HDM_CREATE_IFACE_AP].length;
+                    if (requestedCreateType == HDM_CREATE_IFACE_AP) {
+                        availableSingleApCapacity -= 1;
+                    }
+                    if (availableSingleApCapacity >= numExcessIfaces) {
+                        interfacesToBeDowngraded = selectBridgedApInterfacesToDowngrade(
+                                        numExcessIfaces, createTypeIfaces);
+                        if (interfacesToBeDowngraded != null) {
+                            continue;
+                        }
+                        // Can't downgrade enough bridged APs, fall through to delete them.
+                        if (VDBG) {
+                            Log.d(TAG, "Could not downgrade enough bridged APs for request.");
+                        }
+                    }
+                }
                 List<WifiIfaceInfo> selectedIfacesToDelete =
                         selectInterfacesToDelete(numExcessIfaces, requestedCreateType, requestorWs,
                                 existingCreateType, createTypeIfaces);
@@ -2312,6 +2444,7 @@ public class HalDeviceManager {
         ifaceCreationData.chipInfo = chipInfo;
         ifaceCreationData.chipModeId = chipModeId;
         ifaceCreationData.interfacesToBeRemovedFirst = interfacesToBeRemovedFirst;
+        ifaceCreationData.interfacesToBeDowngraded = interfacesToBeDowngraded;
 
         return ifaceCreationData;
     }
@@ -2323,7 +2456,8 @@ public class HalDeviceManager {
      * Note: both proposals are 'acceptable' bases on priority criteria.
      *
      * Criteria:
-     * - Proposal is better if it means removing fewer high priority interfaces
+     * - Proposal is better if it means removing fewer high priority interfaces, or downgrades the
+     *   fewest interfaces.
      */
     private boolean compareIfaceCreationData(IfaceCreationData val1, IfaceCreationData val2) {
         if (VDBG) Log.d(TAG, "compareIfaceCreationData: val1=" + val1 + ", val2=" + val2);
@@ -2369,6 +2503,14 @@ public class HalDeviceManager {
             }
         }
 
+        int val1NumIFacesToBeDowngraded = val1.interfacesToBeDowngraded != null
+                ? val1.interfacesToBeDowngraded.size() : 0;
+        int val2NumIFacesToBeDowngraded = val2.interfacesToBeDowngraded != null
+                ? val2.interfacesToBeDowngraded.size() : 0;
+        if (val1NumIFacesToBeDowngraded != val2NumIFacesToBeDowngraded) {
+            return val1NumIFacesToBeDowngraded < val2NumIFacesToBeDowngraded;
+        }
+
         // arbitrary - flip a coin
         if (VDBG) Log.d(TAG, "proposals identical - flip a coin");
         return false;
@@ -2412,18 +2554,27 @@ public class HalDeviceManager {
      * interface request from |existingRequestorWsPriority|.
      *
      * Rule:
+     *  - If |mWifiUserApprovalRequiredForD2dInterfacePriority| is true, AND
+     *    |newRequestorWsPriority| > PRIORITY_BG, AND |requestedCreateType| is
+     *    HDM_CREATE_IFACE_P2P or HDM_CREATE_IFACE_NAN, then YES
      *  - If |newRequestorWsPriority| > |existingRequestorWsPriority|, then YES.
      *  - If they are at the same priority level, then
      *      - If both are privileged and not for the same interface type, then YES.
      *      - Else, NO.
      */
-    private static boolean allowedToDelete(
+    private boolean allowedToDelete(
             @HdmIfaceTypeForCreation int requestedCreateType,
             @RequestorWsPriority int newRequestorWsPriority,
             @HdmIfaceTypeForCreation int existingCreateType,
             @RequestorWsPriority int existingRequestorWsPriority) {
         if (!SdkLevel.isAtLeastS()) {
             return allowedToDeleteForR(requestedCreateType, existingCreateType);
+        }
+        if (mWifiUserApprovalRequiredForD2dInterfacePriority
+                && newRequestorWsPriority > PRIORITY_BG
+                && (requestedCreateType == HDM_CREATE_IFACE_P2P
+                        || requestedCreateType == HDM_CREATE_IFACE_NAN)) {
+            return true;
         }
         // If the new request is higher priority than existing priority, then the new requestor
         // wins. This is because at all other priority levels (except privileged), existing caller
@@ -2598,6 +2749,43 @@ public class HalDeviceManager {
     }
 
     /**
+     * Selects the requested quantity of bridged AP ifaces available for downgrade in order of
+     * creation, or returns null if the requested quantity cannot be satisfied.
+     *
+     * @param requestedQuantity Number of interfaces which need to be selected
+     * @param bridgedApIfaces Array of bridged AP interfaces in order of creation
+     */
+    private List<WifiIfaceInfo> selectBridgedApInterfacesToDowngrade(int requestedQuantity,
+            WifiIfaceInfo[] bridgedApIfaces) {
+        List<WifiIfaceInfo> ifacesToDowngrade = new ArrayList<>();
+        for (WifiIfaceInfo ifaceInfo : bridgedApIfaces) {
+            SoftApManager softApManager = mSoftApManagers.get(ifaceInfo.iface);
+            if (softApManager == null) {
+                Log.e(TAG, "selectBridgedApInterfacesToDowngrade: Could not find SoftApManager for"
+                        + " iface: " + ifaceInfo.iface);
+                continue;
+            }
+            String instanceForRemoval =
+                    softApManager.getBridgedApDowngradeIfaceInstanceForRemoval();
+            if (instanceForRemoval == null) {
+                continue;
+            }
+            ifacesToDowngrade.add(ifaceInfo);
+            if (ifacesToDowngrade.size() >= requestedQuantity) {
+                break;
+            }
+        }
+        if (ifacesToDowngrade.size() < requestedQuantity) {
+            return null;
+        }
+        if (VDBG) {
+            Log.i(TAG, "selectBridgedApInterfacesToDowngrade: ifaces to downgrade "
+                    + ifacesToDowngrade);
+        }
+        return ifacesToDowngrade;
+    }
+
+    /**
      * Checks whether the expanded @HdmIfaceTypeForCreation combo can support the requested combo.
      */
     private boolean canCreateTypeComboSupportRequestedCreateTypeCombo(
@@ -2660,9 +2848,19 @@ public class HalDeviceManager {
                     }
                 } else {
                     // remove all interfaces on the delete list
-                    for (WifiIfaceInfo ifaceInfo: ifaceCreationData.interfacesToBeRemovedFirst) {
+                    for (WifiIfaceInfo ifaceInfo : ifaceCreationData.interfacesToBeRemovedFirst) {
                         removeIfaceInternal(ifaceInfo.iface,
                                 /* validateRttController */false); // ignore return value
+                    }
+                    // downgrade all interfaces on the downgrade list
+                    for (WifiIfaceInfo ifaceInfo : ifaceCreationData.interfacesToBeDowngraded) {
+                        if (ifaceInfo.createType == HDM_CREATE_IFACE_AP_BRIDGE) {
+                            if (!downgradeBridgedApIface(ifaceInfo)) {
+                                Log.e(TAG, "executeChipReconfiguration: failed to downgrade bridged"
+                                        + " AP: " + ifaceInfo);
+                                return null;
+                            }
+                        }
                     }
                 }
 
@@ -2865,6 +3063,37 @@ public class HalDeviceManager {
         }
     }
 
+    private boolean downgradeBridgedApIface(WifiIfaceInfo bridgedApIfaceInfo) {
+        SoftApManager bridgedSoftApManager = mSoftApManagers.get(bridgedApIfaceInfo.iface);
+        if (bridgedSoftApManager == null) {
+            Log.e(TAG, "Could not find SoftApManager for bridged AP iface "
+                    + bridgedApIfaceInfo.iface);
+            return false;
+        }
+        String name = getName(bridgedApIfaceInfo.iface);
+        if (name == null) {
+            return false;
+        }
+        IWifiChip chip = getChip(bridgedApIfaceInfo.iface);
+        if (chip == null) {
+            return false;
+        }
+        android.hardware.wifi.V1_5.IWifiChip chip15 = getWifiChipForV1_5Mockable(chip);
+        if (chip15 == null) {
+            return false;
+        }
+        String instanceForRemoval =
+                bridgedSoftApManager.getBridgedApDowngradeIfaceInstanceForRemoval();
+        try {
+            chip15.removeIfaceInstanceFromBridgedApIface(name, instanceForRemoval);
+        } catch (RemoteException e) {
+            Log.e(TAG,
+                    "IWifiChip.removeIfaceInstanceFromBridgedApIface exception: " + e);
+            return false;
+        }
+        return true;
+    }
+
     private abstract class ListenerProxy<LISTENER>  {
         protected LISTENER mListener;
         private Handler mHandler;
@@ -2969,7 +3198,7 @@ public class HalDeviceManager {
         }
 
         @Override
-        public void onNewRttController(IWifiRttController controller) {
+        public void onNewRttController(WifiRttControllerHal controller) {
             mHandler.post(() -> mCallback.onNewRttController(controller));
         }
 
@@ -2985,7 +3214,7 @@ public class HalDeviceManager {
                     + mRttControllerLifecycleCallbacks.size());
         }
         for (InterfaceRttControllerLifecycleCallbackProxy cbp : mRttControllerLifecycleCallbacks) {
-            cbp.onNewRttController(mIWifiRttController);
+            cbp.onNewRttController(mWifiRttControllerHal);
         }
     }
 
@@ -2995,7 +3224,6 @@ public class HalDeviceManager {
         }
     }
 
-
     /**
      * Updates the RttController when the interface changes:
      * - Handles callbacks to registered listeners
@@ -3003,55 +3231,37 @@ public class HalDeviceManager {
      */
     private void updateRttControllerWhenInterfaceChanges() {
         synchronized (mLock) {
-            if (validateRttController()) {
+            if (mWifiRttControllerHal != null && mWifiRttControllerHal.validate()) {
                 if (mDbg) {
                     Log.d(TAG, "Current RttController is valid, Don't try to create a new one");
                 }
                 return;
             }
-            boolean controllerDestroyed = mIWifiRttController != null;
-            mIWifiRttController = null;
+            boolean controllerDestroyed = mWifiRttControllerHal != null;
+            mWifiRttControllerHal = null;
             if (mRttControllerLifecycleCallbacks.size() == 0) {
                 Log.d(TAG, "updateRttController: no one is interested in RTT controllers");
                 return;
             }
 
-            IWifiRttController newRttController = createRttControllerIfPossible();
+            WifiRttControllerHal newRttController = createRttControllerIfPossible();
             if (newRttController == null) {
                 if (controllerDestroyed) {
                     dispatchRttControllerLifecycleOnDestroyed();
                 }
             } else {
-                mIWifiRttController = newRttController;
+                mWifiRttControllerHal = newRttController;
                 dispatchRttControllerLifecycleOnNew();
             }
         }
     }
 
-    private boolean validateRttController() {
-        if (mIWifiRttController == null) {
-            return false;
-        }
-        Mutable<Boolean> isRttControllerValid = new Mutable<>(false);
-        try {
-            mIWifiRttController.getBoundIface(
-                    (status, iface) -> {
-                        if (status.code == WifiStatusCode.SUCCESS) {
-                            isRttControllerValid.value = true;
-                        }
-                    });
-        } catch (RemoteException e) {
-            Log.e(TAG, "RttController: exception getBoundIface" + e);
-        }
-        return isRttControllerValid.value;
-    }
-
     /**
-     * Try to create a new RttController.
+     * Try to create and set up a new RttController.
      *
      * @return The new RttController - or null on failure.
      */
-    private IWifiRttController createRttControllerIfPossible() {
+    private WifiRttControllerHal createRttControllerIfPossible() {
         synchronized (mLock) {
             if (!isWifiStarted()) {
                 Log.d(TAG, "createRttControllerIfPossible: Wifi is not started");
@@ -3118,7 +3328,13 @@ public class HalDeviceManager {
                     Log.e(TAG, "IWifiChip.createRttController exception: " + e);
                 }
                 if (rttResp.value != null) {
-                    return rttResp.value;
+                    WifiRttControllerHal wifiRttControllerHal =
+                            new WifiRttControllerHal(rttResp.value);
+                    if (!wifiRttControllerHal.setup()) {
+                        return null;
+                    }
+                    wifiRttControllerHal.enableVerboseLogging(mDbg);
+                    return wifiRttControllerHal;
                 }
             }
         }

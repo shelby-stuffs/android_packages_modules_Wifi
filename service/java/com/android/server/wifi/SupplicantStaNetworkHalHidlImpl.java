@@ -149,7 +149,6 @@ public class SupplicantStaNetworkHalHidlImpl {
     /**
      * Enable/Disable verbose logging.
      *
-     * @param enable true to enable, false to disable.
      */
     void enableVerboseLogging(boolean verboseEnabled, boolean halVerboseEnabled) {
         synchronized (mLock) {
@@ -307,8 +306,10 @@ public class SupplicantStaNetworkHalHidlImpl {
             }
             Log.d(TAG, "The target security params: " + securityParams);
 
+            boolean isRequirePmf = NativeUtil.getOptimalPmfSettingForConfig(config,
+                    securityParams.isRequirePmf(), mWifiGlobals);
             /** RequirePMF */
-            if (!setRequirePmf(securityParams.isRequirePmf())) {
+            if (!setRequirePmf(isRequirePmf)) {
                 Log.e(TAG, config.SSID + ": failed to set requirePMF: " + config.requirePmf);
                 return false;
             }
@@ -349,7 +350,8 @@ public class SupplicantStaNetworkHalHidlImpl {
                 return false;
             }
             /** Group Cipher */
-            BitSet allowedGroupCiphers = securityParams.getAllowedGroupCiphers();
+            BitSet allowedGroupCiphers = NativeUtil.getOptimalGroupCiphersForConfig(
+                    config, securityParams.getAllowedGroupCiphers(), mWifiGlobals);
             if (allowedGroupCiphers.cardinality() != 0
                     && (!setGroupCipher(wifiConfigurationToSupplicantGroupCipherMask(
                     allowedGroupCiphers)))) {
@@ -357,7 +359,8 @@ public class SupplicantStaNetworkHalHidlImpl {
                 return false;
             }
             /** Pairwise Cipher*/
-            BitSet allowedPairwiseCiphers = securityParams.getAllowedPairwiseCiphers();
+            BitSet allowedPairwiseCiphers = NativeUtil.getOptimalPairwiseCiphersForConfig(
+                    config, securityParams.getAllowedPairwiseCiphers(), mWifiGlobals);
             if (allowedPairwiseCiphers.cardinality() != 0
                     && !setPairwiseCipher(wifiConfigurationToSupplicantPairwiseCipherMask(
                     allowedPairwiseCiphers))) {
@@ -1606,6 +1609,9 @@ public class SupplicantStaNetworkHalHidlImpl {
         synchronized (mLock) {
             final String methodStr = "setGroupCipher";
             if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, String.format("setGroupCipher: 0x%x", groupCipherMask));
+            }
             try {
                 SupplicantStatus status;
                 android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork
@@ -1714,6 +1720,9 @@ public class SupplicantStaNetworkHalHidlImpl {
         synchronized (mLock) {
             final String methodStr = "setPairwiseCipher";
             if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, String.format("setPairwiseCipher: 0x%x", pairwiseCipherMask));
+            }
             try {
                 SupplicantStatus status;
                 android.hardware.wifi.supplicant.V1_2.ISupplicantStaNetwork
@@ -1838,6 +1847,9 @@ public class SupplicantStaNetworkHalHidlImpl {
         synchronized (mLock) {
             final String methodStr = "setRequirePmf";
             if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, "setRequirePmf: " + enable);
+            }
             try {
                 SupplicantStatus status = mISupplicantStaNetwork.setRequirePmf(enable);
                 return checkStatusAndLogFailure(status, methodStr);
@@ -1932,7 +1944,7 @@ public class SupplicantStaNetworkHalHidlImpl {
     }
 
     /** See ISupplicantStaNetwork.hal for documentation */
-    private boolean setEapAnonymousIdentity(java.util.ArrayList<Byte> identity) {
+    public boolean setEapAnonymousIdentity(java.util.ArrayList<Byte> identity) {
         synchronized (mLock) {
             final String methodStr = "setEapAnonymousIdentity";
             if (!checkISupplicantStaNetworkAndLogFailure(methodStr)) return false;

@@ -40,6 +40,7 @@ import android.net.wifi.WifiContext;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.DeviceMobilityState;
+import android.net.wifi.WifiNetworkSelectionConfig;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiScanner.PnoSettings;
@@ -206,6 +207,7 @@ public class WifiConnectivityManager {
     private boolean mDelayedPnoScanPending = false;
     private boolean mPeriodicScanTimerSet = false;
     private Object mPeriodicScanTimerToken = new Object();
+    private Object mDelayedStartPeriodicScanToken = new Object();
     private boolean mDelayedPartialScanTimerSet = false;
     private boolean mWatchdogScanTimerSet = false;
     private boolean mIsLocationModeEnabled;
@@ -220,6 +222,8 @@ public class WifiConnectivityManager {
     // scan schedule and scan type override set via WifiManager#setScreenOnScanSchedule
     private int[] mExternalSingleScanScheduleSec;
     private int[] mExternalSingleScanType;
+
+    private int mNextScreenOnConnectivityScanDelayMs = 0;
 
     // Scanning Schedules for screen-on periodic scan
     // Default schedule used in case of invalid configuration
@@ -2068,9 +2072,9 @@ public class WifiConnectivityManager {
     private void startPeriodicScan(boolean scanImmediately) {
         mPnoScanListener.resetLowRssiNetworkRetryDelay();
 
-        // No connectivity scan if auto roaming is disabled.
-        if (mWifiState == WIFI_STATE_CONNECTED && !mContext.getResources().getBoolean(
-                R.bool.config_wifi_framework_enable_associated_network_selection)) {
+        // No connectivity scan if wifi-to-wifi switch is disabled.
+        if (mWifiState == WIFI_STATE_CONNECTED
+                && !mNetworkSelector.isAssociatedNetworkSelectionEnabled()) {
             return;
         }
 
@@ -2099,11 +2103,29 @@ public class WifiConnectivityManager {
     }
 
     /**
+     * Configures network selection parameters..
+     */
+    public void setNetworkSelectionConfig(@NonNull WifiNetworkSelectionConfig nsConfig) {
+        mNetworkSelector.setAssociatedNetworkSelectionOverride(
+                nsConfig.getAssociatedNetworkSelectionOverride());
+        mNetworkSelector.setSufficiencyCheckEnabled(
+                nsConfig.isSufficiencyCheckEnabledWhenScreenOff(),
+                nsConfig.isSufficiencyCheckEnabledWhenScreenOn());
+    }
+
+    /**
      * Sets the external scan schedule and scan type.
      */
     public void setExternalScreenOnScanSchedule(int[] scanScheduleSeconds, int[] scanType) {
         mExternalSingleScanScheduleSec = scanScheduleSeconds;
         mExternalSingleScanType = scanType;
+    }
+
+    /**
+     * Sets the next screen-on connectivity scan delay in milliseconds.
+     */
+    public void setOneShotScreenOnConnectivityScanDelayMillis(int delayMs) {
+        mNextScreenOnConnectivityScanDelayMs = delayMs;
     }
 
     /**
@@ -2204,10 +2226,11 @@ public class WifiConnectivityManager {
     /**
      * Sets a external PNO scan request
      */
-    public void setExternalPnoScanRequest(int uid, @NonNull IBinder binder,
-            @NonNull IPnoScanResultsCallback callback, @NonNull List<WifiSsid> ssids,
-            @NonNull int[] frequencies) {
-        if (mExternalPnoScanRequestManager.setRequest(uid, binder, callback, ssids, frequencies)) {
+    public void setExternalPnoScanRequest(int uid, @NonNull String packageName,
+            @NonNull IBinder binder, @NonNull IPnoScanResultsCallback callback,
+            @NonNull List<WifiSsid> ssids, @NonNull int[] frequencies) {
+        if (mExternalPnoScanRequestManager.setRequest(
+                uid, packageName, binder, callback, ssids, frequencies)) {
             if (mPnoScanStarted) {
                 Log.d(TAG, "Restarting PNO Scan with external requested SSIDs");
                 stopPnoScan();
@@ -2406,7 +2429,10 @@ public class WifiConnectivityManager {
                 + " mAutoJoinEnabled=" + mAutoJoinEnabled
                 + " mAutoJoinEnabledExternal=" + mAutoJoinEnabledExternal
                 + " mSpecificNetworkRequestInProgress=" + mSpecificNetworkRequestInProgress
-                + " mTrustedConnectionAllowed=" + mTrustedConnectionAllowed);
+                + " mTrustedConnectionAllowed=" + mTrustedConnectionAllowed
+                + " isSufficiencyCheckEnabled=" + mNetworkSelector.isSufficiencyCheckEnabled()
+                + " isAssociatedNetworkSelectionEnabled="
+                + mNetworkSelector.isAssociatedNetworkSelectionEnabled());
 
         if (!mWifiEnabled || !mAutoJoinEnabled) {
             return;
@@ -2447,6 +2473,7 @@ public class WifiConnectivityManager {
         localLog("handleScreenStateChanged: screenOn=" + screenOn);
 
         mScreenOn = screenOn;
+        mNetworkSelector.setScreenState(screenOn);
 
         if (mWifiState == WIFI_STATE_DISCONNECTED
                 && mContext.getResources().getBoolean(R.bool.config_wifiEnablePartialInitialScan)) {
@@ -2459,6 +2486,16 @@ public class WifiConnectivityManager {
             // cancel any queued PNO scans since the screen is turned on.
             mDelayedPnoScanPending = false;
             mEventHandler.removeCallbacksAndMessages(mDelayedPnoScanToken);
+
+            if (mNextScreenOnConnectivityScanDelayMs > 0) {
+                mEventHandler.postDelayed(() -> {
+                    startConnectivityScan(SCAN_ON_SCHEDULE);
+                }, mDelayedStartPeriodicScanToken, mNextScreenOnConnectivityScanDelayMs);
+                mNextScreenOnConnectivityScanDelayMs = 0;
+                return;
+            }
+        } else {
+            mEventHandler.removeCallbacksAndMessages(mDelayedStartPeriodicScanToken);
         }
         startConnectivityScan(SCAN_ON_SCHEDULE);
     }
@@ -2710,9 +2747,8 @@ public class WifiConnectivityManager {
                     new Throwable());
             return;
         }
-        WifiInfo wifiInfo = getPrimaryWifiInfo();
         if (failureCode == WifiMetrics.ConnectionEvent.FAILURE_NONE) {
-            String ssidUnquoted = WifiInfo.removeDoubleQuotes(wifiInfo.getSSID());
+            String ssidUnquoted = WifiInfo.removeDoubleQuotes(getPrimaryWifiInfo().getSSID());
             mOpenNetworkNotifier.handleWifiConnected(ssidUnquoted);
         } else {
             mOpenNetworkNotifier.handleConnectionFailure();
@@ -2754,7 +2790,8 @@ public class WifiConnectivityManager {
                         WifiConfiguration config =
                                 mConfigManager.getConfiguredNetwork(candidate.getNetworkConfigId());
                         return config != null
-                                && config.getNetworkSelectionStatus().isNetworkEnabled();
+                                && config.getNetworkSelectionStatus().isNetworkEnabled()
+                                && config.allowAutojoin;
                     })
                     .collect(Collectors.toList());
             if (prevNumCandidates == mLatestCandidates.size()) {

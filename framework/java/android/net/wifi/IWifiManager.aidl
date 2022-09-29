@@ -50,6 +50,7 @@ import android.net.wifi.WifiAvailableChannel;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiNetworkSelectionConfig;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiSsid;
 
@@ -71,7 +72,15 @@ interface IWifiManager
 
     oneway void getWifiActivityEnergyInfoAsync(in IOnWifiActivityEnergyInfoListener listener);
 
+    void setNetworkSelectionConfig(in WifiNetworkSelectionConfig nsConfig);
+
+    void setThirdPartyAppEnablingWifiConfirmationDialogEnabled(boolean enable);
+
+    boolean isThirdPartyAppEnablingWifiConfirmationDialogEnabled();
+
     void setScreenOnScanSchedule(in int[] scanScheduleSeconds, in int[] scanType);
+
+    void setOneShotScreenOnConnectivityScanDelayMillis(int delayMs);
 
     ParceledListSlice getConfiguredNetworks(String packageName, String featureId, boolean callerNetworksOnly);
 

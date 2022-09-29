@@ -66,11 +66,6 @@ public class BaseWifiService extends IWifiManager.Stub {
         throw new UnsupportedOperationException();
     }
 
-    @Deprecated
-    public ParceledListSlice getConfiguredNetworks(String packageName, String featureId) {
-        throw new UnsupportedOperationException();
-    }
-
     @Override
     public ParceledListSlice getConfiguredNetworks(String packageName, String featureId,
             boolean callerNetworksOnly) {
@@ -90,7 +85,27 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public void setNetworkSelectionConfig(WifiNetworkSelectionConfig nsConfig) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setThirdPartyAppEnablingWifiConfirmationDialogEnabled(boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isThirdPartyAppEnablingWifiConfirmationDialogEnabled() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setScreenOnScanSchedule(int[] scanScheduleSeconds, int[] scanType) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOneShotScreenOnConnectivityScanDelayMillis(int delayMs) {
         throw new UnsupportedOperationException();
     }
 
@@ -124,11 +139,6 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public int addOrUpdateNetwork(WifiConfiguration config, String packageName, Bundle extras) {
-        throw new UnsupportedOperationException();
-    }
-
-    /** Deprecated - can be removed */
-    public int addOrUpdateNetwork(WifiConfiguration config, String packageName) {
         throw new UnsupportedOperationException();
     }
 
@@ -611,14 +621,6 @@ public class BaseWifiService extends IWifiManager.Stub {
     @Override
     public int removeNetworkSuggestions(
             List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName, int action) {
-        throw new UnsupportedOperationException();
-    }
-    /**
-     * @deprecated Replaced by {@link #removeNetworkSuggestions(List, String, int)}
-     */
-    @Deprecated
-    public int removeNetworkSuggestions(
-            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName) {
         throw new UnsupportedOperationException();
     }
 

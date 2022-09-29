@@ -773,8 +773,6 @@ public class SupplicantStaIfaceHal {
 
     /**
      * Enable/Disable verbose logging.
-     * @param verboseEnabled Verbose flag set in overlay XML.
-     * @param halVerboseEnabled Verbose flag set by the user.
      */
     void enableVerboseLogging(boolean verboseEnabled, boolean halVerboseEnabled) {
         synchronized (mLock) {
@@ -2204,6 +2202,21 @@ public class SupplicantStaIfaceHal {
             }
             return mStaIfaceHal.generateSelfDppConfiguration(ifaceName, ssid, privEcKey);
         }
+    }
+
+    /**
+     * This set anonymous identity to supplicant.
+     *
+     * @param ifaceName Name of the interface.
+     * @param anonymousIdentity the anonymouns identity.
+     * @return true if succeeds, false otherwise.
+     */
+    public boolean setEapAnonymousIdentity(@NonNull String ifaceName, String anonymousIdentity) {
+        String methodStr = "setEapAnonymousIdentity";
+        if (mStaIfaceHal == null) {
+            return handleNullHal(methodStr);
+        }
+        return mStaIfaceHal.setEapAnonymousIdentity(ifaceName, anonymousIdentity);
     }
 
     private boolean handleNullHal(String methodStr) {

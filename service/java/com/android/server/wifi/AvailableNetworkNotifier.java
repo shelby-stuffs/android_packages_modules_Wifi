@@ -47,6 +47,7 @@ import android.util.ArraySet;
 import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.proto.nano.WifiMetricsProto.ConnectToNetworkNotificationAndActionCount;
 import com.android.server.wifi.util.ActionListenerWrapper;
 import com.android.server.wifi.util.WifiPermissionsUtil;
@@ -213,7 +214,8 @@ public class AvailableNetworkNotifier {
             new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (!mTag.equals(intent.getStringExtra(AVAILABLE_NETWORK_NOTIFIER_TAG))) {
+                    if (!TextUtils.equals(mTag,
+                            intent.getStringExtra(AVAILABLE_NETWORK_NOTIFIER_TAG))) {
                         return;
                     }
                     switch (intent.getAction()) {
@@ -274,9 +276,13 @@ public class AvailableNetworkNotifier {
     }
 
     private boolean isControllerEnabled() {
-        return mSettingEnabled && !mContext.getSystemService(UserManager.class)
-                .hasUserRestrictionForUser(UserManager.DISALLOW_CONFIG_WIFI,
-                        UserHandle.of(mWifiPermissionsUtil.getCurrentUser()));
+        UserManager userManager = mContext.getSystemService(UserManager.class);
+        UserHandle currentUser = UserHandle.of(mWifiPermissionsUtil.getCurrentUser());
+        return mSettingEnabled
+                && !userManager.hasUserRestrictionForUser(
+                        UserManager.DISALLOW_CONFIG_WIFI, currentUser)
+                && !(SdkLevel.isAtLeastT() && userManager.hasUserRestrictionForUser(
+                        UserManager.DISALLOW_ADD_WIFI_CONFIG, currentUser));
     }
 
     /**

@@ -67,6 +67,10 @@ public class WifiGlobals {
     private final int mWifiLowConnectedScoreThresholdToTriggerScanForMbb;
     private final int mWifiLowConnectedScoreScanPeriodSeconds;
     // This is read from the overlay, cache it after boot up.
+    private final boolean mWifiAllowInsecureEnterpriseConfiguration;
+    // This is read from the overlay, cache it after boot up.
+    private final boolean mIsP2pMacRandomizationSupported;
+    // This is read from the overlay, cache it after boot up.
     private final boolean mIsDisconnectOnlyOnInitialIpReachability;
 
     // This is set by WifiManager#setVerboseLoggingEnabled(int).
@@ -98,6 +102,10 @@ public class WifiGlobals {
                 R.integer.config_wifiLowConnectedScoreThresholdToTriggerScanForMbb);
         mWifiLowConnectedScoreScanPeriodSeconds = mContext.getResources().getInteger(
                 R.integer.config_wifiLowConnectedScoreScanPeriodSeconds);
+        mWifiAllowInsecureEnterpriseConfiguration = mContext.getResources().getBoolean(
+                R.bool.config_wifiAllowInsecureEnterpriseConfigurationsForSettingsAndSUW);
+        mIsP2pMacRandomizationSupported = mContext.getResources().getBoolean(
+                R.bool.config_wifi_p2p_mac_randomization_supported);
         mIsDisconnectOnlyOnInitialIpReachability = mContext.getResources()
                 .getBoolean(R.bool.config_disconnectOnlyOnInitialIpReachability);
     }
@@ -257,6 +265,16 @@ public class WifiGlobals {
         return mWifiLowConnectedScoreScanPeriodSeconds;
     }
 
+    /** Get whether or not insecure enterprise configuration is allowed. */
+    public boolean isInsecureEnterpriseConfigurationAllowed() {
+        return mWifiAllowInsecureEnterpriseConfiguration;
+    }
+
+    /** Get whether or not P2P MAC randomization is supported */
+    public boolean isP2pMacRandomizationSupported() {
+        return mIsP2pMacRandomizationSupported;
+    }
+
     /** Check if IP Reachability lost need to be monitor for first 10 sec of connection/roam. */
     public boolean getDisconnectOnlyOnInitialIpReachability() {
         return mIsDisconnectOnlyOnInitialIpReachability;
@@ -283,6 +301,9 @@ public class WifiGlobals {
                 + mWifiLowConnectedScoreScanPeriodSeconds);
         pw.println("mIsUsingExternalScorer="
                 + mIsUsingExternalScorer);
+        pw.println("mWifiAllowInsecureEnterpriseConfiguratio"
+                + mWifiAllowInsecureEnterpriseConfiguration);
+        pw.println("mIsP2pMacRandomizationSupported" + mIsP2pMacRandomizationSupported);
         pw.println("mIsDisconnectOnlyOnInitialIpReachability=" + mIsDisconnectOnlyOnInitialIpReachability);
     }
 }

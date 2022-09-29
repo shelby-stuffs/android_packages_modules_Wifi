@@ -183,8 +183,6 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     /**
      * Enable/Disable verbose logging.
      *
-     * @param verboseEnabled Verbose flag set in overlay XML.
-     * @param halVerboseEnabled Verbose flag set by the user.
      */
     public void enableVerboseLogging(boolean verboseEnabled, boolean halVerboseEnabled) {
         synchronized (mLock) {
@@ -418,8 +416,10 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             return false;
         }
         Log.i(TAG, "Obtained ISupplicant binder.");
+        Log.i(TAG, "Local Version: " + ISupplicant.VERSION);
 
         try {
+            Log.i(TAG, "Remote Version: " + mISupplicant.getInterfaceVersion());
             IBinder serviceBinder = getServiceBinderMockable();
             if (serviceBinder == null) {
                 return false;
@@ -3328,6 +3328,23 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
                 handleServiceSpecificException(e, methodStr);
             }
             return false;
+        }
+    }
+
+    /**
+     * Set the currently configured network's anonymous identity.
+     *
+     * @param ifaceName Name of the interface.
+     * @param anonymousIdentity the anonymouns identity.
+     * @return true if succeeds, false otherwise.
+     */
+    public boolean setEapAnonymousIdentity(@NonNull String ifaceName, String anonymousIdentity) {
+        synchronized (mLock) {
+            SupplicantStaNetworkHalAidlImpl networkHandle =
+                    checkStaNetworkAndLogFailure(ifaceName, "setEapAnonymousIdentity");
+            if (networkHandle == null) return false;
+            if (anonymousIdentity == null) return false;
+            return networkHandle.setEapAnonymousIdentity(anonymousIdentity.getBytes());
         }
     }
 }

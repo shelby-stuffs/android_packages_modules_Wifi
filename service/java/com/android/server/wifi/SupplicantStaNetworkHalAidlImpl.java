@@ -159,7 +159,6 @@ public class SupplicantStaNetworkHalAidlImpl {
     /**
      * Enable/Disable verbose logging.
      *
-     * @param enable true to enable, false to disable.
      */
     void enableVerboseLogging(boolean verboseEnabled, boolean halVerboseEnabled) {
         synchronized (mLock) {
@@ -322,8 +321,10 @@ public class SupplicantStaNetworkHalAidlImpl {
             }
             Log.d(TAG, "The target security params: " + securityParams);
 
+            boolean isRequirePmf = NativeUtil.getOptimalPmfSettingForConfig(config,
+                    securityParams.isRequirePmf(), mWifiGlobals);
             /** RequirePMF */
-            if (!setRequirePmf(securityParams.isRequirePmf())) {
+            if (!setRequirePmf(isRequirePmf)) {
                 Log.e(TAG, config.SSID + ": failed to set requirePMF: " + config.requirePmf);
                 return false;
             }
@@ -369,7 +370,8 @@ public class SupplicantStaNetworkHalAidlImpl {
                 return false;
             }
             /** Group Cipher */
-            BitSet allowedGroupCiphers = securityParams.getAllowedGroupCiphers();
+            BitSet allowedGroupCiphers = NativeUtil.getOptimalGroupCiphersForConfig(
+                    config, securityParams.getAllowedGroupCiphers(), mWifiGlobals);
             if (allowedGroupCiphers.cardinality() != 0
                     && (!setGroupCipher(wifiConfigurationToSupplicantGroupCipherMask(
                     allowedGroupCiphers)))) {
@@ -377,7 +379,8 @@ public class SupplicantStaNetworkHalAidlImpl {
                 return false;
             }
             /** Pairwise Cipher*/
-            BitSet allowedPairwiseCiphers = securityParams.getAllowedPairwiseCiphers();
+            BitSet allowedPairwiseCiphers = NativeUtil.getOptimalPairwiseCiphersForConfig(
+                    config, securityParams.getAllowedPairwiseCiphers(), mWifiGlobals);
             if (allowedPairwiseCiphers.cardinality() != 0
                     && !setPairwiseCipher(wifiConfigurationToSupplicantPairwiseCipherMask(
                     allowedPairwiseCiphers))) {
@@ -1455,6 +1458,9 @@ public class SupplicantStaNetworkHalAidlImpl {
             if (!checkStaNetworkAndLogFailure(methodStr)) {
                 return false;
             }
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, String.format("setGroupCipher: 0x%x", groupCipherMask));
+            }
             try {
                 mISupplicantStaNetwork.setGroupCipher(groupCipherMask);
                 return true;
@@ -1526,6 +1532,9 @@ public class SupplicantStaNetworkHalAidlImpl {
             final String methodStr = "setPairwiseCipher";
             if (!checkStaNetworkAndLogFailure(methodStr)) {
                 return false;
+            }
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, String.format("setPairwiseCipher: 0x%x", pairwiseCipherMask));
             }
             try {
                 mISupplicantStaNetwork.setPairwiseCipher(pairwiseCipherMask);
@@ -1684,6 +1693,9 @@ public class SupplicantStaNetworkHalAidlImpl {
             if (!checkStaNetworkAndLogFailure(methodStr)) {
                 return false;
             }
+            if (mVerboseLoggingEnabled) {
+                Log.d(TAG, "setRequirePmf: " + enable);
+            }
             try {
                 mISupplicantStaNetwork.setRequirePmf(enable);
                 return true;
@@ -1827,7 +1839,7 @@ public class SupplicantStaNetworkHalAidlImpl {
      * @param identity value to set.
      * @return true if successful, false otherwise
      */
-    private boolean setEapAnonymousIdentity(byte[] identity) {
+    public boolean setEapAnonymousIdentity(byte[] identity) {
         synchronized (mLock) {
             final String methodStr = "setEapAnonymousIdentity";
             if (!checkStaNetworkAndLogFailure(methodStr)) {

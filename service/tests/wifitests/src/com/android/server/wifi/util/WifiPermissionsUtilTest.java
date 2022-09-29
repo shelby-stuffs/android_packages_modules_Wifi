@@ -23,7 +23,6 @@ import static android.content.pm.PackageManager.GET_PERMISSIONS;
 import static android.content.pm.PackageManager.MATCH_UNINSTALLED_PACKAGES;
 
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
@@ -1060,9 +1059,18 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
         when(mDevicePolicyManager.isProfileOwnerApp(TEST_PACKAGE_NAME)).thenReturn(false);
         assertFalse(wifiPermissionsUtil.isProfileOwnerOfOrganizationOwnedDevice(
                 MANAGED_PROFILE_UID));
+        when(mDevicePolicyManager.isProfileOwnerApp(TEST_PACKAGE_NAME)).thenReturn(true);
+
+        // Package does not exist for uid.
+        when(mMockContext.getPackageManager().getPackagesForUid(MANAGED_PROFILE_UID))
+                .thenReturn(null);
+        assertFalse(wifiPermissionsUtil.isProfileOwnerOfOrganizationOwnedDevice(
+                MANAGED_PROFILE_UID));
+        when(mMockContext.getPackageManager().getPackagesForUid(MANAGED_PROFILE_UID))
+                .thenReturn(packageNames);
 
         // DevicePolicyManager does not exist.
-        when(mMockContext.getSystemService(Context.DEVICE_POLICY_SERVICE))
+        when(mMockContext.getSystemService(DevicePolicyManager.class))
                 .thenReturn(null);
         assertFalse(wifiPermissionsUtil.isProfileOwnerOfOrganizationOwnedDevice(
                 MANAGED_PROFILE_UID));
@@ -1118,7 +1126,7 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
      * Validate no Exceptions are thrown - has all permissions & don't note in app-ops.
      */
     @Test
-    public void testCannotAccessScanResultsForWifiScanner_HideFromAppOps()
+    public void testCanAccessScanResultsForWifiScanner_HideFromAppOps()
             throws Exception {
         mThrowSecurityException = false;
         mIsLocationEnabled = true;
@@ -1291,13 +1299,13 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
      * Validate no Exceptions are thrown - has all permissions & ignores location settings.
      */
     @Test
-    public void testCannotAccessScanResultsForWifiScanner_IgnoreLocationSettings()
+    public void testCanAccessScanResultsForWifiScanner_IgnoreLocationSettings()
             throws Exception {
         mThrowSecurityException = false;
         mIsLocationEnabled = false;
         mFineLocationPermission = PackageManager.PERMISSION_GRANTED;
         mHardwareLocationPermission = PackageManager.PERMISSION_GRANTED;
-        mAllowFineLocationApps = AppOpsManager.MODE_ALLOWED;
+        mAllowFineLocationApps = AppOpsManager.MODE_IGNORED;
         mWifiScanAllowApps = AppOpsManager.MODE_ALLOWED;
         mUid = MANAGED_PROFILE_UID;
         setupTestCase();
@@ -1305,6 +1313,8 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
                 mMockContext, mMockUserManager, mWifiInjector);
         codeUnderTest.enforceCanAccessScanResultsForWifiScanner(TEST_PACKAGE_NAME, TEST_FEATURE_ID,
                 mUid, IGNORE_LOCATION_SETTINGS, DONT_HIDE_FROM_APP_OPS);
+        verify(mMockAppOps).noteOp(AppOpsManager.OPSTR_FINE_LOCATION, mUid, TEST_PACKAGE_NAME,
+                TEST_FEATURE_ID, null);
     }
 
     /**
@@ -1436,8 +1446,7 @@ public class WifiPermissionsUtilTest extends WifiBaseTest {
         WifiPermissionsUtil codeUnderTest = new WifiPermissionsUtil(mMockPermissionsWrapper,
                 mMockContext, mMockUserManager, mWifiInjector);
 
-        assertThrows(SecurityException.class,
-                () -> codeUnderTest.enforceNearbyDevicesPermission(attributionSource, true, ""));
+        assertFalse(codeUnderTest.checkNearbyDevicesPermission(attributionSource, true, ""));
 
         // now attach AttributionSource2 with uid2 to the list of AttributionSource and then
         // verify the location check is now bypassed.
