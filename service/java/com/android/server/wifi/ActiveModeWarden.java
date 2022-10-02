@@ -41,6 +41,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.LocationManager;
+import android.net.Network;
 import android.net.wifi.ISubsystemRestartCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
 import android.net.wifi.SoftApCapability;
@@ -65,6 +66,7 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 
+import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.IState;
 import com.android.internal.util.Preconditions;
@@ -151,6 +153,10 @@ public class ActiveModeWarden {
     @Nullable
     private WorkSource mLastScanOnlyClientModeManagerRequestorWs = null;
     private AtomicLong mSupportedFeatureSet = new AtomicLong(0);
+    // Mutex lock between service Api binder thread and Wifi main thread
+    private final Object mServiceApiLock = new Object();
+    @GuardedBy("mServiceApiLock")
+    private Network mCurrentNetwork;
 
     /**
      * One of  {@link WifiManager#WIFI_STATE_DISABLED},
@@ -2249,9 +2255,13 @@ public class ActiveModeWarden {
                         requestInfo.clientRole, requestInfo.didUserApprove)) {
                     // Can create an additional client mode manager.
                     Log.v(TAG, "Starting a new ClientModeManager");
-                    startAdditionalClientModeManager(
-                            requestInfo.clientRole,
-                            requestInfo.listener, requestInfo.requestorWs);
+                    WorkSource ifCreatorWs = new WorkSource(requestInfo.requestorWs);
+                    if (requestInfo.didUserApprove) {
+                        // If user select to connect from the UI, promote the priority
+                        ifCreatorWs.add(mFacade.getSettingsWorkSource(mContext));
+                    }
+                    startAdditionalClientModeManager(requestInfo.clientRole, requestInfo.listener,
+                            ifCreatorWs);
                     return;
                 }
 
@@ -2511,5 +2521,25 @@ public class ActiveModeWarden {
      */
     public long getSupportedFeatureSet() {
         return mSupportedFeatureSet.get();
+    }
+
+    /**
+     * Get the current default Wifi network.
+     * @return the default Wifi network
+     */
+    public Network getCurrentNetwork() {
+        synchronized (mServiceApiLock) {
+            return mCurrentNetwork;
+        }
+    }
+
+    /**
+     * Set the current default Wifi network. Called from ClientModeImpl.
+     * @param network the default Wifi network
+     */
+    protected void setCurrentNetwork(Network network) {
+        synchronized (mServiceApiLock) {
+            mCurrentNetwork = network;
+        }
     }
 }

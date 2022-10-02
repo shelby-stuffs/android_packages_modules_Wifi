@@ -786,6 +786,7 @@ public class WifiManager {
      * {@link #SAP_START_FAILURE_GENERAL},
      * {@link #SAP_START_FAILURE_NO_CHANNEL},
      * {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}
+     * {@link #SAP_START_FAILURE_USER_REJECTED}
      *
      * @hide
      */
@@ -892,13 +893,15 @@ public class WifiManager {
         SAP_START_FAILURE_GENERAL,
         SAP_START_FAILURE_NO_CHANNEL,
         SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION,
+        SAP_START_FAILURE_USER_REJECTED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SapStartFailure {}
 
     /**
-     *  All other reasons for AP start failure besides {@link #SAP_START_FAILURE_NO_CHANNEL} and
-     *  {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}.
+     *  All other reasons for AP start failure besides {@link #SAP_START_FAILURE_NO_CHANNEL},
+     *  {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}, and
+     *  {@link #SAP_START_FAILURE_USER_REJECTED}.
      *
      *  @hide
      */
@@ -923,6 +926,14 @@ public class WifiManager {
     @SystemApi
     public static final int SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION = 2;
 
+    /**
+     *  If Wi-Fi AP start failed, this reason code means that the user was asked for confirmation to
+     *  create the AP and the user declined.
+     *
+     *  @hide
+     */
+    @SystemApi
+    public static final int SAP_START_FAILURE_USER_REJECTED = 3;
 
     /** @hide */
     @IntDef(flag = false, prefix = { "SAP_CLIENT_BLOCKED_REASON_" }, value = {
@@ -5426,7 +5437,8 @@ public class WifiManager {
          * @param failureReason reason when in failed state. One of
          *                      {@link #SAP_START_FAILURE_GENERAL},
          *                      {@link #SAP_START_FAILURE_NO_CHANNEL},
-         *                      {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}
+         *                      {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION},
+         *                      {@link #SAP_START_FAILURE_USER_REJECTED}
          */
         default void onStateChanged(@WifiApState int state, @SapStartFailure int failureReason) {}
 
@@ -8866,7 +8878,8 @@ public class WifiManager {
      * happen:
      * </p>
      * <ul>
-     * <li>Upon finding any of the requested SSIDs, the matching ScanResults will be returned
+     * <li>Upon finding any of the requested SSIDs through either a connectivity scan or PNO scan,
+     * the matching ScanResults will be returned
      * via {@link PnoScanResultsCallback#onScanResultsAvailable(List)}, and the registered PNO
      * scan request will get automatically removed.</li>
      * <li>The external PNO scan request is removed by a call to

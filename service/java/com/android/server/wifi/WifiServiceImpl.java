@@ -156,6 +156,7 @@ import android.telephony.PhoneStateListener;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+import android.util.EventLog;
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -1569,7 +1570,8 @@ public class WifiServiceImpl extends BaseWifiService {
 
         if (!startSoftApInternal(new SoftApModeConfiguration(
                 WifiManager.IFACE_IP_MODE_TETHERED, softApConfig,
-                mTetheredSoftApTracker.getSoftApCapability()), requestorWs)) {
+                mTetheredSoftApTracker.getSoftApCapability(),
+                mCountryCode.getCountryCode()), requestorWs)) {
             mTetheredSoftApTracker.setFailedWhileEnabling();
             return false;
         }
@@ -1614,7 +1616,8 @@ public class WifiServiceImpl extends BaseWifiService {
 
         if (!startSoftApInternal(new SoftApModeConfiguration(
                 WifiManager.IFACE_IP_MODE_TETHERED, softApConfig,
-                mTetheredSoftApTracker.getSoftApCapability()), requestorWs)) {
+                mTetheredSoftApTracker.getSoftApCapability(),
+                mCountryCode.getCountryCode()), requestorWs)) {
             mTetheredSoftApTracker.setFailedWhileEnabling();
             return false;
         }
@@ -1952,7 +1955,8 @@ public class WifiServiceImpl extends BaseWifiService {
                     mRestartWifiApIfRequired = false;
                     startSoftApInternal(new SoftApModeConfiguration(
                             WifiManager.IFACE_IP_MODE_TETHERED, null,
-                            mTetheredSoftApTracker.getSoftApCapability()),
+                            mTetheredSoftApTracker.getSoftApCapability(),
+                            mCountryCode.getCountryCode()),
                         mFrameworkFacade.getSettingsWorkSource(mContext));
                 });
             }
@@ -2223,7 +2227,7 @@ public class WifiServiceImpl extends BaseWifiService {
 
             mActiveConfig = new SoftApModeConfiguration(
                     WifiManager.IFACE_IP_MODE_LOCAL_ONLY,
-                    softApConfig, lohsCapability);
+                    softApConfig, lohsCapability, mCountryCode.getCountryCode());
             mIsExclusive = (request.getCustomConfig() != null);
             // Report the error if we got failure in startSoftApInternal
             if (!startSoftApInternal(mActiveConfig, request.getWorkSource())) {
@@ -3917,7 +3921,8 @@ public class WifiServiceImpl extends BaseWifiService {
                     asLast = asLast.getNext();
                 }
                 isDeviceAdmin = mWifiPermissionsUtil.isAdmin(asLast.getUid(),
-                        asLast.getPackageName());
+                        asLast.getPackageName()) || mWifiPermissionsUtil.isLegacyDeviceAdmin(
+                                asLast.getUid(), asLast.getPackageName());
             }
         }
         boolean finalIsDeviceAdmin = isDeviceAdmin;
@@ -4084,9 +4089,11 @@ public class WifiServiceImpl extends BaseWifiService {
 
         for (ConcreteClientModeManager cmm : secondaryCmms) {
             WorkSource reqWs = cmm.getRequestorWs();
+            WorkSource withCaller = new WorkSource(reqWs);
+            withCaller.add(new WorkSource(callingUid, callingPackageName));
             // If there are more than 1 secondary CMM for same app, return any one (should not
             // happen currently since we don't support 3 STA's concurrently).
-            if (reqWs.equals(new WorkSource(callingUid, callingPackageName))) {
+            if (reqWs.equals(withCaller)) {
                 mLog.info("getConnectionInfo providing secondary CMM info").flush();
                 return cmm;
             }
@@ -5168,6 +5175,8 @@ public class WifiServiceImpl extends BaseWifiService {
         mWifiThreadRunner.run(() -> {
             List<WifiConfiguration> networks = mWifiConfigManager
                     .getSavedNetworks(Process.WIFI_UID);
+            EventLog.writeEvent(0x534e4554, "231985227", -1,
+                    "Remove certs for factory reset");
             for (WifiConfiguration network : networks) {
                 if (network.isEnterprise()) {
                     mWifiInjector.getWifiKeyStore().removeKeys(network.enterpriseConfig, true);
@@ -5229,7 +5238,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mVerboseLoggingEnabled) {
             mLog.info("getCurrentNetwork uid=%").c(Binder.getCallingUid()).flush();
         }
-        return getPrimaryClientModeManagerBlockingThreadSafe().syncGetCurrentNetwork();
+        return mActiveModeWarden.getCurrentNetwork();
     }
 
     public static String toHexString(String s) {
@@ -6677,7 +6686,7 @@ public class WifiServiceImpl extends BaseWifiService {
         SoftApConfiguration softApConfig = softApConfigBuilder.build();
         Log.d(TAG,"Repeater mode config - " + softApConfig);
         SoftApModeConfiguration softApModeConfig = new SoftApModeConfiguration(mode, softApConfig,
-                mTetheredSoftApTracker.getSoftApCapability());
+                mTetheredSoftApTracker.getSoftApCapability(), mCountryCode.getCountryCode());
         mActiveModeWarden.startSoftAp(softApModeConfig, requestorWs);
 
     }
