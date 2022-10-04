@@ -1028,7 +1028,8 @@ public class WifiConfigManager {
             // modify the network.
             return isCreator
                     || mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
-                    || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid);
+                    || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                    || mWifiPermissionsUtil.checkConfigOverridePermission(uid);
         }
 
         final ContentResolver resolver = mContext.getContentResolver();
@@ -1037,7 +1038,8 @@ public class WifiConfigManager {
         return !isLockdownFeatureEnabled
                 // If not locked down, settings app (i.e user) has permission to modify the network.
                 && (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
-                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid));
+                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                || mWifiPermissionsUtil.checkConfigOverridePermission(uid));
     }
 
     private void mergeSecurityParamsListWithInternalWifiConfiguration(
@@ -1418,7 +1420,8 @@ public class WifiConfigManager {
         // Only allow changes in Repeater Enabled flag if the user has permission to
         if (WifiConfigurationUtil.hasRepeaterEnabledChanged(
                 existingInternalConfig, newInternalConfig)
-                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) {
+                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
+                && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
             Log.e(TAG, "UID " + uid
                     + " does not have permission to modify Repeater Enabled Settings "
                     + " , or add a network with Repeater Enabled set to true "
@@ -1431,6 +1434,7 @@ public class WifiConfigManager {
         if (WifiConfigurationUtil.hasMacRandomizationSettingsChanged(existingInternalConfig,
                 newInternalConfig) && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 && !mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)
                 && !(newInternalConfig.isPasspoint() && uid == newInternalConfig.creatorUid)
                 && !config.fromWifiNetworkSuggestion
                 && !mWifiPermissionsUtil.isDeviceInDemoMode(mContext)
@@ -2833,10 +2837,8 @@ public class WifiConfigManager {
      *               checked for potential links.
      */
     private void attemptNetworkLinking(WifiConfiguration config) {
-        // Only link WPA_PSK config.
-        if (!config.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)) {
-            return;
-        }
+        if (!WifiConfigurationUtil.isConfigLinkable(config)) return;
+
         ScanDetailCache scanDetailCache = getScanDetailCacheForNetwork(config.networkId);
         // Ignore configurations with large number of BSSIDs.
         if (scanDetailCache != null
@@ -2854,10 +2856,9 @@ public class WifiConfigManager {
                 continue;
             }
             // Network Selector will be allowed to dynamically jump from a linked configuration
-            // to another, hence only link configurations that have WPA_PSK security type.
-            if (!linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)) {
-                continue;
-            }
+            // to another, hence only link configurations that have WPA_PSK/SAE security type
+            // if auto upgrade enabled (OR) WPA_PSK if auto upgrade disabled.
+            if (!WifiConfigurationUtil.isConfigLinkable(linkConfig)) continue;
             ScanDetailCache linkScanDetailCache =
                     getScanDetailCacheForNetwork(linkConfig.networkId);
             // Ignore configurations with large number of BSSIDs.
@@ -3673,7 +3674,8 @@ public class WifiConfigManager {
                 mWifiPermissionsUtil.checkNetworkManagedProvisioningPermission(uid);
         // If |uid| corresponds to the admin, allow all modifications.
         if (isAdmin || hasNetworkSettingsPermission
-                || hasNetworkSetupWizardPermission || hasNetworkManagedProvisioningPermission) {
+                || hasNetworkSetupWizardPermission || hasNetworkManagedProvisioningPermission
+                || mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
             return true;
         }
         if (mVerboseLoggingEnabled) {
@@ -4005,13 +4007,22 @@ public class WifiConfigManager {
         }
         for (String configKey : linkedConfigurations.keySet()) {
             WifiConfiguration linkConfig = getConfiguredNetworkWithoutMasking(configKey);
-            if (linkConfig == null ||
-                !linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK))
-                continue;
+            if (linkConfig == null) continue;
 
-            linkConfig.getNetworkSelectionStatus().setCandidateSecurityParams(
-                    SecurityParams.createSecurityParamsBySecurityType(
-                            WifiConfiguration.SECURITY_TYPE_PSK));
+            if (!WifiConfigurationUtil.isConfigLinkable(linkConfig)) continue;
+
+            SecurityParams defaultParams =
+                     SecurityParams.createSecurityParamsBySecurityType(
+                             WifiConfiguration.SECURITY_TYPE_PSK);
+
+            if (!linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)
+                    || !linkConfig.getSecurityParams(
+                            WifiConfiguration.SECURITY_TYPE_PSK).isEnabled()) {
+                defaultParams = SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE);
+            }
+
+            linkConfig.getNetworkSelectionStatus().setCandidateSecurityParams(defaultParams);
             linkedNetworks.put(configKey, linkConfig);
         }
         return linkedNetworks;
