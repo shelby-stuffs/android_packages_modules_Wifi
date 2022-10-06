@@ -148,6 +148,7 @@ import android.telephony.TelephonyManager;
 import android.test.mock.MockContentProvider;
 import android.test.mock.MockContentResolver;
 import android.util.ArraySet;
+import android.util.LocalLog;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Range;
@@ -556,6 +557,7 @@ public class ClientModeImplTest extends WifiBaseTest {
     @Mock ScanResult mScanResult;
     @Mock HandlerThread mWifiHandlerThread;
     @Mock SsidTranslator mSsidTranslator;
+    @Mock LocalLog mLocalLog;
 
     @Captor ArgumentCaptor<WifiConfigManager.OnNetworkUpdateListener> mConfigUpdateListenerCaptor;
     @Captor ArgumentCaptor<WifiNetworkAgent.Callback> mWifiNetworkAgentCallbackCaptor;
@@ -632,6 +634,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mUntrustedWifiNetworkFactory.hasConnectionRequests()).thenReturn(true);
         when(mOemWifiNetworkFactory.hasConnectionRequests()).thenReturn(true);
         when(mMultiInternetManager.hasPendingConnectionRequests()).thenReturn(true);
+        when(mWifiInjector.getWifiHandlerLocalLog()).thenReturn(mLocalLog);
 
         mFrameworkFacade = getFrameworkFacade();
         mContext = getContext();
@@ -786,6 +789,8 @@ public class ClientModeImplTest extends WifiBaseTest {
                 WIFI_IFACE_NAME, mClientModeManager, mCmiMonitor,
                 mBroadcastQueue, mWifiNetworkSelector, mTelephonyManager, mWifiInjector,
                 mSettingsConfigStore, false, mWifiNotificationManager);
+
+        mCmi.mInsecureEapNetworkHandler = mInsecureEapNetworkHandler;
 
         mWifiCoreThread = getCmiHandlerThread(mCmi);
 
@@ -1512,8 +1517,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiNative).getEapAnonymousIdentity(any());
-        // No decorated pseudonum, no need to send back to the supplicant.
-        verify(mWifiNative, never()).setEapAnonymousIdentity(any(), any());
+        // No decorated pseudonum, only update the cached data.
+        verify(mWifiNative).setEapAnonymousIdentity(any(), eq(pseudonym), eq(false));
         assertEquals(pseudonym,
                 mConnectedNetwork.enterpriseConfig.getAnonymousIdentity());
         // Verify that WifiConfigManager#addOrUpdateNetwork() was called if there we received a
@@ -1570,7 +1575,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiNative).getEapAnonymousIdentity(any());
-        verify(mWifiNative).setEapAnonymousIdentity(any(), eq(pseudonym + "@" + realm));
+        verify(mWifiNative).setEapAnonymousIdentity(any(), eq(pseudonym + "@" + realm), eq(true));
         assertEquals(pseudonym + "@" + realm,
                 mConnectedNetwork.enterpriseConfig.getAnonymousIdentity());
         // Verify that WifiConfigManager#addOrUpdateNetwork() was called if there we received a
@@ -1624,8 +1629,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiNative).getEapAnonymousIdentity(any());
-        // No decorated pseudonum, no need to send back to the supplicant.
-        verify(mWifiNative, never()).setEapAnonymousIdentity(any(), any());
+        // No decorated pseudonum, only update the cached data.
+        verify(mWifiNative).setEapAnonymousIdentity(any(), eq(pseudonym), eq(false));
         assertEquals(pseudonym,
                 mConnectedNetwork.enterpriseConfig.getAnonymousIdentity());
         // Verify that WifiConfigManager#addOrUpdateNetwork() was called if there we received a
@@ -1684,8 +1689,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiNative).getEapAnonymousIdentity(any());
-        // No decorated pseudonum, no need to send back to the supplicant.
-        verify(mWifiNative, never()).setEapAnonymousIdentity(any(), any());
+        // No decorated pseudonum, only update the cached data.
+        verify(mWifiNative).setEapAnonymousIdentity(any(), eq(pseudonym), eq(false));
         assertEquals(pseudonym,
                 mConnectedNetwork.enterpriseConfig.getAnonymousIdentity());
         // Verify that WifiConfigManager#addOrUpdateNetwork() was called if there we received a
@@ -8409,6 +8414,16 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onError(testConfig.SSID);
         mLooper.dispatchAll();
         verify(mWifiNative).disconnect(eq(WIFI_IFACE_NAME));
+    }
+
+    /**
+     * Verify that InsecureEapNetworkHandler cleanup() is called if wifi is disabled.
+     */
+    @Test
+    public void verifyInsecureEapNetworkCleanUpWhenDisabled() throws Exception {
+        mCmi.stop();
+        mLooper.dispatchAll();
+        verify(mInsecureEapNetworkHandler).cleanup();
     }
 
     /**

@@ -852,8 +852,14 @@
     <!-- Indicate the help page link for the Root CA certifiate installation. -->
     <string translatable="false" name="config_wifiCertInstallationHelpLink">https://support.google.com/pixelphone/answer/2844832</string>
 
+    <!-- Indicate the help page link for the APM enhancement. -->
+    <string translatable="false" name="config_wifiApmEnhancementHelpLink">https://support.google.com/pixelphone/answer/12639358</string>
+
     <!-- Indicate the number of networks to restore in a batch. 0 : all networks in a batch -->
     <integer translatable="false" name="config_wifiConfigurationRestoreNetworksBatchNum">50</integer>
+
+    <!-- Enables logging for any tasks running on the Wi-Fi thread which take longer than this threshold (in milliseconds) -->
+    <integer translatable="false" name="config_wifiConfigurationWifiRunnerThresholdInMs">100</integer>
 
     <!-- OEM privileged WiFi admin package names. Empty by default-->
     <string-array translatable="false" name="config_oemPrivilegedWifiAdminPackages">
@@ -965,4 +971,7 @@
         <item>ko,EUC-KR</item>
         -->
     </string-array>
+
+    <!-- ACTION_FILE_BUG_DEEPLINK intent name -->
+    <string name="config_wifiBugreportDeepLink" translatable="false">com.google.android.apps.betterbug.intent.FILE_BUG_DEEPLINK</string>
 </resources>
