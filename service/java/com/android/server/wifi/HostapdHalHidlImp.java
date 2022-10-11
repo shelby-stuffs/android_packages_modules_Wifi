@@ -139,6 +139,7 @@ public class HostapdHalHidlImp implements IHostapdHal {
         mEventHandler = handler;
         mServiceManagerDeathRecipient = new ServiceManagerDeathRecipient();
         mHostapdDeathRecipient = new HostapdDeathRecipient();
+        mHostapdVendorDeathRecipient = new HostapdVendorDeathRecipient();
         Log.d(TAG, "init HostapdHalHidlImp");
     }
 
@@ -1385,7 +1386,8 @@ public class HostapdHalHidlImp implements IHostapdHal {
                 encryptionType =
                   vendor.qti.hardware.wifi.hostapd.V1_2.IHostapdVendor.VendorEncryptionType.SAE_TRANSITION;
                 break;
-            case SoftApConfiguration.SECURITY_TYPE_OWE:
+            case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION:
+            case SoftApConfiguration.SECURITY_TYPE_WPA3_OWE:
                 encryptionType = vendor.qti.hardware.wifi.hostapd.V1_1.IHostapdVendor.VendorEncryptionType.OWE;
                 break;
             default:

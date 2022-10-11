@@ -980,9 +980,9 @@ public class WifiNative {
         synchronized (mLock) {
             if (mWifiVendorHal.isVendorHalSupported()) {
                 // Hostapd vendor V1_2: bridge iface setup start
-                mVendorBridgeModeActive = ((band & SoftApConfiguration.BAND_6GHZ) == 0
-                                             && type == SoftApConfiguration.SECURITY_TYPE_OWE)
-                                          || (isBridged && mHostapdHal.useVendorHostapdHal());
+                mVendorBridgeModeActive = ((isBridged && mHostapdHal.useVendorHostapdHal())
+                                           || (HostapdHalHidlImp.serviceDeclared()
+                                               && (type == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION)));
                 Log.i(TAG, "CreateApIface - vendor bridge=" + mVendorBridgeModeActive);
                 if (isVendorBridgeModeActive()) {
                     return createVendorBridgeIface(iface, requestorWs, band, softApManager);
@@ -1698,12 +1698,9 @@ public class WifiNative {
         List<byte[]> hiddenNetworkSsidsArrays = new ArrayList<>();
         for (String hiddenNetworkSsid : hiddenNetworkSSIDs) {
             try {
-                byte[] hiddenSsidBytes = WifiGbk.getRandUtfOrGbkBytes(hiddenNetworkSsid);
-                if (hiddenSsidBytes.length > WifiGbk.MAX_SSID_LENGTH) {
-                    Log.e(TAG, "Skip too long Gbk->utf ssid[" + hiddenSsidBytes.length
-                       + "]=" + hiddenNetworkSsid);
-                }
-                hiddenNetworkSsidsArrays.add(hiddenSsidBytes);
+                hiddenNetworkSsidsArrays.add(
+                        NativeUtil.byteArrayFromArrayList(
+                                NativeUtil.decodeSsid(hiddenNetworkSsid)));
             } catch (IllegalArgumentException e) {
                 Log.e(TAG, "Illegal argument " + hiddenNetworkSsid, e);
                 continue;
@@ -3277,22 +3274,7 @@ public class WifiNative {
                     android.net.wifi.nl80211.PnoNetwork nativeNetwork =
                             network.toNativePnoNetwork();
                     if (nativeNetwork != null) {
-                        if (nativeNetwork.getSsid().length <= WifiGbk.MAX_SSID_LENGTH) {
-                            pnoNetworks.add(nativeNetwork);
-                        }
-                        //wifigbk++
-                        if (!WifiGbk.isAllAscii(nativeNetwork.getSsid())) {
-                            byte gbkBytes[] = WifiGbk.toGbk(nativeNetwork.getSsid());
-                            if (gbkBytes != null) {
-                                android.net.wifi.nl80211.PnoNetwork gbkNetwork =
-                                    network.toNativePnoNetwork();
-                                gbkNetwork.setSsid(gbkBytes);
-                                pnoNetworks.add(gbkNetwork);
-                                Log.i(TAG, "WifiGbk fixed - pnoScan add extra Gbk ssid for "
-                                    + nativeNetwork.getSsid());
-                            }
-                        }
-                        //wifigbk--
+                        pnoNetworks.add(nativeNetwork);
                     }
                 }
             }
@@ -4506,10 +4488,18 @@ public class WifiNative {
         return true;
     }
 
+    public boolean useVendorHostapdHalForOwe(SoftApConfiguration config) {
+        return mHostapdHal.useVendorHostapdHal() ||
+            /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+            (HostapdHalHidlImp.serviceDeclared() && config != null
+            && (config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE
+            || config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION));
+    }
+
     private boolean addAccessPoint(@NonNull String ifaceName,
           @NonNull SoftApConfiguration config, boolean isMetered, SoftApHalCallback callback) {
         if (isVendorBridgeModeActive()) {
-            if (config != null && config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_OWE) {
+            if (config != null && config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION) {
                 Log.d(TAG, "Setup for OWE mode Softap");
                 if (!setupOweSap(config, callback))
                     return false;
@@ -4543,9 +4533,10 @@ public class WifiNative {
                 Log.e(TAG, "Failed to set interface up - " + bridgeInterface);
                 return false;
             }
-        } else if (mHostapdHal.useVendorHostapdHal()
-                   || (config != null && config.getSecurityType()
-                              == SoftApConfiguration.SECURITY_TYPE_OWE)) {
+        } else if (mHostapdHal.useVendorHostapdHal() ||
+                   /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+                   (HostapdHalHidlImp.serviceDeclared() && config != null &&
+                    config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE)) {
             if (!mHostapdHal.addVendorAccessPoint(ifaceName, config, callback::onFailure)) {
                 Log.e(TAG, "Failed to addVendorAP - " + ifaceName);
                 return false;

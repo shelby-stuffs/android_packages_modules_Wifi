@@ -431,9 +431,6 @@ public final class SoftApConfiguration implements Parcelable {
     public static final int SECURITY_TYPE_WPA3_OWE = 5;
 
     /** @hide */
-    public static final int SECURITY_TYPE_OWE = 4;
-
-    /** @hide */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = { "SECURITY_TYPE_" }, value = {
         SECURITY_TYPE_OPEN,
@@ -442,7 +439,6 @@ public final class SoftApConfiguration implements Parcelable {
         SECURITY_TYPE_WPA3_SAE,
         SECURITY_TYPE_WPA3_OWE_TRANSITION,
         SECURITY_TYPE_WPA3_OWE,
-        SECURITY_TYPE_OWE,
     })
     public @interface SecurityType {}
 
@@ -1545,8 +1541,7 @@ public final class SoftApConfiguration implements Parcelable {
             }
             if (securityType == SECURITY_TYPE_OPEN
                     || securityType == SECURITY_TYPE_WPA3_OWE_TRANSITION
-                    || securityType == SECURITY_TYPE_WPA3_OWE
-                    || securityType == SECURITY_TYPE_OWE) {
+                    || securityType == SECURITY_TYPE_WPA3_OWE) {
                 if (passphrase != null) {
                     throw new IllegalArgumentException(
                             "passphrase should be null when security type is open");

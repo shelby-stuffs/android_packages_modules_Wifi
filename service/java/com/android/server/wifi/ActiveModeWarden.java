@@ -717,7 +717,7 @@ public class ActiveModeWarden {
                 apConfig = mWifiInjector.getWifiApConfigStore().getApConfiguration();
 
             if (apConfig == null || (apConfig.getBands().length == 1
-                    && !(apConfig.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_OWE
+                    && !(apConfig.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION
                          && (apConfig.getBand() & SoftApConfiguration.BAND_6GHZ) == 0)))
                 return; // Noting to do.
 
