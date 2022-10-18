@@ -75,6 +75,7 @@ import com.android.server.wifi.ActiveModeManager.ClientConnectivityRole;
 import com.android.server.wifi.ActiveModeManager.ClientInternetConnectivityRole;
 import com.android.server.wifi.ActiveModeManager.ClientRole;
 import com.android.server.wifi.ActiveModeManager.SoftApRole;
+import com.android.server.wifi.util.NativeUtil;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.wifi.resources.R;
 
@@ -2374,6 +2375,7 @@ public class ActiveModeWarden {
                         ? null : connectedOrConnectingWifiConfiguration.SSID;
         Log.v(TAG, connectedOrConnectingBssid + "   " + connectedOrConnectingSsid);
         return Objects.equals(ssid, connectedOrConnectingSsid)
-                && Objects.equals(bssid, connectedOrConnectingBssid);
+                && (Objects.equals(bssid, connectedOrConnectingBssid)
+                || clientModeManager.isAffiliatedLinkBssid(NativeUtil.getMacAddressOrNull(bssid)));
     }
 }
