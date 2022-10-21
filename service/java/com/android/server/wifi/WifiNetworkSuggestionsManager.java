@@ -48,7 +48,6 @@ import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.WifiScanner;
 import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.PasspointConfiguration;
-import android.os.Handler;
 import android.os.Process;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
@@ -158,7 +157,7 @@ public class WifiNetworkSuggestionsManager {
 
     private final WifiContext mContext;
     private final Resources mResources;
-    private final Handler mHandler;
+    private final RunnerHandler mHandler;
     private final AppOpsManager mAppOps;
     private final ActivityManager mActivityManager;
     private final WifiNotificationManager mNotificationManager;
@@ -540,11 +539,8 @@ public class WifiNetworkSuggestionsManager {
                 String packageName = entry.getKey();
                 Collection<ExtendedWifiNetworkSuggestion> extNetworkSuggestions =
                         entry.getValue().extNetworkSuggestions.values();
-                if (!extNetworkSuggestions.isEmpty()) {
-                    // Start tracking app-op changes from the app if they have active suggestions.
-                    startTrackingAppOpsChange(packageName,
-                            extNetworkSuggestions.iterator().next().perAppInfo.uid);
-                }
+                // Start tracking app-op changes from for all the app in the database
+                startTrackingAppOpsChange(packageName, entry.getValue().uid);
                 for (ExtendedWifiNetworkSuggestion ewns : extNetworkSuggestions) {
                     if (ewns.wns.passpointConfiguration != null) {
                         addToPasspointInfoMap(ewns);
@@ -659,7 +655,7 @@ public class WifiNetworkSuggestionsManager {
         }
     }
 
-    public WifiNetworkSuggestionsManager(WifiContext context, Handler handler,
+    public WifiNetworkSuggestionsManager(WifiContext context, RunnerHandler handler,
             WifiInjector wifiInjector, WifiPermissionsUtil wifiPermissionsUtil,
             WifiConfigManager wifiConfigManager, WifiConfigStore wifiConfigStore,
             WifiMetrics wifiMetrics, WifiCarrierInfoManager wifiCarrierInfoManager,
@@ -695,7 +691,7 @@ public class WifiNetworkSuggestionsManager {
 
         mContext.registerReceiver(mBroadcastReceiver, mIntentFilter, null, handler);
         mLruConnectionTracker = lruConnectionTracker;
-        mHandler.postAtFrontOfQueue(() -> mWifiConfigManager.addOnNetworkUpdateListener(
+        mHandler.postToFront(() -> mWifiConfigManager.addOnNetworkUpdateListener(
                 new WifiNetworkSuggestionsManager.OnNetworkUpdateListener()));
     }
 
@@ -960,6 +956,7 @@ public class WifiNetworkSuggestionsManager {
                         APP_TYPE_NON_PRIVILEGED);
             }
             onSuggestionUserApprovalStatusChanged(uid, packageName);
+            startTrackingAppOpsChange(packageName, uid);
         }
         // If PerAppInfo is upgrade from pre-R, uid may not be set.
         perAppInfo.setUid(uid);
@@ -986,10 +983,6 @@ public class WifiNetworkSuggestionsManager {
                         + extNetworkSuggestions.size());
                 return WifiManager.STATUS_NETWORK_SUGGESTIONS_ERROR_ADD_EXCEEDS_MAX_PER_APP;
             }
-        }
-        if (perAppInfo.extNetworkSuggestions.isEmpty()) {
-            // Start tracking app-op changes from the app if they have active suggestions.
-            startTrackingAppOpsChange(packageName, uid);
         }
 
         for (ExtendedWifiNetworkSuggestion ewns: extNetworkSuggestions) {
