@@ -391,12 +391,12 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
     * scheduled at a time. The scheduled delayed message intervals are recorded and returned by
     * {@link #getIntervals}. The intervals are cleared by calling {@link #reset}.
     */
-    private class TestHandler extends Handler {
+    private class TestHandler extends RunnerHandler {
         private ArrayList<Long> mIntervals = new ArrayList<>();
         private Message mMessage;
 
         TestHandler(Looper looper) {
-            super(looper);
+            super(looper, 100, new LocalLog(128));
         }
 
         public List<Long> getIntervals() {
@@ -3276,6 +3276,35 @@ public class WifiConnectivityManagerTest extends WifiBaseTest {
         intervals.set(0, intervals.get(0) + 2000);
         verifyScanTimesAndFirstInterval(2 /* scanTimes */, intervals,
                 VALID_CONNECTED_SINGLE_SCAN_SCHEDULE_SEC[0]);
+    }
+
+    /**
+     * Check that the device does not trigger any periodic scans when it doesn't have any
+     * saved, passpoint, or suggestion network and open network notifier is disabled
+     */
+    @Test
+    public void checkNoScanWhenNoPotentialNetwork() {
+        // Disable open network notifier
+        when(mOpenNetworkNotifier.isSettingEnabled()).thenReturn(false);
+        // Return no saved networks
+        when(mWifiConfigManager.getSavedNetworks(anyInt()))
+                .thenReturn(new ArrayList<WifiConfiguration>());
+        // Return no suggestion networks
+        when(mWifiNetworkSuggestionsManager.getAllApprovedNetworkSuggestions())
+                .thenReturn(new HashSet<>());
+        // Return no passpoint networks
+        when(mPasspointManager.getProviderConfigs(anyInt(), anyBoolean()))
+                .thenReturn(new ArrayList<>());
+
+        // Set screen to ON
+        setScreenState(true);
+
+        mWifiConnectivityManager.handleConnectionStateChanged(
+                mPrimaryClientModeManager,
+                WifiConnectivityManager.WIFI_STATE_DISCONNECTED);
+
+        verify(mWifiScanner, never()).startScan(anyObject(), anyObject(), anyObject(),
+                anyObject());
     }
 
     /**
