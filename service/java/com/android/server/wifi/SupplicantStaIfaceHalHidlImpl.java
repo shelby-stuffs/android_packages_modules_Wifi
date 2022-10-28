@@ -304,6 +304,7 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
         synchronized (mLock) {
             try {
                 mISupplicant = getSupplicantMockable();
+                setLogLevel(mVerboseHalLoggingEnabled);
             } catch (RemoteException e) {
                 Log.e(TAG, "ISupplicant.getService exception: " + e);
                 return false;
