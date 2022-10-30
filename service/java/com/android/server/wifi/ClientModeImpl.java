@@ -2920,10 +2920,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             mWifiInfo.clearCurrentSecurityType();
             mWifiInfo.resetMultiLinkInfo();
         }
-        // Update the L2 Information to IP Layer only after STA is authorized for data transfer.
-        if (state == SupplicantState.COMPLETED) {
-            updateLayer2Information();
-        }
+
         // SSID might have been updated, so call updateCapabilities
         updateCapabilities();
 
@@ -3037,7 +3034,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (mIpClient != null) {
             Pair<String, String> p = mWifiScoreCard.getL2KeyAndGroupHint(mWifiInfo);
             if (!p.equals(mLastL2KeyAndGroupHint)) {
-                final MacAddress currentBssid = getMacAddressFromBssidString(mWifiInfo.getBSSID());
+                final MacAddress currentBssid =
+                        NativeUtil.getMacAddressOrNull(mWifiInfo.getBSSID());
                 final Layer2Information l2Information = new Layer2Information(
                         p.first, p.second, currentBssid);
                 // Update current BSSID on IpClient side whenever l2Key and groupHint
@@ -3759,7 +3757,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             return;
         }
         String currentMacString = mWifiNative.getMacAddress(mInterfaceName);
-        MacAddress currentMac = getMacAddressFromBssidString(currentMacString);
+        MacAddress currentMac = NativeUtil.getMacAddressOrNull(currentMacString);
         MacAddress newMac = mWifiConfigManager.getRandomizedMacAndUpdateIfNeeded(config,
                 isSecondaryInternet() && mClientModeManager.isSecondaryInternetDbsAp());
         if (!WifiConfiguration.isValidMacAddressForRandomization(newMac)) {
@@ -4005,17 +4003,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         return scanDetailCache.getScanResult(bssid);
     }
 
-    private MacAddress getMacAddressFromBssidString(@Nullable String bssidStr) {
-        try {
-            return (bssidStr != null) ? MacAddress.fromString(bssidStr) : null;
-        } catch (IllegalArgumentException e) {
-            Log.e(getTag(), "Invalid BSSID format: " + bssidStr);
-            return null;
-        }
-    }
-
     private MacAddress getCurrentBssidInternalMacAddress() {
-        return getMacAddressFromBssidString(mLastBssid);
+        return NativeUtil.getMacAddressOrNull(mLastBssid);
     }
 
     private void connectToNetwork(WifiConfiguration config) {
@@ -5221,6 +5210,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     mIpReachabilityMonitorActive = true;
                     mWifiInfo.setNetworkKey(config.getNetworkKeyFromSecurityType(
                             mWifiInfo.getCurrentSecurityType()));
+                    updateLayer2Information();
                     updateCurrentConnectionInfo();
                     transitionTo(mL3ProvisioningState);
                     break;
@@ -5936,6 +5926,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     mLastNetworkId = connectionInfo.networkId;
                     mWifiInfo.setNetworkId(mLastNetworkId);
                     mWifiInfo.setMacAddress(mWifiNative.getMacAddress(mInterfaceName));
+                    updateLayer2Information();
                     updateCurrentConnectionInfo();
                     if (!Objects.equals(mLastBssid, connectionInfo.bssid)) {
                         mLastBssid = connectionInfo.bssid;
@@ -6500,6 +6491,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         mLastBssid = connectionInfo.bssid;
                         mWifiInfo.setBSSID(mLastBssid);
                         mWifiInfo.setNetworkId(mLastNetworkId);
+                        updateLayer2Information();
                         sendNetworkChangeBroadcastWithCurrentState();
                         updateCurrentConnectionInfo();
                         // Successful framework roam! (probably)
