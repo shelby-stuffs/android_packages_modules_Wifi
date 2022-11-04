@@ -1310,6 +1310,11 @@ public class SupplicantStaIfaceHal {
                         + config.getProfileKey());
                 return false;
             }
+            // wifgbk++
+            if (mhalNetworksSize == 2) {
+                // reenable network in case it is disabled
+                networkHandle.enable(true);
+            }
 
             PmkCacheStoreData pmkData = mPmkCacheEntries.get(config.networkId);
             SecurityParams params = config.getNetworkSelectionStatus().getCandidateSecurityParams();
