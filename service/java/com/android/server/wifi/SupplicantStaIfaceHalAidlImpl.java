@@ -187,6 +187,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
         synchronized (mLock) {
             mVerboseLoggingEnabled = verboseEnabled;
             mVerboseHalLoggingEnabled = halVerboseEnabled;
+            mPmkCacheManager.enableVerboseLogging(mVerboseLoggingEnabled);
             setLogLevel(mVerboseHalLoggingEnabled);
         }
     }

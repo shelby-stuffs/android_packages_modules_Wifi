@@ -19,6 +19,7 @@ package com.android.server.wifi;
 import android.net.MacAddress;
 import android.net.wifi.WifiConfiguration;
 import android.os.Handler;
+import java.util.Collections;
 import android.util.Log;
 import android.util.SparseArray;
 
@@ -96,6 +97,12 @@ public class PmkCacheManager {
             Log.d(TAG, "Network " + networkId + " PmkCache Count: " + pmkDataList.size());
         }
         updatePmkCacheExpiration();
+
+        // Sort by expirationTimeInSec descending order.
+        Collections.sort(
+                pmkDataList,
+                (a, b) -> Long.compare(b.expirationTimeInSec, a.expirationTimeInSec));
+
         return true;
     }
 
