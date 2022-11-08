@@ -1083,4 +1083,9 @@ public class WifiInjector {
     public Context getContext() {
         return mContext;
     }
+
+    @NonNull
+    public WifiKeyStore getWifiKeyStore() {
+        return mWifiKeyStore;
+    }
 }
