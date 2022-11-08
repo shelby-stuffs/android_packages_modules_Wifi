@@ -794,6 +794,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiInjector.getSarManager().handleBootCompleted();
             mWifiInjector.getSsidTranslator().handleBootCompleted();
             mWifiInjector.getPasspointManager().handleBootCompleted();
+            mWifiInjector.getInterfaceConflictManager().handleBootCompleted();
             updateVerboseLoggingEnabled();
         });
     }
@@ -6406,7 +6407,12 @@ public class WifiServiceImpl extends BaseWifiService {
         mLog.info("setWalkeupEnabled uid=% verbose=%")
                 .c(Binder.getCallingUid())
                 .c(enable).flush();
-        mWifiThreadRunner.post(()-> mWifiInjector.getWakeupController().setEnabled(enable));
+        long ident = Binder.clearCallingIdentity();
+        try {
+            mWifiInjector.getWakeupController().setEnabled(enable);
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
     }
 
     /**
@@ -6418,7 +6424,12 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mVerboseLoggingEnabled) {
             mLog.info("isAutoWakeupEnabled uid=%").c(Binder.getCallingUid()).flush();
         }
-        return mWifiThreadRunner.call(()-> mWifiInjector.getWakeupController().isEnabled(), false);
+        long ident = Binder.clearCallingIdentity();
+        try {
+            return mWifiInjector.getWakeupController().isEnabled();
+        } finally {
+            Binder.restoreCallingIdentity(ident);
+        }
     }
 
     /**
