@@ -1578,14 +1578,6 @@ public class WifiConfiguration implements Parcelable {
     public boolean oemPrivate;
 
     /**
-     * Indicate whether or not the network is a secondary network with internet, associated with
-     * a DBS AP same as the primary network on a different band.
-     * This bit is set when this Wifi configuration is created from {@link WifiConnectivityManager}.
-     * @hide
-     */
-    public boolean dbsSecondaryInternet;
-
-    /**
      * Indicate whether or not the network is a carrier merged network.
      * This bit can only be used by suggestion network, see
      * {@link WifiNetworkSuggestion.Builder#setCarrierMerged(boolean)}
@@ -2139,10 +2131,16 @@ public class WifiConfiguration implements Parcelable {
          */
         public static final int DISABLED_CONSECUTIVE_FAILURES = 12;
         /**
+         * This code is used to disable a network when a security params is disabled
+         * by the transition disable indication.
+         * @hide
+         */
+        public static final int DISABLED_TRANSITION_DISABLE_INDICATION = 13;
+        /**
          * All other disable reasons should be strictly less than this value.
          * @hide
          */
-        public static final int NETWORK_SELECTION_DISABLED_MAX = 13;
+        public static final int NETWORK_SELECTION_DISABLED_MAX = 14;
 
         /**
          * Get an integer that is equal to the maximum integer value of all the
@@ -2309,6 +2307,12 @@ public class WifiConfiguration implements Parcelable {
                     new DisableReasonInfo("NETWORK_SELECTION_DISABLED_CONSECUTIVE_FAILURES",
                             1,
                             5 * 60 * 1000));
+
+            reasons.append(DISABLED_TRANSITION_DISABLE_INDICATION,
+                    new DisableReasonInfo(
+                            "NETWORK_SELECTION_DISABLED_TRANSITION_DISABLE_INDICATION",
+                            1,
+                            DisableReasonInfo.PERMANENT_DISABLE_TIMEOUT));
 
             return reasons;
         }
@@ -3208,7 +3212,6 @@ public class WifiConfiguration implements Parcelable {
         carrierMerged = false;
         fromWifiNetworkSuggestion = false;
         fromWifiNetworkSpecifier = false;
-        dbsSecondaryInternet = false;
         meteredHint = false;
         mIsRepeaterEnabled = false;
         meteredOverride = METERED_OVERRIDE_NONE;
@@ -3357,14 +3360,13 @@ public class WifiConfiguration implements Parcelable {
         if (this.carrierMerged) sbuf.append(" carrierMerged");
         if (this.fromWifiNetworkSuggestion) sbuf.append(" fromWifiNetworkSuggestion");
         if (this.fromWifiNetworkSpecifier) sbuf.append(" fromWifiNetworkSpecifier");
-        if (this.dbsSecondaryInternet) sbuf.append(" dbsSecondaryInternet");
         if (this.meteredHint) sbuf.append(" meteredHint");
         if (this.mIsRepeaterEnabled) sbuf.append(" repeaterEnabled");
         if (this.useExternalScores) sbuf.append(" useExternalScores");
         if (this.validatedInternetAccess || this.ephemeral || this.trusted || this.oemPaid
                 || this.oemPrivate || this.carrierMerged || this.fromWifiNetworkSuggestion
                 || this.fromWifiNetworkSpecifier || this.meteredHint || this.useExternalScores
-                || this.restricted || this.dbsSecondaryInternet) {
+                || this.restricted) {
             sbuf.append("\n");
         }
         if (this.meteredOverride != METERED_OVERRIDE_NONE) {
@@ -3599,7 +3601,8 @@ public class WifiConfiguration implements Parcelable {
             if (TextUtils.isEmpty(keyMgmt)) {
                 throw new IllegalStateException("Not an EAP network");
             }
-            String keyId = trimStringForKeyId(SSID) + "_" + keyMgmt + "_"
+            String keyId = (!TextUtils.isEmpty(SSID) && SSID.charAt(0) != '\"'
+                    ? SSID.toLowerCase() : SSID) + "_" + keyMgmt + "_"
                     + trimStringForKeyId(enterpriseConfig.getKeyId(current != null
                     ? current.enterpriseConfig : null));
 
@@ -3720,7 +3723,7 @@ public class WifiConfiguration implements Parcelable {
             return mPasspointUniqueId;
         }
 
-        String key = SSID + getDefaultSecurityType();
+        String key = getSsidAndSecurityTypeString();
         if (!shared) {
             key += "-" + UserHandle.getUserHandleForUid(creatorUid).getIdentifier();
         }
@@ -3732,7 +3735,8 @@ public class WifiConfiguration implements Parcelable {
      *  return the SSID + security type in String format.
      */
     public String getSsidAndSecurityTypeString() {
-        return SSID + getDefaultSecurityType();
+        return (!TextUtils.isEmpty(SSID) && SSID.charAt(0) != '\"' ? SSID.toLowerCase() : SSID)
+                + getDefaultSecurityType();
     }
 
     /**
@@ -3826,7 +3830,6 @@ public class WifiConfiguration implements Parcelable {
      * @param httpProxy {@link ProxyInfo} representing the httpProxy to be used by this
      *                  WifiConfiguration. Setting this to {@code null} will explicitly set no
      *                  proxy, removing any proxy that was previously set.
-     * @exception IllegalArgumentException for invalid httpProxy
      */
     public void setHttpProxy(ProxyInfo httpProxy) {
         if (httpProxy == null) {
@@ -3851,7 +3854,7 @@ public class WifiConfiguration implements Parcelable {
                     Arrays.asList(exclusionList));
         }
         if (!httpProxyCopy.isValid()) {
-            throw new IllegalArgumentException("Invalid ProxyInfo: " + httpProxyCopy.toString());
+            Log.w(TAG, "ProxyInfo is not valid: " + httpProxyCopy);
         }
         mIpConfiguration.setProxySettings(proxySettingCopy);
         mIpConfiguration.setHttpProxy(httpProxyCopy);
@@ -3940,7 +3943,6 @@ public class WifiConfiguration implements Parcelable {
             carrierMerged = source.carrierMerged;
             fromWifiNetworkSuggestion = source.fromWifiNetworkSuggestion;
             fromWifiNetworkSpecifier = source.fromWifiNetworkSpecifier;
-            dbsSecondaryInternet = source.dbsSecondaryInternet;
             meteredHint = source.meteredHint;
             mIsRepeaterEnabled = source.mIsRepeaterEnabled;
             meteredOverride = source.meteredOverride;
@@ -4045,7 +4047,6 @@ public class WifiConfiguration implements Parcelable {
         dest.writeInt(carrierMerged ? 1 : 0);
         dest.writeInt(fromWifiNetworkSuggestion ? 1 : 0);
         dest.writeInt(fromWifiNetworkSpecifier ? 1 : 0);
-        dest.writeInt(dbsSecondaryInternet ? 1 : 0);
         dest.writeInt(meteredHint ? 1 : 0);
         dest.writeBoolean(mIsRepeaterEnabled);
         dest.writeInt(meteredOverride);
@@ -4143,7 +4144,6 @@ public class WifiConfiguration implements Parcelable {
                 config.carrierMerged = in.readInt() != 0;
                 config.fromWifiNetworkSuggestion = in.readInt() != 0;
                 config.fromWifiNetworkSpecifier = in.readInt() != 0;
-                config.dbsSecondaryInternet = in.readInt() != 0;
                 config.meteredHint = in.readInt() != 0;
                 config.mIsRepeaterEnabled = in.readBoolean();
                 config.meteredOverride = in.readInt();
@@ -4256,7 +4256,7 @@ public class WifiConfiguration implements Parcelable {
             return mPasspointUniqueId;
         }
 
-        String key = SSID + getDefaultSecurityType();
+        String key = getSsidAndSecurityTypeString();
         if (!shared) {
             key += "-" + UserHandle.getUserHandleForUid(creatorUid).getIdentifier();
         }
@@ -4353,7 +4353,8 @@ public class WifiConfiguration implements Parcelable {
             // subscriptionId (the default one) first.
             return subscriptionId + "-" + mPasspointUniqueId;
         } else {
-            String key = SSID + getSecurityTypeName(securityType);
+            String key = (!TextUtils.isEmpty(SSID) && SSID.charAt(0) != '\"'
+                    ? SSID.toLowerCase() : SSID) + getSecurityTypeName(securityType);
             if (!shared) {
                 key += "-" + UserHandle.getUserHandleForUid(creatorUid).getIdentifier();
             }

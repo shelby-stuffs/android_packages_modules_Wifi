@@ -157,6 +157,7 @@ public class WifiConnectivityManager {
     private final AlarmManager mAlarmManager;
     private final Handler mEventHandler;
     private final ExternalPnoScanRequestManager mExternalPnoScanRequestManager;
+    private final @NonNull SsidTranslator mSsidTranslator;
     private final Clock mClock;
     private final ScoringParams mScoringParams;
     private final LocalLog mLocalLog;
@@ -186,6 +187,7 @@ public class WifiConnectivityManager {
     private int mWifiState = WIFI_STATE_UNKNOWN;
     private int mInitialScanState = INITIAL_SCAN_STATE_COMPLETE;
     private boolean mAutoJoinEnabledExternal = true; // enabled by default
+    private boolean mAutoJoinEnabledExternalSetByDeviceAdmin = false;
     private boolean mUntrustedConnectionAllowed = false;
     private Set<Integer> mRestrictedConnectionAllowedUids = new ArraySet<>();
     private boolean mOemPaidConnectionAllowed = false;
@@ -469,7 +471,6 @@ public class WifiConnectivityManager {
                     // Secondary candidate cannot be null (otherwise we would have switched to
                     // legacy flow above). Use the explicit bssid for network connection.
                     WifiConfiguration targetNetwork = new WifiConfiguration(secondaryCmmCandidate);
-                    targetNetwork.dbsSecondaryInternet = isDbsAp;
                     targetNetwork.ephemeral = true;
                     targetNetwork.BSSID = targetBssid2; // specify the BSSID to disable roaming.
                     connectToNetworkUsingCmmWithoutMbb(cm, targetNetwork);
@@ -979,12 +980,12 @@ public class WifiConnectivityManager {
                     + " reason: " + reason + " description: " + description);
 
             // reschedule the scan
-            if (mSingleScanRestartCount++ < MAX_SCAN_RESTART_ALLOWED) {
+            if (mSingleScanRestartCount++ < MAX_SCAN_RESTART_ALLOWED && mScreenOn) {
                 scheduleDelayedSingleScan(mIsFullBandScan);
             } else {
-                mSingleScanRestartCount = 0;
                 localLog("Failed to successfully start single scan for "
-                        + MAX_SCAN_RESTART_ALLOWED + " times");
+                        + mSingleScanRestartCount + " times, mScreenOn=" + mScreenOn);
+                mSingleScanRestartCount = 0;
             }
         }
 
@@ -1226,7 +1227,8 @@ public class WifiConnectivityManager {
             ActiveModeWarden activeModeWarden,
             FrameworkFacade frameworkFacade,
             WifiGlobals wifiGlobals,
-            ExternalPnoScanRequestManager externalPnoScanRequestManager) {
+            ExternalPnoScanRequestManager externalPnoScanRequestManager,
+            @NonNull SsidTranslator ssidTranslator) {
         mContext = context;
         mScoringParams = scoringParams;
         mConfigManager = configManager;
@@ -1252,6 +1254,7 @@ public class WifiConnectivityManager {
         mAlarmManager = context.getSystemService(AlarmManager.class);
         mPowerManager = mContext.getSystemService(PowerManager.class);
         mExternalPnoScanRequestManager = externalPnoScanRequestManager;
+        mSsidTranslator = ssidTranslator;
 
         // Listen for screen state change events.
         // TODO: We should probably add a shared broadcast receiver in the wifi stack which
@@ -2301,24 +2304,28 @@ public class WifiConnectivityManager {
             pnoNetwork.frequencies = channelList.stream().mapToInt(Integer::intValue).toArray();
         }
         for (WifiConfiguration config : networks) {
-            if (pnoSet.contains(config.SSID)) {
-                continue;
+            for (WifiSsid originalSsid : mSsidTranslator.getAllPossibleOriginalSsids(
+                    WifiSsid.fromString(config.SSID))) {
+                if (pnoSet.contains(originalSsid.toString())) {
+                    continue;
+                }
+                WifiScanner.PnoSettings.PnoNetwork pnoNetwork =
+                        WifiConfigurationUtil.createPnoNetwork(config);
+                pnoNetwork.ssid = originalSsid.toString();
+                pnoList.add(pnoNetwork);
+                pnoSet.add(originalSsid.toString());
+                if (!pnoFrequencyCullingEnabled) {
+                    continue;
+                }
+                Set<Integer> channelList = new HashSet<>();
+                if (isConnectedFreqEnhancementEnable) {
+                    addChannelFromWifiConfigStore(channelList, config, ageInMillis);
+                } else {
+                    addChannelFromWifiScoreCard(channelList, config.SSID, 0,
+                            MAX_PNO_SCAN_FREQUENCY_AGE_MS);
+                }
+                pnoNetwork.frequencies = channelList.stream().mapToInt(Integer::intValue).toArray();
             }
-            WifiScanner.PnoSettings.PnoNetwork pnoNetwork =
-                    WifiConfigurationUtil.createPnoNetwork(config);
-            pnoList.add(pnoNetwork);
-            pnoSet.add(config.SSID);
-            if (!pnoFrequencyCullingEnabled) {
-                continue;
-            }
-            Set<Integer> channelList = new HashSet<>();
-            if (isConnectedFreqEnhancementEnable) {
-                addChannelFromWifiConfigStore(channelList, config, ageInMillis);
-            } else {
-                addChannelFromWifiScoreCard(channelList, config.SSID, 0,
-                        MAX_PNO_SCAN_FREQUENCY_AGE_MS);
-            }
-            pnoNetwork.frequencies = channelList.stream().mapToInt(Integer::intValue).toArray();
         }
         return pnoList;
     }
@@ -2428,6 +2435,8 @@ public class WifiConnectivityManager {
                 + " wifiEnabled=" + mWifiEnabled
                 + " mAutoJoinEnabled=" + mAutoJoinEnabled
                 + " mAutoJoinEnabledExternal=" + mAutoJoinEnabledExternal
+                + " mAutoJoinEnabledExternalSetByDeviceAdmin="
+                + mAutoJoinEnabledExternalSetByDeviceAdmin
                 + " mSpecificNetworkRequestInProgress=" + mSpecificNetworkRequestInProgress
                 + " mTrustedConnectionAllowed=" + mTrustedConnectionAllowed
                 + " isSufficiencyCheckEnabled=" + mNetworkSelector.isSufficiencyCheckEnabled()
@@ -3057,9 +3066,14 @@ public class WifiConnectivityManager {
     /**
      * Turn on/off the auto join at runtime
      */
-    public void setAutoJoinEnabledExternal(boolean enable) {
+    public void setAutoJoinEnabledExternal(boolean enable, boolean isDeviceAdmin) {
         localLog("Set auto join " + (enable ? "enabled" : "disabled"));
-
+        if (!mAutoJoinEnabledExternal && mAutoJoinEnabledExternalSetByDeviceAdmin
+                && !isDeviceAdmin) {
+            localLog("Set auto join ignored since it was disabled by a device admin.");
+            return;
+        }
+        mAutoJoinEnabledExternalSetByDeviceAdmin = isDeviceAdmin;
         if (mAutoJoinEnabledExternal != enable) {
             mAutoJoinEnabledExternal = enable;
             checkAllStatesAndEnableAutoJoin();
