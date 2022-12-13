@@ -37,6 +37,8 @@ import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.app.ActivityManager;
 import android.app.admin.WifiSsidPolicy;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledAfter;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.net.ConnectivityManager;
@@ -135,6 +137,16 @@ import java.util.function.Consumer;
 public class WifiManager {
 
     private static final String TAG = "WifiManager";
+
+    /**
+     * Local networks should not be modified by B&R since the user may have
+     * updated it with the latest configurations.
+     * @hide
+     */
+    @ChangeId
+    @EnabledAfter(targetSdkVersion = Build.VERSION_CODES.S_V2)
+    public static final long NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE = 234793325L;
+
     // Supplicant error codes:
     /**
      * The error code if there was a problem authenticating.
@@ -3626,6 +3638,18 @@ public class WifiManager {
      */
     public static final long WIFI_FEATURE_DPP_AKM = 1L << 54;
 
+    /**
+     * Support for setting TLS minimum version.
+     * @hide
+     */
+    public static final long WIFI_FEATURE_SET_TLS_MINIMUM_VERSION = 1L << 55;
+
+    /**
+     * Support for TLS v.13.
+     * @hide
+     */
+    public static final long WIFI_FEATURE_TLS_V1_3 = 1L << 56;
+
     private long getSupportedFeatures() {
         try {
             return mService.getSupportedFeatures();
@@ -5028,9 +5052,13 @@ public class WifiManager {
      * Start Soft AP (hotspot) mode for tethering purposes with the specified configuration.
      * Note that starting Soft AP mode may disable station mode operation if the device does not
      * support concurrency.
-     * @param softApConfig A valid SoftApConfiguration specifying the configuration of the SAP,
-     *                     or null to use the persisted Soft AP configuration that was previously
-     *                     set using {@link #setSoftApConfiguration(softApConfiguration)}.
+     *
+     * Note: Call {@link WifiManager#validateSoftApConfiguration(SoftApConfiguration)} to avoid
+     * unexpected error due to invalid configuration.
+     *
+     * @param softApConfig A valid SoftApConfiguration specifying the configuration of the SAP, or
+     *                     null to use the persisted Soft AP configuration that was previously set
+     *                     using {@link WifiManager#setSoftApConfiguration(SoftApConfiguration)}.
      * @return {@code true} if the operation succeeded, {@code false} otherwise
      *
      * @hide
@@ -5064,6 +5092,23 @@ public class WifiManager {
     public boolean stopSoftAp() {
         try {
             return mService.stopSoftAp();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Check if input configuration is valid.
+     *
+     * @param config a configuration would like to be checked.
+     * @return true if config is valid, otherwise false.
+     */
+    public boolean validateSoftApConfiguration(@NonNull SoftApConfiguration config) {
+        if (config == null) {
+            throw new IllegalArgumentException(TAG + ": config can not be null");
+        }
+        try {
+            return mService.validateSoftApConfiguration(config);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -5512,6 +5557,9 @@ public class WifiManager {
      *
      * Otherwise, the configuration changes will be applied when the Soft AP is next started
      * (the framework will not stop/start the AP).
+     *
+     * Note: Call {@link WifiManager#validateSoftApConfiguration(SoftApConfiguration)} to avoid
+     * unexpected error due to invalid configuration.
      *
      * @param softApConfig  A valid SoftApConfiguration specifying the configuration of the SAP.
      * @return {@code true} if the operation succeeded, {@code false} otherwise
@@ -7804,6 +7852,28 @@ public class WifiManager {
     }
 
     /**
+     * Indicate that whether or not settings required TLS minimum version is supported.
+     *
+     * If the device doesn't support this capability, the minimum accepted TLS version is 1.0.
+     *
+     * @return true if this device supports setting TLS minimum version.
+     */
+    public boolean isTlsMinimumVersionSupported() {
+        return isFeatureSupported(WIFI_FEATURE_SET_TLS_MINIMUM_VERSION);
+    }
+
+    /**
+     * Indicate that whether or not TLS v1.3 is supported.
+     *
+     * If requested minimum is not supported, it will default to the maximum supported version.
+     *
+     * @return true if this device supports TLS v1.3.
+     */
+    public boolean isTlsV13Supported() {
+        return isFeatureSupported(WIFI_FEATURE_TLS_V1_3);
+    }
+
+    /**
      * Gets the factory Wi-Fi MAC addresses.
      * @return Array of String representing Wi-Fi MAC addresses sorted lexically or an empty Array
      * if failed.
@@ -9593,6 +9663,13 @@ public class WifiManager {
      * mode(s), that is allowed for the current regulatory domain. An empty list implies that there
      * are no available channels for use.
      *
+     * Note: the {@code band} parameter which is specified as a {@code WifiScanner#WIFI_BAND_*}
+     * constant is limited to one of the band values specified below. Specifically, if the 5GHz
+     * band is included then it must include the DFS channels - an exception will be thrown
+     * otherwise. The caller should not make any assumptions about whether DFS channels are allowed.
+     * This API will indicate whether DFS channels are allowed for the specified operation mode(s)
+     * per device policy.
+     *
      * @param band one of the following band constants defined in {@code WifiScanner#WIFI_BAND_*}
      *             constants.
      *             1. {@code WifiScanner#WIFI_BAND_UNSPECIFIED} - no band specified; Looks for the
@@ -9611,12 +9688,10 @@ public class WifiManager {
      * @throws UnsupportedOperationException - if this API is not supported on this device
      *         or IllegalArgumentException - if the band specified is not one among the list
      *         of bands mentioned above.
-     * @hide
      */
     @RequiresApi(Build.VERSION_CODES.S)
-    @SystemApi
     @NonNull
-    @RequiresPermission(android.Manifest.permission.LOCATION_HARDWARE)
+    @RequiresPermission(NEARBY_WIFI_DEVICES)
     public List<WifiAvailableChannel> getAllowedChannels(
             @WifiScanner.WifiBand int band,
             @WifiAvailableChannel.OpMode int mode) {
@@ -9624,8 +9699,13 @@ public class WifiManager {
             throw new UnsupportedOperationException();
         }
         try {
+            Bundle extras = new Bundle();
+            if (SdkLevel.isAtLeastS()) {
+                extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                        mContext.getAttributionSource());
+            }
             return mService.getUsableChannels(band, mode,
-                    WifiAvailableChannel.FILTER_REGULATORY);
+                    WifiAvailableChannel.FILTER_REGULATORY, mContext.getOpPackageName(), extras);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -9637,6 +9717,13 @@ public class WifiManager {
      * state and interference due to other radios. An empty list implies that there are no available
      * channels for use.
      *
+     * Note: the {@code band} parameter which is specified as a {@code WifiScanner#WIFI_BAND_*}
+     * constant is limited to one of the band values specified below. Specifically, if the 5GHz
+     * band is included then it must include the DFS channels - an exception will be thrown
+     * otherwise. The caller should not make any assumptions about whether DFS channels are allowed.
+     * This API will indicate whether DFS channels are allowed for the specified operation mode(s)
+     * per device policy.
+     *
      * @param band one of the following band constants defined in {@code WifiScanner#WIFI_BAND_*}
      *             constants.
      *             1. {@code WifiScanner#WIFI_BAND_UNSPECIFIED} - no band specified; Looks for the
@@ -9655,12 +9742,10 @@ public class WifiManager {
      * @throws UnsupportedOperationException - if this API is not supported on this device
      *         or IllegalArgumentException - if the band specified is not one among the list
      *         of bands mentioned above.
-     * @hide
      */
     @RequiresApi(Build.VERSION_CODES.S)
-    @SystemApi
     @NonNull
-    @RequiresPermission(android.Manifest.permission.LOCATION_HARDWARE)
+    @RequiresPermission(NEARBY_WIFI_DEVICES)
     public List<WifiAvailableChannel> getUsableChannels(
             @WifiScanner.WifiBand int band,
             @WifiAvailableChannel.OpMode int mode) {
@@ -9668,8 +9753,13 @@ public class WifiManager {
             throw new UnsupportedOperationException();
         }
         try {
+            Bundle extras = new Bundle();
+            if (SdkLevel.isAtLeastS()) {
+                extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                        mContext.getAttributionSource());
+            }
             return mService.getUsableChannels(band, mode,
-                    WifiAvailableChannel.getUsableFilter());
+                    WifiAvailableChannel.getUsableFilter(), mContext.getOpPackageName(), extras);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

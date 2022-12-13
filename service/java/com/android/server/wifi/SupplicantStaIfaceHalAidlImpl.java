@@ -26,6 +26,8 @@ import static android.net.wifi.WifiManager.WIFI_FEATURE_OCE;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_OWE;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_PASSPOINT_TERMS_AND_CONDITIONS;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_SAE_PK;
+import static android.net.wifi.WifiManager.WIFI_FEATURE_SET_TLS_MINIMUM_VERSION;
+import static android.net.wifi.WifiManager.WIFI_FEATURE_TLS_V1_3;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_TRUST_ON_FIRST_USE;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_WAPI;
 import static android.net.wifi.WifiManager.WIFI_FEATURE_WFD_R2;
@@ -91,6 +93,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -104,6 +108,8 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     private static final String TAG = "SupplicantStaIfaceHalAidlImpl";
     @VisibleForTesting
     private static final String HAL_INSTANCE_NAME = ISupplicant.DESCRIPTOR + "/default";
+    @VisibleForTesting
+    public static final long WAIT_FOR_DEATH_TIMEOUT_MS = 50L;
 
     /**
      * Regex pattern for extracting the wps device type bytes.
@@ -116,6 +122,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     private boolean mVerboseLoggingEnabled = false;
     private boolean mVerboseHalLoggingEnabled = false;
     private boolean mServiceDeclared = false;
+    private int mServiceVersion;
 
     // Supplicant HAL interface objects
     private ISupplicant mISupplicant = null;
@@ -140,31 +147,26 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     private final WifiMetrics mWifiMetrics;
     private final WifiGlobals mWifiGlobals;
     private final SsidTranslator mSsidTranslator;
+    private CountDownLatch mWaitForDeathLatch;
 
     private class SupplicantDeathRecipient implements DeathRecipient {
         @Override
         public void binderDied() {
-            mEventHandler.post(() -> {
-                synchronized (mLock) {
-                    Log.w(TAG, "ISupplicant binder died.");
-                    supplicantServiceDiedHandler();
-                }
-            });
         }
-    }
 
-    /**
-     * Linked to supplicant service death on call to terminate()
-     */
-    private class TerminateDeathRecipient implements DeathRecipient {
         @Override
-        public void binderDied() {
-            mEventHandler.post(() -> {
-                synchronized (mLock) {
-                    Log.w(TAG, "ISupplicant was killed by terminate()");
-                    // nothing more to be done here
+        public void binderDied(@NonNull IBinder who) {
+            synchronized (mLock) {
+                Log.w(TAG, "ISupplicant binder died. who=" + who + ", service="
+                        + getServiceBinderMockable());
+                if (who == getServiceBinderMockable()) {
+                    if (mWaitForDeathLatch != null) {
+                        mWaitForDeathLatch.countDown();
+                    }
+                    Log.w(TAG, "Handle supplicant death");
+                    supplicantServiceDiedHandler(who);
                 }
-            });
+            }
         }
     }
 
@@ -381,8 +383,18 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
         return ServiceManager.isDeclared(HAL_INSTANCE_NAME);
     }
 
+    /**
+     * Check that the service is running at least the expected version.
+     * Use to avoid the case where the framework is using a newer
+     * interface version than the service.
+     */
+    private boolean isServiceVersionIsAtLeast(int expectedVersion) {
+        return expectedVersion <= mServiceVersion;
+    }
+
     private void clearState() {
         synchronized (mLock) {
+            Log.i(TAG, "Clearing internal state");
             mISupplicant = null;
             mISupplicantStaIfaces.clear();
             mCurrentNetworkLocalConfigs.clear();
@@ -391,8 +403,12 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
         }
     }
 
-    private void supplicantServiceDiedHandler() {
+    private void supplicantServiceDiedHandler(IBinder who) {
         synchronized (mLock) {
+            if (who != getServiceBinderMockable()) {
+                Log.w(TAG, "Ignoring stale death recipient notification");
+                return;
+            }
             clearState();
             if (mDeathEventHandler != null) {
                 mDeathEventHandler.onDeath();
@@ -406,32 +422,37 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
      * @return true on success, false otherwise.
      */
     public boolean startDaemon() {
-        final String methodStr = "startDaemon";
-        if (mISupplicant != null) {
-            Log.i(TAG, "Service is already initialized, skipping " + methodStr);
-            return true;
-        }
+        synchronized (mLock) {
+            final String methodStr = "startDaemon";
+            if (mISupplicant != null) {
+                Log.i(TAG, "Service is already initialized, skipping " + methodStr);
+                return true;
+            }
 
-        mISupplicant = getSupplicantMockable();
-        if (mISupplicant == null) {
-            Log.e(TAG, "Unable to obtain ISupplicant binder.");
-            return false;
-        }
-        Log.i(TAG, "Obtained ISupplicant binder.");
-        Log.i(TAG, "Local Version: " + ISupplicant.VERSION);
-
-        try {
-            Log.i(TAG, "Remote Version: " + mISupplicant.getInterfaceVersion());
-            IBinder serviceBinder = getServiceBinderMockable();
-            if (serviceBinder == null) {
+            clearState();
+            mISupplicant = getSupplicantMockable();
+            if (mISupplicant == null) {
+                Log.e(TAG, "Unable to obtain ISupplicant binder.");
                 return false;
             }
-            serviceBinder.linkToDeath(mSupplicantDeathRecipient, /* flags= */  0);
-            setLogLevel(mVerboseHalLoggingEnabled);
-            return true;
-        } catch (RemoteException e) {
-            handleRemoteException(e, methodStr);
-            return false;
+            Log.i(TAG, "Obtained ISupplicant binder.");
+            Log.i(TAG, "Local Version: " + ISupplicant.VERSION);
+
+            try {
+                mServiceVersion = mISupplicant.getInterfaceVersion();
+                Log.i(TAG, "Remote Version: " + mServiceVersion);
+                IBinder serviceBinder = getServiceBinderMockable();
+                if (serviceBinder == null) {
+                    return false;
+                }
+                mWaitForDeathLatch = null;
+                serviceBinder.linkToDeath(mSupplicantDeathRecipient, /* flags= */  0);
+                setLogLevel(mVerboseHalLoggingEnabled);
+                return true;
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+                return false;
+            }
         }
     }
 
@@ -444,24 +465,24 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             if (!checkSupplicantAndLogFailure(methodStr)) {
                 return;
             }
+            Log.i(TAG, "Terminate supplicant service");
             try {
-                // Register a new death listener to confirm that terminate() killed supplicant
-                IBinder serviceBinder = getServiceBinderMockable();
-                if (serviceBinder == null) {
-                    return;
-                }
-                serviceBinder.linkToDeath(new TerminateDeathRecipient(), /* flags= */ 0);
-            } catch (RemoteException e) {
-                Log.e(TAG, "Unable to register death recipient.");
-                handleRemoteException(e, methodStr);
-                return;
-            }
-
-            try {
+                mWaitForDeathLatch = new CountDownLatch(1);
                 mISupplicant.terminate();
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
             }
+        }
+
+        // Wait for death recipient to confirm the service death.
+        try {
+            if (!mWaitForDeathLatch.await(WAIT_FOR_DEATH_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "Timed out waiting for confirmation of supplicant death");
+            } else {
+                Log.d(TAG, "Got service death confirmation");
+            }
+        } catch (InterruptedException e) {
+            Log.w(TAG, "Failed to wait for supplicant death");
         }
     }
 
@@ -1048,9 +1069,11 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             @NonNull String ifaceName, ISupplicantStaNetwork network) {
         synchronized (mLock) {
             SupplicantStaNetworkHalAidlImpl networkWrapper =
-                    new SupplicantStaNetworkHalAidlImpl(network, ifaceName, mContext,
+                    new SupplicantStaNetworkHalAidlImpl(mServiceVersion,
+                            network, ifaceName, mContext,
                             mWifiMonitor, mWifiGlobals,
-                            getAdvancedCapabilities(ifaceName));
+                            getAdvancedCapabilities(ifaceName),
+                            getWpaDriverCapabilities(ifaceName));
             if (networkWrapper != null) {
                 networkWrapper.enableVerboseLogging(
                         mVerboseLoggingEnabled, mVerboseHalLoggingEnabled);
@@ -2564,6 +2587,28 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
         }
     }
 
+    private long aidlWpaDrvFeatureSetToFrameworkV2(int drvCapabilitiesMask) {
+        if (!isServiceVersionIsAtLeast(2)) return 0;
+
+        final String methodStr = "getWpaDriverFeatureSetV2";
+        long featureSet = 0;
+
+        if ((drvCapabilitiesMask & WpaDriverCapabilitiesMask.SET_TLS_MINIMUM_VERSION) != 0) {
+            featureSet |= WIFI_FEATURE_SET_TLS_MINIMUM_VERSION;
+            if (mVerboseLoggingEnabled) {
+                Log.v(TAG, methodStr + ": EAP-TLS minimum version supported");
+            }
+        }
+
+        if ((drvCapabilitiesMask & WpaDriverCapabilitiesMask.TLS_V1_3) != 0) {
+            featureSet |= WIFI_FEATURE_TLS_V1_3;
+            if (mVerboseLoggingEnabled) {
+                Log.v(TAG, methodStr + ": EAP-TLS v1.3 supported");
+            }
+        }
+        return featureSet;
+    }
+
     /**
      * Get the driver supported features through supplicant.
      *
@@ -2610,6 +2655,8 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
                     Log.v(TAG, methodStr + ": Trust-On-First-Use supported");
                 }
             }
+
+            featureSet |= aidlWpaDrvFeatureSetToFrameworkV2(drvCapabilitiesMask);
 
             return featureSet;
         }

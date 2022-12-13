@@ -131,6 +131,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -144,11 +145,10 @@ import java.util.Set;
  */
 @SmallTest
 public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
-    private static final Map<Integer, String> NETWORK_ID_TO_SSID = new HashMap<Integer, String>() {{
-            put(1, "\"ssid1\"");
-            put(2, "\"ssid2\"");
-            put(3, "\"ssid3\"");
-        }};
+    private static final Map<Integer, String> NETWORK_ID_TO_SSID = Map.of(
+            1, "\"ssid1\"",
+            2, "\"ssid2\"",
+            3, "\"ssid3\"");
     private static final int SUPPLICANT_NETWORK_ID = 2;
     private static final String SUPPLICANT_SSID = NETWORK_ID_TO_SSID.get(SUPPLICANT_NETWORK_ID);
     private static final WifiSsid TRANSLATED_SUPPLICANT_SSID =
@@ -233,6 +233,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         mIfaceInfoList[2] = createIfaceInfo(IfaceType.P2P, P2P_IFACE_NAME);
         doReturn(CONNECTED_MAC_ADDRESS_BYTES).when(mISupplicantStaIfaceMock).getMacAddress();
         mHandler = spy(new Handler(mLooper.getLooper()));
+        when(mISupplicantMock.asBinder()).thenReturn(mServiceBinderMock);
         when(mSsidTranslator.getTranslatedSsid(any())).thenReturn(TRANSLATED_SUPPLICANT_SSID);
         when(mSsidTranslator.getOriginalSsid(any())).thenAnswer((Answer<WifiSsid>) invocation ->
                 WifiSsid.fromString(((WifiConfiguration) invocation.getArgument(0)).SSID));
@@ -993,7 +994,38 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
 
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastNetworkConnectionEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId), eq(false),
-                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID));
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(null));
+        wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
+                eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
+    }
+
+    /**
+     * Tests the handling of state change notification with key management
+     * to completed after configuring a network.
+     */
+    @Test
+    public void testStateChangeToCompletedCallbackWithAkm() throws Exception {
+        InOrder wifiMonitorInOrder = inOrder(mWifiMonitor);
+        executeAndValidateInitializationSequence();
+        int frameworkNetworkId = 6;
+        executeAndValidateConnectSequence(frameworkNetworkId, false,
+                TRANSLATED_SUPPLICANT_SSID.toString());
+        assertNotNull(mISupplicantStaIfaceCallback);
+
+        int supplicantAkmMask = android.hardware.wifi.supplicant.KeyMgmtMask.WPA_PSK;
+        BitSet expectedAkmMask = new BitSet();
+        expectedAkmMask.set(WifiConfiguration.KeyMgmt.WPA_PSK);
+
+        mISupplicantStaIfaceCallback.onStateChangedWithAkm(
+                StaIfaceCallbackState.COMPLETED,
+                NativeUtil.macAddressToByteArray(BSSID), SUPPLICANT_NETWORK_ID,
+                NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(SUPPLICANT_SSID)), false,
+                supplicantAkmMask);
+
+        wifiMonitorInOrder.verify(mWifiMonitor).broadcastNetworkConnectionEvent(
+                eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId), eq(false),
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(expectedAkmMask));
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
                 eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
@@ -1448,7 +1480,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         assertTrue(mDut.isInitializationComplete());
         assertTrue(mDut.registerDeathHandler(mSupplicantHalDeathHandler));
 
-        mSupplicantDeathCaptor.getValue().binderDied();
+        mSupplicantDeathCaptor.getValue().binderDied(mServiceBinderMock);
         mLooper.dispatchAll();
 
         assertFalse(mDut.isInitializationComplete());
@@ -1480,7 +1512,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
 
         // Now trigger a death notification and ensure it's handled.
         assertNotNull(mSupplicantDeathCaptor.getValue());
-        mSupplicantDeathCaptor.getValue().binderDied();
+        mSupplicantDeathCaptor.getValue().binderDied(mServiceBinderMock);
         mLooper.dispatchAll();
 
         // External death notification fires only once!
@@ -1638,18 +1670,12 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
     public void testTerminate() throws Exception {
         executeAndValidateInitializationSequence();
 
-        doAnswer(new MockAnswerUtil.AnswerWithArguments() {
-            public void answer(IBinder.DeathRecipient cb, int flags) throws RemoteException {
-                mHandler.post(() -> cb.binderDied());
-                mHandler.post(() -> mSupplicantDeathCaptor.getValue().binderDied());
-            }
-        }).when(mServiceBinderMock).linkToDeath(any(IBinder.DeathRecipient.class), anyInt());
-
         mDut.terminate();
-        mLooper.dispatchAll();
         verify(mISupplicantMock).terminate();
 
-        // Check that terminate cleared all internal state.
+        // Check that all internal state is cleared once the death notification is received.
+        assertTrue(mDut.isInitializationComplete());
+        mSupplicantDeathCaptor.getValue().binderDied(mServiceBinderMock);
         assertFalse(mDut.isInitializationComplete());
     }
 
@@ -2131,7 +2157,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
 
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastNetworkConnectionEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId), eq(true),
-                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID));
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(null));
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
                 eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
