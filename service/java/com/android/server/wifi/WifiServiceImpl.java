@@ -20,6 +20,7 @@ import static android.app.AppOpsManager.MODE_ALLOWED;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.net.wifi.WifiManager.LocalOnlyHotspotCallback.ERROR_GENERIC;
 import static android.net.wifi.WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL;
+import static android.net.wifi.WifiManager.NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE;
 import static android.net.wifi.WifiManager.PnoScanResultsCallback.REGISTER_PNO_CALLBACK_PNO_NOT_SUPPORTED;
 import static android.net.wifi.WifiManager.SAP_START_FAILURE_NO_CHANNEL;
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_DISABLED;
@@ -58,6 +59,7 @@ import android.annotation.Nullable;
 import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.WifiSsidPolicy;
+import android.app.compat.CompatChanges;
 import android.bluetooth.BluetoothAdapter;
 import android.content.AttributionSource;
 import android.content.BroadcastReceiver;
@@ -1145,6 +1147,14 @@ public class WifiServiceImpl extends BaseWifiService {
                 uid);
     }
 
+    private boolean isPlatformOrTargetSdkLessThanU(String packageName, int uid) {
+        if (!SdkLevel.isAtLeastU()) {
+            return true;
+        }
+        return mWifiPermissionsUtil.isTargetSdkLessThan(packageName,
+                Build.VERSION_CODES.UPSIDE_DOWN_CAKE, uid);
+    }
+
     /**
      * Get the current primary ClientModeManager in a thread safe manner, but blocks on the main
      * Wifi thread.
@@ -1483,6 +1493,24 @@ public class WifiServiceImpl extends BaseWifiService {
             mLog.info("registerCoexCallback uid=%").c(Binder.getCallingUid()).flush();
         }
         mWifiThreadRunner.post(() -> mCoexManager.registerRemoteCoexCallback(callback));
+    }
+
+    /**
+     * Check if input configuration is valid.
+     *
+     * Call this before calling {@link startTetheredHotspot(SoftApConfiguration)} or
+     * {@link #setSoftApConfiguration(softApConfiguration)} to avoid unexpected error duo to
+     * configuration is invalid.
+     *
+     * @param config a configuration would like to be checked.
+     * @return true if config is valid, otherwise false.
+     */
+    @Override
+    public boolean validateSoftApConfiguration(SoftApConfiguration config) {
+        int uid = Binder.getCallingUid();
+        boolean privileged = isSettingsOrSuw(Binder.getCallingPid(), uid);
+        return WifiApConfigStore.validateApWifiConfiguration(
+                config, privileged, mContext);
     }
 
     /**
@@ -4049,10 +4077,7 @@ public class WifiServiceImpl extends BaseWifiService {
      * WifiNetworkSpecifier request or oem paid/private suggestion).
      */
     private ClientModeManager getClientModeManagerIfSecondaryCmmRequestedByCallerPresent(
-            int callingUid, @NonNull String callingPackageName, boolean isSettingOrSuw) {
-        if (isSettingOrSuw) {
-            return mActiveModeWarden.getPrimaryClientModeManager();
-        }
+            int callingUid, @NonNull String callingPackageName) {
         List<ConcreteClientModeManager> secondaryCmms = null;
         ActiveModeManager.ClientConnectivityRole roleSecondaryLocalOnly =
                 ROLE_CLIENT_LOCAL_ONLY;
@@ -4069,7 +4094,11 @@ public class WifiServiceImpl extends BaseWifiService {
         }
 
         for (ConcreteClientModeManager cmm : secondaryCmms) {
-            WorkSource reqWs = cmm.getRequestorWs();
+            WorkSource reqWs = new WorkSource(cmm.getRequestorWs());
+            if (reqWs.size() > 1 && cmm.getRole() == roleSecondaryLocalOnly) {
+                // Remove promoted settings WorkSource if present
+                reqWs.remove(mFrameworkFacade.getSettingsWorkSource(mContext));
+            }
             WorkSource withCaller = new WorkSource(reqWs);
             withCaller.add(new WorkSource(callingUid, callingPackageName));
             // If there are more than 1 secondary CMM for same app, return any one (should not
@@ -4096,13 +4125,11 @@ public class WifiServiceImpl extends BaseWifiService {
             mLog.info("getConnectionInfo uid=%").c(uid).flush();
         }
         mWifiPermissionsUtil.checkPackage(uid, callingPackage);
-        boolean isSettingsOrSuw = mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
-                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid);
         long ident = Binder.clearCallingIdentity();
         try {
             WifiInfo wifiInfo = mWifiThreadRunner.call(
                     () -> getClientModeManagerIfSecondaryCmmRequestedByCallerPresent(
-                            uid, callingPackage, isSettingsOrSuw)
+                            uid, callingPackage)
                             .getConnectionInfo(), new WifiInfo());
             long redactions = wifiInfo.getApplicableRedactions();
             if (mWifiPermissionsUtil.checkLocalMacAddressPermission(uid)) {
@@ -4112,7 +4139,8 @@ public class WifiServiceImpl extends BaseWifiService {
                 }
                 redactions &= ~NetworkCapabilities.REDACT_FOR_LOCAL_MAC_ADDRESS;
             }
-            if (isSettingsOrSuw) {
+            if (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
+                    || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)) {
                 if (mVerboseLoggingEnabled) {
                     Log.v(TAG, "Clearing REDACT_FOR_NETWORK_SETTINGS for " + callingPackage
                             + "(uid=" + uid + ")");
@@ -4603,11 +4631,9 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mVerboseLoggingEnabled) {
             mLog.info("getDhcpInfo uid=%").c(callingUid).flush();
         }
-        boolean isSettingsOrSuw = mWifiPermissionsUtil.checkNetworkSettingsPermission(callingUid)
-                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(callingUid);
         DhcpResultsParcelable dhcpResults = mWifiThreadRunner.call(
                 () -> getClientModeManagerIfSecondaryCmmRequestedByCallerPresent(
-                        callingUid, packageName, isSettingsOrSuw)
+                        callingUid, packageName)
                         .syncGetDhcpResultsParcelable(), new DhcpResultsParcelable());
 
         DhcpInfo info = new DhcpInfo();
@@ -4911,6 +4937,8 @@ public class WifiServiceImpl extends BaseWifiService {
                 mSettingsStore.dump(fd, pw, args);
                 mActiveModeWarden.dump(fd, pw, args);
                 mMakeBeforeBreakManager.dump(fd, pw, args);
+                pw.println();
+                mWifiInjector.getInterfaceConflictManager().dump(fd, pw, args);
                 pw.println();
                 mWifiTrafficPoller.dump(fd, pw, args);
                 pw.println();
@@ -5274,9 +5302,15 @@ public class WifiServiceImpl extends BaseWifiService {
             final int nextStartIdx = Math.min(mStartIdx + mBatchNum, mConfigurations.size());
             for (int i = mStartIdx; i < nextStartIdx; i++) {
                 WifiConfiguration configuration = mConfigurations.get(i);
-                int networkId =
-                        mWifiConfigManager.addNetwork(configuration, mCallingUid)
-                                .getNetworkId();
+                int networkId;
+                if (CompatChanges.isChangeEnabled(NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE,
+                        mCallingUid)) {
+                    networkId = mWifiConfigManager.addNetwork(configuration, mCallingUid)
+                            .getNetworkId();
+                } else {
+                    networkId = mWifiConfigManager.addOrUpdateNetwork(configuration, mCallingUid)
+                            .getNetworkId();
+                }
                 if (networkId == WifiConfiguration.INVALID_NETWORK_ID) {
                     Log.e(TAG, "Restore network failed: "
                             + configuration.getProfileKey() + ", network might already exist in the"
@@ -6432,8 +6466,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mVerboseLoggingEnabled) {
             mLog.info("setCarrierNetworkOffloadEnabled uid=%").c(Binder.getCallingUid()).flush();
         }
-        mWifiThreadRunner.post(() ->
-                mWifiCarrierInfoManager.setCarrierNetworkOffloadEnabled(subscriptionId, merged, enabled));
+        mWifiCarrierInfoManager.setCarrierNetworkOffloadEnabled(subscriptionId, merged, enabled);
     }
 
     /**
@@ -6446,8 +6479,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mLog.info("isCarrierNetworkOffload uid=%").c(Binder.getCallingUid()).flush();
         }
 
-        return mWifiThreadRunner.call(()->
-                mWifiCarrierInfoManager.isCarrierNetworkOffloadEnabled(subId, merged), true);
+        return mWifiCarrierInfoManager.isCarrierNetworkOffloadEnabled(subId, merged);
     }
 
     /**
@@ -6571,22 +6603,30 @@ public class WifiServiceImpl extends BaseWifiService {
      */
     @Override
     public List<WifiAvailableChannel> getUsableChannels(@WifiScanner.WifiBand int band,
-            @WifiAvailableChannel.OpMode int mode, @WifiAvailableChannel.Filter int filter) {
-        // Location mode must be enabled
-        long ident = Binder.clearCallingIdentity();
-        try {
-            if (!mWifiPermissionsUtil.isLocationModeEnabled()) {
-                throw new SecurityException("Location mode is disabled for the device");
-            }
-        } finally {
-            Binder.restoreCallingIdentity(ident);
-        }
+            @WifiAvailableChannel.OpMode int mode, @WifiAvailableChannel.Filter int filter,
+            String packageName, Bundle extras) {
         final int uid = Binder.getCallingUid();
+        if (isPlatformOrTargetSdkLessThanU(packageName, uid)) {
+            // Location mode must be enabled
+            long ident = Binder.clearCallingIdentity();
+            try {
+                if (!mWifiPermissionsUtil.isLocationModeEnabled()) {
+                    throw new SecurityException("Location mode is disabled for the device");
+                }
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+            if (!mWifiPermissionsUtil.checkCallersHardwareLocationPermission(uid)) {
+                throw new SecurityException(
+                        "UID " + uid + " does not have location h/w permission");
+            }
+        } else {
+            mWifiPermissionsUtil.enforceNearbyDevicesPermission(
+                    extras.getParcelable(WifiManager.EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE),
+                    true, TAG + " getUsableChannels");
+        }
         if (mVerboseLoggingEnabled) {
             mLog.info("getUsableChannels uid=%").c(Binder.getCallingUid()).flush();
-        }
-        if (!mWifiPermissionsUtil.checkCallersHardwareLocationPermission(uid)) {
-            throw new SecurityException("UID " + uid + " does not have location h/w permission");
         }
         if (!isValidBandForGetUsableChannels(band)) {
             throw new IllegalArgumentException("Unsupported band: " + band);
