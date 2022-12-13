@@ -1330,6 +1330,11 @@ public class SupplicantStaIfaceHal {
 
             // wifgbk++
             if (mhalNetworksSize == 2) {
+                // trigger disconnection before reconnection
+                if (!disconnect(ifaceName)) {
+                    loge("Failed to disconnect network configuration: " + config.getKey());
+                    return false;
+                }
                 if (!reconnect(ifaceName)) {
                     loge("Failed to reconnect network configuration: " + config.getKey());
                     return false;
