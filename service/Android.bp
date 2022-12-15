@@ -67,11 +67,13 @@ java_library {
         // compile time
         "framework-wifi-pre-jarjar",
         "framework-bluetooth",
+        "framework-configinfrastructure",
         "framework-connectivity.stubs.module_lib",
         "framework-connectivity-t.stubs.module_lib",
         "framework-statsd.stubs.module_lib",
         "framework-tethering.stubs.module_lib",
         "unsupportedappusage",
+        "app-compat-annotations",
     ],
 
     static_libs: [
@@ -93,7 +95,7 @@ java_library {
         "android.hardware.wifi.hostapd-V1.2-java",
         "android.hardware.wifi.hostapd-V1.3-java",
         // AIDL supplicant implementation
-        "android.hardware.wifi.supplicant-V1-java",
+        "android.hardware.wifi.supplicant-V2-java",
         // HIDL supplicant implementation
         "android.hardware.wifi.supplicant-V1.0-java",
         "android.hardware.wifi.supplicant-V1.1-java",
