@@ -17,6 +17,7 @@
 package com.android.server.wifi.hal;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.net.MacAddress;
 import android.net.wifi.aware.ConfigRequest;
 import android.net.wifi.aware.PublishConfig;
@@ -35,7 +36,7 @@ import java.util.function.Supplier;
 /**
  * Wrapper class for IWifiNanIface HAL calls.
  */
-public class WifiNanIface {
+public class WifiNanIface implements WifiHal.WifiInterface {
     private static final String TAG = "WifiNanIface";
     private IWifiNanIface mWifiNanIface;
 
@@ -60,6 +61,23 @@ public class WifiNanIface {
                 case android.hardware.wifi.V1_0.NanClusterEventType.STARTED_CLUSTER:
                     return STARTED_CLUSTER;
                 case android.hardware.wifi.V1_0.NanClusterEventType.JOINED_CLUSTER:
+                    return JOINED_CLUSTER;
+                default:
+                    Log.e(TAG, "Unknown NanClusterEventType received from HIDL: " + code);
+                    return -1;
+            }
+        }
+
+        /**
+         * Convert NanClusterEventType from AIDL to framework.
+         */
+        public static int fromAidl(int code) {
+            switch (code) {
+                case android.hardware.wifi.NanClusterEventType.DISCOVERY_MAC_ADDRESS_CHANGED:
+                    return DISCOVERY_MAC_ADDRESS_CHANGED;
+                case android.hardware.wifi.NanClusterEventType.STARTED_CLUSTER:
+                    return STARTED_CLUSTER;
+                case android.hardware.wifi.NanClusterEventType.JOINED_CLUSTER:
                     return JOINED_CLUSTER;
                 default:
                     Log.e(TAG, "Unknown NanClusterEventType received from HIDL: " + code);
@@ -92,6 +110,23 @@ public class WifiNanIface {
                     return -1;
             }
         }
+
+        /**
+         * Convert NanDataPathChannelCfg from framework to AIDL.
+         */
+        public static int toAidl(int code) {
+            switch (code) {
+                case CHANNEL_NOT_REQUESTED:
+                    return android.hardware.wifi.NanDataPathChannelCfg.CHANNEL_NOT_REQUESTED;
+                case REQUEST_CHANNEL_SETUP:
+                    return android.hardware.wifi.NanDataPathChannelCfg.REQUEST_CHANNEL_SETUP;
+                case FORCE_CHANNEL_SETUP:
+                    return android.hardware.wifi.NanDataPathChannelCfg.FORCE_CHANNEL_SETUP;
+                default:
+                    Log.e(TAG, "Unknown NanDataPathChannelCfg received from framework: " + code);
+                    return -1;
+            }
+        }
     }
 
     /**
@@ -116,6 +151,26 @@ public class WifiNanIface {
                 frameworkRangingInd |= INGRESS_MET_MASK;
             }
             if ((android.hardware.wifi.V1_0.NanRangingIndication.EGRESS_MET_MASK
+                    & rangingInd) != 0) {
+                frameworkRangingInd |= EGRESS_MET_MASK;
+            }
+            return frameworkRangingInd;
+        }
+
+        /**
+         * Convert NanRangingIndication from AIDL to framework.
+         */
+        public static int fromAidl(int rangingInd) {
+            int frameworkRangingInd = 0;
+            if ((android.hardware.wifi.NanRangingIndication.CONTINUOUS_INDICATION_MASK
+                    & rangingInd) != 0) {
+                frameworkRangingInd |= CONTINUOUS_INDICATION_MASK;
+            }
+            if ((android.hardware.wifi.NanRangingIndication.INGRESS_MET_MASK
+                    & rangingInd) != 0) {
+                frameworkRangingInd |= INGRESS_MET_MASK;
+            }
+            if ((android.hardware.wifi.NanRangingIndication.EGRESS_MET_MASK
                     & rangingInd) != 0) {
                 frameworkRangingInd |= EGRESS_MET_MASK;
             }
@@ -177,6 +232,43 @@ public class WifiNanIface {
                     return -1;
             }
         }
+
+        /**
+         * Convert NanStatusCode from AIDL to framework.
+         */
+        public static int fromAidl(int code) {
+            switch (code) {
+                case android.hardware.wifi.NanStatusCode.SUCCESS:
+                    return SUCCESS;
+                case android.hardware.wifi.NanStatusCode.INTERNAL_FAILURE:
+                    return INTERNAL_FAILURE;
+                case android.hardware.wifi.NanStatusCode.PROTOCOL_FAILURE:
+                    return PROTOCOL_FAILURE;
+                case android.hardware.wifi.NanStatusCode.INVALID_SESSION_ID:
+                    return INVALID_SESSION_ID;
+                case android.hardware.wifi.NanStatusCode.NO_RESOURCES_AVAILABLE:
+                    return NO_RESOURCES_AVAILABLE;
+                case android.hardware.wifi.NanStatusCode.INVALID_ARGS:
+                    return INVALID_ARGS;
+                case android.hardware.wifi.NanStatusCode.INVALID_PEER_ID:
+                    return INVALID_PEER_ID;
+                case android.hardware.wifi.NanStatusCode.INVALID_NDP_ID:
+                    return INVALID_NDP_ID;
+                case android.hardware.wifi.NanStatusCode.NAN_NOT_ALLOWED:
+                    return NAN_NOT_ALLOWED;
+                case android.hardware.wifi.NanStatusCode.NO_OTA_ACK:
+                    return NO_OTA_ACK;
+                case android.hardware.wifi.NanStatusCode.ALREADY_ENABLED:
+                    return ALREADY_ENABLED;
+                case android.hardware.wifi.NanStatusCode.FOLLOWUP_TX_QUEUE_FULL:
+                    return FOLLOWUP_TX_QUEUE_FULL;
+                case android.hardware.wifi.NanStatusCode.UNSUPPORTED_CONCURRENCY_NAN_DISABLED:
+                    return UNSUPPORTED_CONCURRENCY_NAN_DISABLED;
+                default:
+                    Log.e(TAG, "Unknown NanStatusType received from AIDL: " + code);
+                    return -1;
+            }
+        }
     }
 
     /**
@@ -196,9 +288,18 @@ public class WifiNanIface {
         mWifiNanIface = createWifiNanIfaceHidlImplMockable(nanIface);
     }
 
+    public WifiNanIface(@NonNull android.hardware.wifi.IWifiNanIface nanIface) {
+        mWifiNanIface = createWifiNanIfaceAidlImplMockable(nanIface);
+    }
+
     protected WifiNanIfaceHidlImpl createWifiNanIfaceHidlImplMockable(
             android.hardware.wifi.V1_0.IWifiNanIface nanIface) {
         return new WifiNanIfaceHidlImpl(nanIface);
+    }
+
+    protected WifiNanIfaceAidlImpl createWifiNanIfaceAidlImplMockable(
+            android.hardware.wifi.IWifiNanIface nanIface) {
+        return new WifiNanIfaceAidlImpl(nanIface);
     }
 
     private <T> T validateAndCall(String methodStr, T defaultVal, @NonNull Supplier<T> supplier) {
@@ -219,6 +320,16 @@ public class WifiNanIface {
     }
 
     /**
+     * See comments for {@link IWifiNanIface#getNanIface()}
+     *
+     * TODO: Remove this API. Will only be used temporarily until HalDeviceManager is refactored.
+     */
+    public android.hardware.wifi.V1_0.IWifiNanIface getNanIface() {
+        return validateAndCall("getNanIface", null,
+                () -> mWifiNanIface.getNanIface());
+    }
+
+    /**
      * See comments for {@link IWifiNanIface#registerFrameworkCallback(Callback)}
      */
     public boolean registerFrameworkCallback(Callback cb) {
@@ -226,6 +337,15 @@ public class WifiNanIface {
                 () -> mWifiNanIface.registerFrameworkCallback(cb));
     }
 
+    /**
+     * See comments for {@link IWifiNanIface#getName()}
+     */
+    @Override
+    @Nullable
+    public String getName() {
+        return validateAndCall("getName", null,
+                () -> mWifiNanIface.getName());
+    }
 
     /**
      * See comments for {@link IWifiNanIface#getCapabilities(short)}

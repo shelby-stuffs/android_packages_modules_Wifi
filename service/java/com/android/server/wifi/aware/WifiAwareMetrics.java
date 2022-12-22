@@ -29,7 +29,7 @@ import android.util.SparseIntArray;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.wifi.Clock;
-import com.android.server.wifi.WifiNanIface.NanStatusCode;
+import com.android.server.wifi.hal.WifiNanIface.NanStatusCode;
 import com.android.server.wifi.proto.nano.WifiMetricsProto;
 import com.android.server.wifi.util.MetricsUtils;
 
@@ -454,6 +454,9 @@ public class WifiAwareMetrics {
             mMaxNdiInSystem = Math.max(mMaxNdiInSystem, ndiInSystem.size());
             mMaxNdpInSystem = Math.max(mMaxNdpInSystem, numNdpInSystem);
             mMaxSecureNdpInSystem = Math.max(mMaxSecureNdpInSystem, numSecureNdpInSystem);
+            if (ndpPerNdiMap.isEmpty()) {
+                return;
+            }
             mMaxNdpPerNdi = Math.max(mMaxNdpPerNdi, Collections.max(ndpPerNdiMap.values()));
         }
     }

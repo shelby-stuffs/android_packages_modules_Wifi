@@ -139,9 +139,6 @@ public class WifiSettingsConfigStore {
     public static final Key<Boolean> SHOW_DIALOG_WHEN_THIRD_PARTY_APPS_ENABLE_WIFI_SET_BY_API =
             new Key<>("show_dialog_when_third_party_apps_enable_wifi_set_by_api", false);
 
-    public static final Key<Boolean> WIFI_COVERAGE_EXTEND_FEATURE_ENABLED =
-            new Key<>("wifi_coverage_extend_feature_enabled", false);
-
     /******** Wifi shared pref keys ***************/
 
     private final Context mContext;

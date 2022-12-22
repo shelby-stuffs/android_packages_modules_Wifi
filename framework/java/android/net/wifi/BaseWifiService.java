@@ -850,16 +850,6 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public int getSoftApWifiStandard() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isVht8ssCapableDevice() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean setWifiScoringEnabled(boolean enabled) {
         throw new UnsupportedOperationException();
     }
@@ -872,21 +862,6 @@ public class BaseWifiService extends IWifiManager.Stub {
     @Override
     public List<WifiAvailableChannel> getUsableChannels(
             int band, int mode, int filter) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isExtendingWifi() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isWifiCoverageExtendFeatureEnabled() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void enableWifiCoverageExtendFeature(boolean enable) {
         throw new UnsupportedOperationException();
     }
 

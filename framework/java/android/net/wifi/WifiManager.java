@@ -54,6 +54,8 @@ import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.hotspot2.ProvisioningCallback;
+import android.net.wifi.p2p.WifiP2pConfig;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -416,7 +418,33 @@ public class WifiManager {
             API_AUTOJOIN_GLOBAL,
             API_SET_SCAN_SCHEDULE,
             API_SET_ONE_SHOT_SCREEN_ON_CONNECTIVITY_SCAN_DELAY,
-            API_SET_NETWORK_SELECTION_CONFIG})
+            API_SET_NETWORK_SELECTION_CONFIG,
+            API_SET_THIRD_PARTY_APPS_ENABLING_WIFI_CONFIRMATION_DIALOG,
+            API_ADD_NETWORK,
+            API_UPDATE_NETWORK,
+            API_ALLOW_AUTOJOIN,
+            API_CONNECT_CONFIG,
+            API_CONNECT_NETWORK_ID,
+            API_DISABLE_NETWORK,
+            API_ENABLE_NETWORK,
+            API_FORGET,
+            API_SAVE,
+            API_START_SCAN,
+            API_START_LOCAL_ONLY_HOTSPOT,
+            API_P2P_DISCOVER_PEERS,
+            API_P2P_DISCOVER_PEERS_ON_SOCIAL_CHANNELS,
+            API_P2P_DISCOVER_PEERS_ON_SPECIFIC_FREQUENCY,
+            API_P2P_STOP_PEER_DISCOVERY,
+            API_P2P_CONNECT,
+            API_P2P_CANCEL_CONNECT,
+            API_P2P_CREATE_GROUP,
+            API_P2P_CREATE_GROUP_P2P_CONFIG,
+            API_P2P_REMOVE_GROUP,
+            API_P2P_START_LISTENING,
+            API_P2P_STOP_LISTENING,
+            API_P2P_SET_CHANNELS,
+            API_WIFI_SCANNER_START_SCAN
+    })
     public @interface ApiType {}
 
     /**
@@ -499,10 +527,256 @@ public class WifiManager {
     public static final int API_SET_THIRD_PARTY_APPS_ENABLING_WIFI_CONFIRMATION_DIALOG = 9;
 
     /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#addNetwork(WifiConfiguration)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_ADD_NETWORK = 10;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#updateNetwork(WifiConfiguration)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_UPDATE_NETWORK = 11;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#allowAutojoin(int, boolean)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_ALLOW_AUTOJOIN = 12;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#connect(WifiConfiguration, ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_CONNECT_CONFIG = 13;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#connect(int, ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_CONNECT_NETWORK_ID = 14;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#disableNetwork(int)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_DISABLE_NETWORK = 15;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#enableNetwork(int, boolean)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_ENABLE_NETWORK = 16;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#forget(int, ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_FORGET = 17;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#save(WifiConfiguration, ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_SAVE = 18;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#startScan()}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_START_SCAN = 19;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiManager#startLocalOnlyHotspot(LocalOnlyHotspotCallback, Handler)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_START_LOCAL_ONLY_HOTSPOT = 20;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#discoverPeers(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_DISCOVER_PEERS = 21;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#discoverPeersOnSocialChannels(WifiP2pManager.Channel,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_DISCOVER_PEERS_ON_SOCIAL_CHANNELS = 22;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#discoverPeersOnSpecificFrequency(WifiP2pManager.Channel, int,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_DISCOVER_PEERS_ON_SPECIFIC_FREQUENCY = 23;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#stopPeerDiscovery(WifiP2pManager.Channel,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_STOP_PEER_DISCOVERY = 24;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#connect(WifiP2pManager.Channel, WifiP2pConfig,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_CONNECT = 25;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#cancelConnect(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_CANCEL_CONNECT = 26;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#createGroup(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_CREATE_GROUP = 27;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#createGroup(WifiP2pManager.Channel, WifiP2pConfig,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_CREATE_GROUP_P2P_CONFIG = 28;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#removeGroup(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_REMOVE_GROUP = 29;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#startListening(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_START_LISTENING = 30;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#stopListening(WifiP2pManager.Channel, WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_STOP_LISTENING = 31;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiP2pManager#setWifiP2pChannels(WifiP2pManager.Channel, int, int,
+     * WifiP2pManager.ActionListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_P2P_SET_CHANNELS = 32;
+
+    /**
+     * A constant used in
+     * {@link WifiManager#getLastCallerInfoForApi(int, Executor, BiConsumer)}
+     * Tracks usage of
+     * {@link WifiScanner#startScan(WifiScanner.ScanSettings, WifiScanner.ScanListener)}
+     * @hide
+     */
+    @SystemApi
+    public static final int API_WIFI_SCANNER_START_SCAN = 33;
+
+    /**
      * Used internally to keep track of boundary.
      * @hide
      */
-    public static final int API_MAX = 10;
+    public static final int API_MAX = 34;
 
     /**
      * Broadcast intent action indicating that a Passpoint provider icon has been received.
@@ -786,6 +1060,7 @@ public class WifiManager {
      * {@link #SAP_START_FAILURE_GENERAL},
      * {@link #SAP_START_FAILURE_NO_CHANNEL},
      * {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}
+     * {@link #SAP_START_FAILURE_USER_REJECTED}
      *
      * @hide
      */
@@ -892,13 +1167,15 @@ public class WifiManager {
         SAP_START_FAILURE_GENERAL,
         SAP_START_FAILURE_NO_CHANNEL,
         SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION,
+        SAP_START_FAILURE_USER_REJECTED,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface SapStartFailure {}
 
     /**
-     *  All other reasons for AP start failure besides {@link #SAP_START_FAILURE_NO_CHANNEL} and
-     *  {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}.
+     *  All other reasons for AP start failure besides {@link #SAP_START_FAILURE_NO_CHANNEL},
+     *  {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}, and
+     *  {@link #SAP_START_FAILURE_USER_REJECTED}.
      *
      *  @hide
      */
@@ -923,6 +1200,14 @@ public class WifiManager {
     @SystemApi
     public static final int SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION = 2;
 
+    /**
+     *  If Wi-Fi AP start failed, this reason code means that the user was asked for confirmation to
+     *  create the AP and the user declined.
+     *
+     *  @hide
+     */
+    @SystemApi
+    public static final int SAP_START_FAILURE_USER_REJECTED = 3;
 
     /** @hide */
     @IntDef(flag = false, prefix = { "SAP_CLIENT_BLOCKED_REASON_" }, value = {
@@ -2388,21 +2673,6 @@ public class WifiManager {
             return -1;
         }
         return addOrUpdateNetwork(config);
-    }
-
-    /**
-    * Get SoftAp Wi-Fi generation.
-    *
-    * @return Wi-Fi generation if SoftAp enabled or -1.
-    *
-    * @hide no intent to publish
-    */
-    public int getSoftApWifiStandard() {
-        try {
-            return mService.getSoftApWifiStandard();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
     }
 
     /**
@@ -4223,8 +4493,8 @@ public class WifiManager {
      * <li>Device Owner (DO), Profile Owner (PO) and system apps.
      * </ul>
      *
-     * Starting with Build.VERSION_CODES#T, DO/COPE may set a user restriction
-     * (DISALLOW_CHANGE_WIFI_STATE) to only allow DO/PO to use this API.
+     * Starting with {@link android.os.Build.VERSION_CODES#TIRAMISU}, DO/COPE may set
+     * a user restriction (DISALLOW_CHANGE_WIFI_STATE) to only allow DO/PO to use this API.
      */
     @Deprecated
     public boolean setWifiEnabled(boolean enabled) {
@@ -5426,7 +5696,8 @@ public class WifiManager {
          * @param failureReason reason when in failed state. One of
          *                      {@link #SAP_START_FAILURE_GENERAL},
          *                      {@link #SAP_START_FAILURE_NO_CHANNEL},
-         *                      {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION}
+         *                      {@link #SAP_START_FAILURE_UNSUPPORTED_CONFIGURATION},
+         *                      {@link #SAP_START_FAILURE_USER_REJECTED}
          */
         default void onStateChanged(@WifiApState int state, @SapStartFailure int failureReason) {}
 
@@ -8866,7 +9137,8 @@ public class WifiManager {
      * happen:
      * </p>
      * <ul>
-     * <li>Upon finding any of the requested SSIDs, the matching ScanResults will be returned
+     * <li>Upon finding any of the requested SSIDs through either a connectivity scan or PNO scan,
+     * the matching ScanResults will be returned
      * via {@link PnoScanResultsCallback#onScanResultsAvailable(List)}, and the registered PNO
      * scan request will get automatically removed.</li>
      * <li>The external PNO scan request is removed by a call to
@@ -9271,21 +9543,6 @@ public class WifiManager {
         }
     }
 
-     /**
-      * Get device VHT 8SS capability info.
-      *
-      * @return true if device supports VHT 8SS or false.
-      *
-      * @hide no intent to publish
-      */
-    public boolean isVht8ssCapableDevice() {
-        try {
-            return mService.isVht8ssCapableDevice();
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-    }
-
     /**
      * Enable or disable Wi-Fi scoring.  Wi-Fi network status is evaluated by Wi-Fi scoring
      * {@link WifiScoreReport}. This API enables/disables Wi-Fi scoring to take action on network
@@ -9417,50 +9674,6 @@ public class WifiManager {
             throw e.rethrowFromSystemServer();
         }
     }
-
-    /**
-     * Check the WifiSharing mode.
-     *
-     * @return true if Current Sta network connected with extending coverage
-     * option. false if it is not.
-     *
-     * @hide no intent to publish
-     */
-     public boolean isExtendingWifi() {
-         try {
-             return mService.isExtendingWifi();
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
-
-    /**
-     * Check Wifi coverage extend feature enabled or not.
-     *
-     * @return true if Wifi extend feature is enabled.
-     *
-     * @hide no intent to publish
-     */
-     public boolean isWifiCoverageExtendFeatureEnabled() {
-         try {
-             return mService.isWifiCoverageExtendFeatureEnabled();
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
-
-    /**
-     * Enable/disable Wifi coverage extend feature.
-     *
-     * @hide no intent to publish
-     */
-     public void enableWifiCoverageExtendFeature(boolean enable) {
-         try {
-             mService.enableWifiCoverageExtendFeature(enable);
-         } catch (RemoteException e) {
-             throw e.rethrowFromSystemServer();
-         }
-     }
 
     /**
      * If the device supports Wi-Fi Passpoint, the user can explicitly enable or disable it.
@@ -9765,6 +9978,12 @@ public class WifiManager {
             "android.net.wifi.extra.DIALOG_NEUTRAL_BUTTON_TEXT";
 
     /**
+     * Extra long indicating the timeout in milliseconds of a dialog.
+     * @hide
+     */
+    public static final String EXTRA_DIALOG_TIMEOUT_MS = "android.net.wifi.extra.DIALOG_TIMEOUT_MS";
+
+    /**
      * Extra String indicating a P2P device name for a P2P Invitation Sent/Received dialog.
      * @hide
      */
@@ -9781,6 +10000,13 @@ public class WifiManager {
      * @hide
      */
     public static final String EXTRA_P2P_DISPLAY_PIN = "android.net.wifi.extra.P2P_DISPLAY_PIN";
+
+    /**
+     * Extra boolean indicating ACTION_CLOSE_SYSTEM_DIALOGS should not close the Wi-Fi dialogs.
+     * @hide
+     */
+    public static final String EXTRA_CLOSE_SYSTEM_DIALOGS_EXCEPT_WIFI =
+            "android.net.wifi.extra.CLOSE_SYSTEM_DIALOGS_EXCEPT_WIFI";
 
     /**
      * Returns a set of packages that aren't DO or PO but should be able to manage WiFi networks.

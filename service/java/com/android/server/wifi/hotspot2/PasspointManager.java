@@ -35,7 +35,6 @@ import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
-import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.text.TextUtils;
@@ -47,6 +46,7 @@ import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.Clock;
 import com.android.server.wifi.MacAddressUtil;
 import com.android.server.wifi.NetworkUpdateResult;
+import com.android.server.wifi.RunnerHandler;
 import com.android.server.wifi.WifiCarrierInfoManager;
 import com.android.server.wifi.WifiConfigManager;
 import com.android.server.wifi.WifiConfigStore;
@@ -119,7 +119,7 @@ public class PasspointManager {
 
     private final PasspointEventHandler mPasspointEventHandler;
     private final WifiInjector mWifiInjector;
-    private final Handler mHandler;
+    private final RunnerHandler mHandler;
     private final WifiKeyStore mKeyStore;
     private final PasspointObjectFactory mObjectFactory;
 
@@ -145,7 +145,8 @@ public class PasspointManager {
     // Counter used for assigning unique identifier to each provider.
     private long mProviderIndex;
     private boolean mVerboseLoggingEnabled = false;
-    private boolean mEnabled;
+    // Set default value to false before receiving boot completed event.
+    private boolean mEnabled = false;;
 
     private class CallbackHandler implements PasspointEventHandler.Callbacks {
         private final Context mContext;
@@ -355,7 +356,7 @@ public class PasspointManager {
         mAppOps.stopWatchingMode(appOpsChangedListener);
     }
 
-    public PasspointManager(Context context, WifiInjector wifiInjector, Handler handler,
+    public PasspointManager(Context context, WifiInjector wifiInjector, RunnerHandler handler,
             WifiNative wifiNative, WifiKeyStore keyStore, Clock clock,
             PasspointObjectFactory objectFactory, WifiConfigManager wifiConfigManager,
             WifiConfigStore wifiConfigStore,
@@ -387,12 +388,11 @@ public class PasspointManager {
         sPasspointManager = this;
         mMacAddressUtil = macAddressUtil;
         mClock = clock;
-        mHandler.postAtFrontOfQueue(() ->
+        mHandler.postToFront(() ->
                 mWifiConfigManager.addOnNetworkUpdateListener(
                         new PasspointManager.OnNetworkUpdateListener()));
         mWifiPermissionsUtil = wifiPermissionsUtil;
         mSettingsStore = wifiSettingsStore;
-        mEnabled = mSettingsStore.isWifiPasspointEnabled();
     }
 
     /**
@@ -559,7 +559,10 @@ public class PasspointManager {
         }
         newProvider.enableVerboseLogging(mVerboseLoggingEnabled);
         mProviders.put(config.getUniqueId(), newProvider);
-        mWifiConfigManager.saveToStore(true /* forceWrite */);
+        if (!isFromSuggestion) {
+            // Suggestions will be handled by the WifiNetworkSuggestionsManager
+            mWifiConfigManager.saveToStore(true /* forceWrite */);
+        }
         if (!isFromSuggestion && newProvider.getPackageName() != null) {
             startTrackingAppOpsChange(newProvider.getPackageName(), uid);
         }
@@ -607,7 +610,10 @@ public class PasspointManager {
         String uniqueId = provider.getConfig().getUniqueId();
         mProviders.remove(uniqueId);
         mWifiConfigManager.removeConnectChoiceFromAllNetworks(uniqueId);
-        mWifiConfigManager.saveToStore(true /* forceWrite */);
+        if (!provider.isFromSuggestion()) {
+            // Suggestions will be handled by the WifiNetworkSuggestionsManager
+            mWifiConfigManager.saveToStore(true /* forceWrite */);
+        }
 
         // Stop monitoring the package if there is no Passpoint profile installed by the package
         if (mAppOpsChangedListenerPerApp.containsKey(packageName)
@@ -877,6 +883,10 @@ public class PasspointManager {
      */
     private @NonNull List<Pair<PasspointProvider, PasspointMatch>> getAllMatchedProviders(
             ScanResult scanResult, boolean anqpRequestAllowed) {
+        if (!mEnabled) {
+            return Collections.emptyList();
+        }
+
         List<Pair<PasspointProvider, PasspointMatch>> allMatches = new ArrayList<>();
 
         // Retrieve the relevant information elements, mainly Roaming Consortium IE and Hotspot 2.0
@@ -1643,5 +1653,13 @@ public class PasspointManager {
         PasspointProvider provider = mProviders.get(uniqueId);
         if (provider == null) return 0;
         return provider.getAndRemoveMatchedRcoi(ssid);
+    }
+
+    /**
+     * Handle boot completed, read config flags.
+     */
+    public void handleBootCompleted() {
+        // Settings Store should be accessed after boot completed event.
+        mEnabled = mSettingsStore.isWifiPasspointEnabled();
     }
 }

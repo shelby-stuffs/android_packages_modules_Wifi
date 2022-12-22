@@ -63,8 +63,7 @@ public class WifiConfigurationUtil {
      */
     private static final int ENCLOSING_QUOTES_LEN = 2;
     private static final int SSID_UTF_8_MIN_LEN = 1 + ENCLOSING_QUOTES_LEN;
-    private static final int SSID_UTF_8_MAX_LEN = // wifigbk++
-                        WifiGbk.MAX_SSID_UTF_LENGTH + ENCLOSING_QUOTES_LEN;
+    private static final int SSID_UTF_8_MAX_LEN = 32 + ENCLOSING_QUOTES_LEN;
     private static final int SSID_HEX_MIN_LEN = 2;
     private static final int SSID_HEX_MAX_LEN = 64;
     private static final int PSK_ASCII_MIN_LEN = 8 + ENCLOSING_QUOTES_LEN;
@@ -617,9 +616,8 @@ public class WifiConfigurationUtil {
                 Log.e(TAG, "validateKeyMgmt failed: not WPA_EAP");
                 return false;
             }
-            if (!keyMgmnt.get(WifiConfiguration.KeyMgmt.IEEE8021X)
-                    && !keyMgmnt.get(WifiConfiguration.KeyMgmt.WPA_PSK)) {
-                Log.e(TAG, "validateKeyMgmt failed: not PSK or 8021X");
+            if (!keyMgmnt.get(WifiConfiguration.KeyMgmt.IEEE8021X)) {
+                Log.e(TAG, "validateKeyMgmt failed: not 8021X");
                 return false;
             }
             // SUITE-B keymgmt must be WPA_EAP + IEEE8021X + SUITE_B_192.
@@ -630,6 +628,11 @@ public class WifiConfigurationUtil {
                 Log.e(TAG, "validateKeyMgmt failed: not SUITE_B_192");
                 return false;
             }
+        }
+        // There should be at least one keymgmt.
+        if (keyMgmnt.cardinality() == 0) {
+            Log.e(TAG, "validateKeyMgmt failed: cardinality = 0");
+            return false;
         }
         return true;
     }
@@ -831,6 +834,12 @@ public class WifiConfigurationUtil {
             return false;
         }
         if (!WifiNetworkSpecifier.validateBand(getBand(specifier))) {
+            return false;
+        }
+        if (specifier.getPreferredChannelFrequencyInMhz().length
+                > WifiNetworkSpecifier.getMaxNumberOfChannelsPerRequest()
+                || !WifiNetworkSpecifier.validateChannelFrequencyInMhz(specifier
+                .getPreferredChannelFrequencyInMhz())) {
             return false;
         }
         WifiConfiguration config = specifier.wifiConfiguration;
@@ -1145,5 +1154,31 @@ public class WifiConfigurationUtil {
             }
         }
         return true;
+    }
+
+    /**
+     * Indicate that this configuration could be linked.
+     *
+     * @param config the configuartion to be checked.
+     * @return true if it's linkable; otherwise false.
+     */
+    public static boolean isConfigLinkable(WifiConfiguration config) {
+        WifiGlobals wifiGlobals = WifiInjector.getInstance().getWifiGlobals();
+        if (config.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)
+                && config.getSecurityParams(WifiConfiguration.SECURITY_TYPE_PSK)
+                .isEnabled()) {
+            return true;
+        }
+
+        // If SAE offload is supported, link SAE type also.
+        if (wifiGlobals.isWpa3SaeUpgradeOffloadEnabled()) {
+            if (config.isSecurityType(WifiConfiguration.SECURITY_TYPE_SAE)
+                    && config.getSecurityParams(WifiConfiguration.SECURITY_TYPE_SAE)
+                    .isEnabled()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

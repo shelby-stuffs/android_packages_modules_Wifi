@@ -149,11 +149,29 @@
           <item type="integer" name="config_wifiPnoScanLowRssiNetworkRetryStartDelaySec" />
           <item type="integer" name="config_wifiPnoScanLowRssiNetworkRetryMaxDelaySec" />
           <item type="integer" name="config_wifiConnectedHighRssiScanMinimumWindowSizeSec" />
+
           <item type="integer" name="config_wifiDisableReasonAssociationRejectionThreshold" />
           <item type="integer" name="config_wifiDisableReasonAuthenticationFailureThreshold" />
           <item type="integer" name="config_wifiDisableReasonDhcpFailureThreshold" />
           <item type="integer" name="config_wifiDisableReasonNetworkNotFoundThreshold" />
           <item type="integer" name="config_wifiDisableReasonNoInternetTemporaryThreshold" />
+          <item type="integer" name="config_wifiDisableReasonAuthenticationNoCredentialsThreshold" />
+          <item type="integer" name="config_wifiDisableReasonNoInternetPermanentThreshold" />
+          <item type="integer" name="config_wifiDisableReasonByWrongPasswordThreshold" />
+          <item type="integer" name="config_wifiDisableReasonAuthenticationNoSubscriptionThreshold" />
+          <item type="integer" name="config_wifiDisableReasonConsecutiveFailuresThreshold" />
+
+          <item type="integer" name="config_wifiDisableReasonAssociationRejectionDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonAuthenticationFailureDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonDhcpFailureDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonNetworkNotFoundDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonNoInternetTemporaryDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonAuthenticationNoCredentialsDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonNoInternetPermanentDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonByWrongPasswordDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonAuthenticationNoSubscriptionDurationMs" />
+          <item type="integer" name="config_wifiDisableReasonConsecutiveFailuresDurationMs" />
+
           <item type="integer" name="config_wifiBssidBlocklistMonitorApUnableToHandleNewStaThreshold" />
           <item type="integer" name="config_wifiBssidBlocklistMonitorNetworkValidationFailureThreshold" />
           <item type="integer" name="config_wifiBssidBlocklistMonitorWrongPasswordThreshold" />
@@ -170,7 +188,6 @@
           <item type="integer" name="config_wifiBssidBlocklistAbnormalDisconnectTimeWindowMs" />
           <item type="integer" name="config_wifiBssidBlocklistMonitorNoResponseThreshold" />
           <item type="integer" name="config_wifiBssidBlocklistMonitorValidationFailureBaseBlockDurationMs" />
-          <item type="integer" name="config_wifiDisableReasonNoInternetTemporaryDurationMs" />
           <item type="bool" name="config_wifiScanHiddenNetworksScanOnlyMode" />
           <item type="integer" name="config_wifiHardwareSoftapMaxClientCount" />
           <item type="bool" name="config_wifiIsUnusableEventMetricsEnabled" />
@@ -228,24 +245,32 @@
           <item type="bool" name="config_wifiLinkLayerAllRadiosStatsAggregationEnabled" />
           <item type="string" name="config_wifiP2pDeviceNamePrefix"/>
           <item type="integer" name="config_wifiP2pDeviceNamePostfixNumDigits" />
+          <item type="integer" name="config_wifiP2pExtListenPeriodMs" />
+          <item type="integer" name="config_wifiP2pExtListenIntervalMs" />
           <item type="integer" name="config_wifiMaxNumWifiConfigurations" />
+          <item type="integer" name="config_wifiMaxNumWifiConfigurationsAddedByAllApps" />
           <item type="bool" name="config_wifiAllowInsecureEnterpriseConfigurationsForSettingsAndSUW" />
           <item type="integer" name="config_wifiConnectivityLocalLogMaxLinesLowRam" />
           <item type="integer" name="config_wifiConnectivityLocalLogMaxLinesHighRam" />
           <item type="integer" name="config_wifiClientModeImplNumLogRecs" />
           <item type="bool" name="config_vendor_wifi_softap_owe_supported" />
+          <item type="bool" name="config_vendor_wifi_gbk_ssid_supported" />
           <item type="bool" name="config_wifiDriverSupportedNl80211RegChangedEvent" />
           <item type="integer" name="config_wifiVerboseLoggingAlwaysOnLevel" />
           <item type="bool" name="config_disconnectOnlyOnInitialIpReachability" />
           <item type="string" name="config_wifiCertInstallationHelpLink" />
+          <item type="string" name="config_wifiApmEnhancementHelpLink" />
           <item type="integer" name="config_wifiConfigurationRestoreNetworksBatchNum" />
+          <item type="integer" name="config_wifiConfigurationWifiRunnerThresholdInMs" />
           <item type="array" name="config_oemPrivilegedWifiAdminPackages" />
           <item type="bool" name="config_wifiSoftapOweSupported" />
           <item type="bool" name="config_wifiSoftapOweTransitionSupported" />
           <item type="integer" name="config_wifiDialogGravity" />
+          <item type="bool" name="config_wifiDialogCanceledOnTouchOutside" />
           <item type="bool" name="config_showConfirmationDialogForThirdPartyAppsEnablingWifi" />
           <item type="integer" name="config_p2pInvitationReceivedDialogTimeoutMs"/>
           <item type="bool" name="config_p2pInvitationReceivedDialogNotificationSound"/>
+          <item type="integer" name="config_wifiP2pJoinRequestAuthorizingTimeoutMs" />
           <item type="bool" name="config_wifiForcedSoftApRestartWhenCountryCodeChanged" />
           <item type="bool" name="config_wifiDppAkmSupported" />
           <item type="array" name="config_wifiInterfacePriorityTreatAsForegroundList"/>
@@ -259,6 +284,8 @@
           <item type="bool" name="config_wifiAwareNdpSecurityUpdateOnSameNdi" />
           <item type="array" name="config_wifiBackgroundRttThrottleExceptionList" />
           <item type="array" name="config_wifiCharsetsForSsidTranslation" />
+          <item type="string" name="config_wifiBugreportDeepLink" />
+          <item type="bool" name="config_wifiWaitForDestroyedListeners" />
           <!-- Params from config.xml that can be overlayed -->
 
           <!-- Params from strings.xml that can be overlayed -->
@@ -296,6 +323,7 @@
           <item type="string" name="ok" />
           <item type="string" name="wifi_p2p_invitation_sent_title" />
           <item type="string" name="wifi_p2p_invitation_to_connect_title" />
+          <item type="string" name="wifi_p2p_invitation_seconds_remaining" />
           <item type="string" name="wifi_p2p_from_message" />
           <item type="string" name="wifi_p2p_to_message" />
           <item type="string" name="wifi_p2p_enter_pin_message" />
@@ -396,6 +424,7 @@
           <item type="style" name="wifi_item_label" />
           <item type="style" name="wifi_item_content" />
           <item type="style" name="wifi_section" />
+          <item type="style" name="wifi_dialog" />
           <item type="style" name="wifi_p2p_invitation_received_dialog" />
           <item type="style" name="wifi_p2p_dialog_row_label" />
           <item type="style" name="wifi_p2p_dialog_row_content" />

@@ -16,6 +16,7 @@
 
 package com.android.server.wifi.hal;
 
+import android.annotation.Nullable;
 import android.net.MacAddress;
 import android.net.wifi.aware.ConfigRequest;
 import android.net.wifi.aware.PublishConfig;
@@ -32,12 +33,28 @@ public interface IWifiNanIface {
     void enableVerboseLogging(boolean verbose);
 
     /**
+     * Get the underlying HIDL WifiNanIfaceObject.
+     * TODO: Remove this API. Will only be used temporarily until HalDeviceManager is refactored.
+     *
+     * @return HIDL IWifiNanIface object.
+     */
+    android.hardware.wifi.V1_0.IWifiNanIface getNanIface();
+
+    /**
      * Register a framework callback to receive notifications from the HAL.
      *
      * @param callback Instance of {@link WifiNanIface.Callback}.
      * @return true if successful, false otherwise
      */
     boolean registerFrameworkCallback(WifiNanIface.Callback callback);
+
+    /**
+     * Get the name of this interface.
+     *
+     * @return Name of this interface, or null on error.
+     */
+    @Nullable
+    String getName();
 
     /**
      * Query the firmware's capabilities.

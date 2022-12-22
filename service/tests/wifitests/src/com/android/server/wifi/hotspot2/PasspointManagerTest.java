@@ -68,7 +68,6 @@ import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.hotspot2.pps.Credential;
 import android.net.wifi.hotspot2.pps.HomeSp;
-import android.os.Handler;
 import android.os.Looper;
 import android.os.UserHandle;
 import android.os.test.TestLooper;
@@ -76,6 +75,7 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.util.Base64;
+import android.util.LocalLog;
 import android.util.Pair;
 
 import androidx.test.filters.SmallTest;
@@ -85,6 +85,7 @@ import com.android.server.wifi.FakeKeys;
 import com.android.server.wifi.FrameworkFacade;
 import com.android.server.wifi.MacAddressUtil;
 import com.android.server.wifi.NetworkUpdateResult;
+import com.android.server.wifi.RunnerHandler;
 import com.android.server.wifi.WifiBaseTest;
 import com.android.server.wifi.WifiCarrierInfoManager;
 import com.android.server.wifi.WifiConfigManager;
@@ -220,7 +221,7 @@ public class PasspointManagerTest extends WifiBaseTest {
     @Mock MacAddressUtil mMacAddressUtil;
     @Mock WifiPermissionsUtil mWifiPermissionsUtil;
 
-    Handler mHandler;
+    RunnerHandler mHandler;
     TestLooper mLooper;
     PasspointManager mManager;
     boolean mConfigSettingsPasspointEnabled = true;
@@ -271,7 +272,7 @@ public class PasspointManagerTest extends WifiBaseTest {
         when(mWifiSettingsStore.isWifiPasspointEnabled())
                 .thenReturn(mConfigSettingsPasspointEnabled);
         mLooper = new TestLooper();
-        mHandler = new Handler(mLooper.getLooper());
+        mHandler = new RunnerHandler(mLooper.getLooper(), 100, new LocalLog(128));
         mWifiCarrierInfoManager = new WifiCarrierInfoManager(mTelephonyManager,
                 mSubscriptionManager, mWifiInjector, mock(FrameworkFacade.class),
                 mock(WifiContext.class), mWifiConfigStore, mHandler, mWifiMetrics, mClock);
@@ -282,7 +283,11 @@ public class PasspointManagerTest extends WifiBaseTest {
                 mWifiConfigStore, mWifiSettingsStore, mWifiMetrics, mWifiCarrierInfoManager,
                 mMacAddressUtil, mWifiPermissionsUtil);
         mManager.setPasspointNetworkNominateHelper(mPasspointNetworkNominateHelper);
-        // Verify Passpoint is enabled on creation.
+        // Verify Passpoint is disabled on creation.
+        assertFalse(mManager.isWifiPasspointEnabled());
+        // send boot completed event to update enablement state.
+        mManager.handleBootCompleted();
+        // Verify Passpoint is enabled after getting boot completed event.
         assertTrue(mManager.isWifiPasspointEnabled());
         mManager.setUseInjectedPKIX(true);
         mManager.injectPKIXParameters(TEST_PKIX_PARAMETERS);
@@ -2091,7 +2096,7 @@ public class PasspointManagerTest extends WifiBaseTest {
         verify(provider).uninstallCertsAndKeys();
         verify(mWifiConfigManager, never()).removePasspointConfiguredNetwork(
                 provider.getWifiConfig().getProfileKey());
-        verify(mWifiConfigManager).saveToStore(true);
+        verify(mWifiConfigManager, never()).saveToStore(true);
         verify(mWifiMetrics).incrementNumPasspointProviderUninstallation();
         verify(mWifiMetrics).incrementNumPasspointProviderUninstallSuccess();
         verify(mAppOpsManager, never()).stopWatchingMode(
@@ -2153,7 +2158,7 @@ public class PasspointManagerTest extends WifiBaseTest {
                 argThat((c) -> c.FQDN.equals(TEST_FQDN)), eq(TEST_CREATOR_UID), eq(TEST_PACKAGE),
                 eq(false));
         verify(mWifiConfigManager).allowAutojoin(TEST_NETWORK_ID, origWifiConfig.allowAutojoin);
-        verify(mWifiConfigManager).saveToStore(true);
+        verify(mWifiConfigManager, never()).saveToStore(true);
         verify(mWifiMetrics).incrementNumPasspointProviderInstallation();
         verify(mWifiMetrics).incrementNumPasspointProviderInstallSuccess();
         assertEquals(2, mSharedDataSource.getProviderIndex());
@@ -2172,7 +2177,7 @@ public class PasspointManagerTest extends WifiBaseTest {
                 eq(true), eq(mClock))).thenReturn(newProvider);
         assertTrue(mManager.addOrUpdateProvider(newConfig, TEST_CREATOR_UID, TEST_PACKAGE,
                 true, true, false));
-        verify(mWifiConfigManager).saveToStore(true);
+        verify(mWifiConfigManager, never()).saveToStore(true);
         verify(mWifiMetrics).incrementNumPasspointProviderInstallation();
         verify(mWifiMetrics).incrementNumPasspointProviderInstallSuccess();
 
@@ -2283,7 +2288,7 @@ public class PasspointManagerTest extends WifiBaseTest {
                 eq(true), eq(mClock))).thenReturn(newProvider);
         assertTrue(mManager.addOrUpdateProvider(newConfig, TEST_CREATOR_UID, TEST_PACKAGE1, true,
                 true, false));
-        verify(mWifiConfigManager).saveToStore(true);
+        verify(mWifiConfigManager, never()).saveToStore(true);
         verify(mWifiMetrics).incrementNumPasspointProviderInstallation();
         verify(mWifiMetrics).incrementNumPasspointProviderInstallSuccess();
 
@@ -3098,16 +3103,23 @@ public class PasspointManagerTest extends WifiBaseTest {
                 addTestProvider(TEST_FQDN, TEST_FRIENDLY_NAME, TEST_PACKAGE, false, null);
         ANQPData entry = new ANQPData(mClock, null);
 
-        when(mAnqpCache.getEntry(TEST_ANQP_KEY)).thenReturn(entry);
         when(provider.match(anyMap(), any(RoamingConsortium.class), any(ScanResult.class)))
                 .thenReturn(PasspointMatch.HomeProvider);
 
         // Disable the Wifi Passpoint and expect the matchProvider to return empty list.
+        when(mAnqpCache.getEntry(TEST_ANQP_KEY)).thenReturn(entry);
         mManager.setWifiPasspointEnabled(false);
         assertFalse(mManager.isWifiPasspointEnabled());
         assertTrue(mManager.matchProvider(createTestScanResult()).isEmpty());
 
+        // Verify that a request for ANQP elements is not initiated when ANQP cache misses.
+        when(mAnqpCache.getEntry(TEST_ANQP_KEY)).thenReturn(null);
+        assertTrue(mManager.getAllMatchedProviders(createTestScanResult()).isEmpty());
+        verify(mAnqpRequestManager, never()).requestANQPElements(any(long.class),
+                any(ANQPNetworkKey.class), any(boolean.class), any(NetworkDetail.HSRelease.class));
+
         // Enable the Wifi Passpoint and expect the matchProvider to return matched result.
+        when(mAnqpCache.getEntry(TEST_ANQP_KEY)).thenReturn(entry);
         mManager.setWifiPasspointEnabled(true);
         assertTrue(mManager.isWifiPasspointEnabled());
         List<Pair<PasspointProvider, PasspointMatch>> results =
@@ -3115,6 +3127,13 @@ public class PasspointManagerTest extends WifiBaseTest {
         Pair<PasspointProvider, PasspointMatch> result = results.get(0);
         assertEquals(PasspointMatch.HomeProvider, result.second);
         assertEquals(TEST_FQDN, result.first.getConfig().getHomeSp().getFqdn());
+
+        // Verify that a request for ANQP elements is initiated when ANQP cache misses.
+        when(mAnqpCache.getEntry(TEST_ANQP_KEY)).thenReturn(null);
+        // ANQP cache misses, still no result.
+        assertTrue(mManager.getAllMatchedProviders(createTestScanResult()).isEmpty());
+        verify(mAnqpRequestManager).requestANQPElements(eq(TEST_BSSID),
+                any(ANQPNetworkKey.class), anyBoolean(), any());
     }
 }
 

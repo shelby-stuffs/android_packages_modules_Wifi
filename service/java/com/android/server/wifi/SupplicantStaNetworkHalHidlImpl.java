@@ -20,6 +20,7 @@ import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetwork;
 import android.hardware.wifi.supplicant.V1_0.ISupplicantStaNetworkCallback;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatus;
 import android.hardware.wifi.supplicant.V1_0.SupplicantStatusCode;
+import vendor.qti.hardware.wifi.supplicant.V2_0.ISupplicantVendorStaNetwork;
 import android.net.wifi.SecurityParams;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiEnterpriseConfig;
@@ -29,6 +30,7 @@ import android.net.wifi.WifiSsid;
 import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
+import android.telephony.SubscriptionManager;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.wifi.util.ArrayUtils;
@@ -135,6 +137,8 @@ public class SupplicantStaNetworkHalHidlImpl {
     private @Ocsp int mOcsp;
     private String mWapiCertSuite;
     private long mAdvanceKeyMgmtFeatures;
+    private ISupplicantVendorStaNetwork mISupplicantVendorStaNetwork;
+    private final WifiCarrierInfoManager mWifiCarrierInfoManager;
 
     SupplicantStaNetworkHalHidlImpl(ISupplicantStaNetwork iSupplicantStaNetwork, String ifaceName,
             Context context, WifiMonitor monitor, WifiGlobals wifiGlobals,
@@ -145,6 +149,7 @@ public class SupplicantStaNetworkHalHidlImpl {
         mWifiMonitor = monitor;
         mWifiGlobals = wifiGlobals;
         mAdvanceKeyMgmtFeatures = advanceKeyMgmtFeature;
+        mWifiCarrierInfoManager = WifiInjector.getInstance().getWifiCarrierInfoManager();
     }
 
     /**
@@ -489,6 +494,14 @@ public class SupplicantStaNetworkHalHidlImpl {
                     return true;
                 } else if (!saveWifiEnterpriseConfig(config.SSID, config.enterpriseConfig)) {
                     return false;
+                } else if (config.enterpriseConfig.isAuthenticationSimBased()) {
+                    /* SIM number for EAP_PROXY */
+                    int simIndex = mWifiCarrierInfoManager
+                               .getMatchingSimSlotIndex(config.carrierId, config.subscriptionId);
+                    if (simIndex != SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                            && !setVendorSimNumber(simIndex + 1)) {
+                         Log.e(TAG, config.SSID + ": failed to set VendorSimNumber : " + simIndex + 1);
+                    }
                 }
             }
 
@@ -3944,4 +3957,64 @@ public class SupplicantStaNetworkHalHidlImpl {
                     mIfaceName, mLock, mWifiMonitor);
         }
     }
+
+    /** [START] ISupplicant Vendor Iface Network implementation */
+
+    /** set local vendor sta network, if it not null */
+    public void setVendorStaNetwork(ISupplicantVendorStaNetwork vendor_network) {
+           System.out.println("stanetwork getId >>" + mNetworkId);
+           if (vendor_network != null) {
+               Log.e(TAG, "set ISupplicantVendorStaNetwork successfull");
+               mISupplicantVendorStaNetwork = vendor_network;
+           } else {
+               Log.e(TAG, "Failed to set ISupplicantVendorStaNetwork due to null");
+           }
+    }
+
+    private boolean setVendorSimNumber(int SimNum) {
+        synchronized (mLock) {
+            final String methodStr = "setVendorSimNumber";
+            if (!checkISupplicantVendorStaNetworkAndLogFailure(methodStr)) return false;
+            try {
+                SupplicantStatus status =  mISupplicantVendorStaNetwork.setVendorSimNumber(SimNum);
+                return checkVendorStatusAndLogFailure(status, methodStr);
+            } catch (RemoteException e) {
+                handleRemoteException(e, methodStr);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Returns true if provided status code is SUCCESS, logs debug message and returns false
+     * otherwise
+     */
+    private boolean checkVendorStatusAndLogFailure(SupplicantStatus status, final String methodStr) {
+        synchronized (mLock) {
+            if (status.code != SupplicantStatusCode.SUCCESS) {
+                Log.e(TAG, "ISupplicantVendorStaNetwork." + methodStr + " failed: " + status);
+                return false;
+            } else {
+                if (mVerboseLoggingEnabled) {
+                    Log.d(TAG, "ISupplicantVendorStaNetwork." + methodStr + " succeeded");
+                }
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Returns false if ISupplicantVendorStaNetwork is null, and logs failure of methodStr
+     */
+    private boolean checkISupplicantVendorStaNetworkAndLogFailure(final String methodStr) {
+        synchronized (mLock) {
+            if (mISupplicantVendorStaNetwork == null) {
+                Log.e(TAG, "Can't call " + methodStr + ", ISupplicantVendorStaNetwork is null");
+                return false;
+            }
+            return true;
+        }
+    }
+
+    /** [END] ISupplicant Vendor Iface Network implementation */
 }

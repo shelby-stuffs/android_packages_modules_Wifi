@@ -379,7 +379,6 @@ public class XmlUtil {
         public static final String XML_TAG_SAE_IS_H2E_ONLY_MODE = "SaeIsH2eOnlyMode";
         public static final String XML_TAG_SAE_IS_PK_ONLY_MODE = "SaeIsPkOnlyMode";
         public static final String XML_TAG_IS_ADDED_BY_AUTO_UPGRADE = "IsAddedByAutoUpgrade";
-        public static final String XML_TAG_SHARE_THIS_AP = "ShareThisAp";
         private static final String XML_TAG_IS_MOST_RECENTLY_CONNECTED = "IsMostRecentlyConnected";
         private static final String XML_TAG_IS_RESTRICTED = "IsRestricted";
         private static final String XML_TAG_SUBSCRIPTION_GROUP = "SubscriptionGroup";
@@ -529,7 +528,6 @@ public class XmlUtil {
                 throws XmlPullParserException, IOException {
             XmlUtil.writeNextValue(out, XML_TAG_CONFIG_KEY, configuration.getKey());
             XmlUtil.writeNextValue(out, XML_TAG_SSID, configuration.SSID);
-            XmlUtil.writeNextValue(out, XML_TAG_SHARE_THIS_AP, configuration.shareThisAp);
             writePreSharedKeyToXml(out, configuration.preSharedKey, encryptionUtil);
             writeWepKeysToXml(out, configuration.wepKeys);
             XmlUtil.writeNextValue(out, XML_TAG_WEP_TX_KEY_INDEX, configuration.wepTxKeyIndex);
@@ -810,9 +808,6 @@ public class XmlUtil {
                             break;
                         case XML_TAG_BSSID:
                             configuration.BSSID = (String) value;
-                            break;
-                        case XML_TAG_SHARE_THIS_AP:
-                            configuration.shareThisAp = (boolean) value;
                             break;
                         case XML_TAG_PRE_SHARED_KEY:
                             configuration.preSharedKey = (String) value;

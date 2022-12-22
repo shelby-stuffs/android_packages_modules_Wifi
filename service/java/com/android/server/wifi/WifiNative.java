@@ -50,6 +50,7 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.os.WorkSource;
 import android.text.TextUtils;
+import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.SparseArray;
@@ -117,6 +118,7 @@ public class WifiNative {
     private final ArrayList<ScanDetail> mFakeScanDetails = new ArrayList<>();
     private long mCachedFeatureSet;
     private boolean mQosPolicyFeatureEnabled = false;
+    private final Map<String, String> mWifiCondIfacesForBridgedAp = new ArrayMap<>();
 
     public WifiNative(WifiVendorHal vendorHal,
                       SupplicantStaIfaceHal staIfaceHal, HostapdHal hostapdHal,
@@ -691,7 +693,12 @@ public class WifiNative {
             if (!removeAccessPoint(iface.name)) {
                 Log.e(TAG, "Failed to remove access point on " + iface);
             }
-            if (!mWifiCondManager.tearDownSoftApInterface(iface.name)) {
+            String wificondIface = iface.name;
+            String bridgedApInstance = mWifiCondIfacesForBridgedAp.remove(iface.name);
+            if (bridgedApInstance != null) {
+                wificondIface = bridgedApInstance;
+            }
+            if (!mWifiCondManager.tearDownSoftApInterface(wificondIface)) {
                 Log.e(TAG, "Failed to teardown iface in wificond on " + iface);
             }
             stopHostapdIfNecessary();
@@ -980,9 +987,9 @@ public class WifiNative {
         synchronized (mLock) {
             if (mWifiVendorHal.isVendorHalSupported()) {
                 // Hostapd vendor V1_2: bridge iface setup start
-                mVendorBridgeModeActive = ((band & SoftApConfiguration.BAND_6GHZ) == 0
-                                             && type == SoftApConfiguration.SECURITY_TYPE_OWE)
-                                          || (isBridged && mHostapdHal.useVendorHostapdHal());
+                mVendorBridgeModeActive = ((isBridged && mHostapdHal.useVendorHostapdHal())
+                                           || (HostapdHalHidlImp.serviceDeclared()
+                                               && (type == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION)));
                 Log.i(TAG, "CreateApIface - vendor bridge=" + mVendorBridgeModeActive);
                 if (isVendorBridgeModeActive()) {
                     return createVendorBridgeIface(iface, requestorWs, band, softApManager);
@@ -1189,6 +1196,12 @@ public class WifiNative {
         }
     }
 
+    private void takeBugReportInterfaceFailureIfNeeded(String bugTitle, String bugDetail) {
+        if (mWifiInjector.getDeviceConfigFacade().isInterfaceFailureBugreportEnabled()) {
+            mWifiInjector.getWifiDiagnostics().takeBugReport(bugTitle, bugDetail);
+        }
+    }
+
     /**
      * Setup an interface for client mode (for connectivity) operations.
      *
@@ -1349,14 +1362,20 @@ public class WifiNative {
             @SoftApConfiguration.BandType int band, boolean isBridged,
             @NonNull SoftApManager softApManager, int type) {
         synchronized (mLock) {
+            String bugTitle = "Wi-Fi BugReport (softAp interface failure)";
+            String errorMsg = "";
             if (!startHal()) {
-                Log.e(TAG, "Failed to start Hal");
+                errorMsg = "Failed to start softAp Hal";
+                Log.e(TAG, errorMsg);
                 mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHal();
+                takeBugReportInterfaceFailureIfNeeded(bugTitle, errorMsg);
                 return null;
             }
             if (!startHostapd()) {
-                Log.e(TAG, "Failed to start hostapd");
+                errorMsg = "Failed to start softAp hostapd";
+                Log.e(TAG, errorMsg);
                 mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHostapd();
+                takeBugReportInterfaceFailureIfNeeded(bugTitle, errorMsg);
                 return null;
             }
             Iface iface = mIfaceMgr.allocateIface(Iface.IFACE_TYPE_AP);
@@ -1367,27 +1386,34 @@ public class WifiNative {
             iface.externalListener = interfaceCallback;
             iface.name = createApIface(iface, requestorWs, band, isBridged, softApManager, type);
             if (TextUtils.isEmpty(iface.name)) {
-                Log.e(TAG, "Failed to create AP iface in vendor HAL");
+                errorMsg = "Failed to create softAp iface in vendor HAL";
+                Log.e(TAG, errorMsg);
                 mIfaceMgr.removeIface(iface.id);
                 mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHal();
+                takeBugReportInterfaceFailureIfNeeded(bugTitle, errorMsg);
                 return null;
             }
             String ifaceInstanceName = iface.name;
             if (isBridged) {
                 List<String> instances = getBridgedApInstances(iface.name);
                 if (instances == null || instances.size() == 0) {
-                    Log.e(TAG, "Failed to get bridged AP instances" + iface.name);
+                    errorMsg = "Failed to get bridged AP instances" + iface.name;
+                    Log.e(TAG, errorMsg);
                     teardownInterface(iface.name);
                     mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHal();
+                    takeBugReportInterfaceFailureIfNeeded(bugTitle, errorMsg);
                     return null;
                 }
                 // Always select first instance as wificond interface.
                 ifaceInstanceName = instances.get(0);
+                mWifiCondIfacesForBridgedAp.put(iface.name, ifaceInstanceName);
             }
             if (!mWifiCondManager.setupInterfaceForSoftApMode(ifaceInstanceName)) {
-                Log.e(TAG, "Failed to setup iface in wificond on " + iface);
+                errorMsg = "Failed to setup softAp iface in wifiCond manager on " + iface;
+                Log.e(TAG, errorMsg);
                 teardownInterface(iface.name);
                 mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToWificond();
+                takeBugReportInterfaceFailureIfNeeded(bugTitle, errorMsg);
                 return null;
             }
             iface.networkObserver = new NetworkObserverInternal(iface.id);
@@ -1698,12 +1724,9 @@ public class WifiNative {
         List<byte[]> hiddenNetworkSsidsArrays = new ArrayList<>();
         for (String hiddenNetworkSsid : hiddenNetworkSSIDs) {
             try {
-                byte[] hiddenSsidBytes = WifiGbk.getRandUtfOrGbkBytes(hiddenNetworkSsid);
-                if (hiddenSsidBytes.length > WifiGbk.MAX_SSID_LENGTH) {
-                    Log.e(TAG, "Skip too long Gbk->utf ssid[" + hiddenSsidBytes.length
-                       + "]=" + hiddenNetworkSsid);
-                }
-                hiddenNetworkSsidsArrays.add(hiddenSsidBytes);
+                hiddenNetworkSsidsArrays.add(
+                        NativeUtil.byteArrayFromArrayList(
+                                NativeUtil.decodeSsid(hiddenNetworkSsid)));
             } catch (IllegalArgumentException e) {
                 Log.e(TAG, "Illegal argument " + hiddenNetworkSsid, e);
                 continue;
@@ -2091,8 +2114,11 @@ public class WifiNative {
         }
 
         if (!addAccessPoint(ifaceName, config, isMetered, callback)) {
-            Log.e(TAG, "Failed to add acccess point");
+            String errorMsg = "Failed to add softAp";
+            Log.e(TAG, errorMsg);
             mWifiMetrics.incrementNumSetupSoftApInterfaceFailureDueToHostapd();
+            takeBugReportInterfaceFailureIfNeeded("Wi-Fi BugReport (softap interface failure)",
+                    errorMsg);
             return false;
         }
 
@@ -2145,15 +2171,6 @@ public class WifiNative {
      */
     public boolean setApMacAddress(String interfaceName, MacAddress mac) {
         return mWifiVendorHal.setApMacAddress(interfaceName, mac);
-    }
-
-    /**
-     * Returns true if Hal version supports setMacAddress, otherwise false.
-     *
-     * @param interfaceName Name of the interface
-     */
-    public boolean isStaSetMacAddressSupported(@NonNull String interfaceName) {
-        return mWifiVendorHal.isStaSetMacAddressSupported(interfaceName);
     }
 
     /**
@@ -3277,22 +3294,7 @@ public class WifiNative {
                     android.net.wifi.nl80211.PnoNetwork nativeNetwork =
                             network.toNativePnoNetwork();
                     if (nativeNetwork != null) {
-                        if (nativeNetwork.getSsid().length <= WifiGbk.MAX_SSID_LENGTH) {
-                            pnoNetworks.add(nativeNetwork);
-                        }
-                        //wifigbk++
-                        if (!WifiGbk.isAllAscii(nativeNetwork.getSsid())) {
-                            byte gbkBytes[] = WifiGbk.toGbk(nativeNetwork.getSsid());
-                            if (gbkBytes != null) {
-                                android.net.wifi.nl80211.PnoNetwork gbkNetwork =
-                                    network.toNativePnoNetwork();
-                                gbkNetwork.setSsid(gbkBytes);
-                                pnoNetworks.add(gbkNetwork);
-                                Log.i(TAG, "WifiGbk fixed - pnoScan add extra Gbk ssid for "
-                                    + nativeNetwork.getSsid());
-                            }
-                        }
-                        //wifigbk--
+                        pnoNetworks.add(nativeNetwork);
                     }
                 }
             }
@@ -3784,11 +3786,11 @@ public class WifiNative {
     }
 
     public static class RingBufferStatus{
-        String name;
-        int flag;
-        int ringBufferId;
-        int ringBufferByteSize;
-        int verboseLevel;
+        public String name;
+        public int flag;
+        public int ringBufferId;
+        public int ringBufferByteSize;
+        public int verboseLevel;
         int writtenBytes;
         int readBytes;
         int writtenRecords;
@@ -3864,18 +3866,18 @@ public class WifiNative {
     /* Packet fate API */
 
     @Immutable
-    abstract static class FateReport {
+    public abstract static class FateReport {
         final static int USEC_PER_MSEC = 1000;
         // The driver timestamp is a 32-bit counter, in microseconds. This field holds the
         // maximal value of a driver timestamp in milliseconds.
         final static int MAX_DRIVER_TIMESTAMP_MSEC = (int) (0xffffffffL / 1000);
         final static SimpleDateFormat dateFormatter = new SimpleDateFormat("HH:mm:ss.SSS");
 
-        final byte mFate;
-        final long mDriverTimestampUSec;
-        final byte mFrameType;
-        final byte[] mFrameBytes;
-        final long mEstimatedWallclockMSec;
+        public final byte mFate;
+        public final long mDriverTimestampUSec;
+        public final byte mFrameType;
+        public final byte[] mFrameBytes;
+        public final long mEstimatedWallclockMSec;
 
         FateReport(byte fate, long driverTimestampUSec, byte frameType, byte[] frameBytes) {
             mFate = fate;
@@ -4506,10 +4508,18 @@ public class WifiNative {
         return true;
     }
 
+    public boolean useVendorHostapdHalForOwe(SoftApConfiguration config) {
+        return mHostapdHal.useVendorHostapdHal() ||
+            /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+            (HostapdHalHidlImp.serviceDeclared() && config != null
+            && (config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE
+            || config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION));
+    }
+
     private boolean addAccessPoint(@NonNull String ifaceName,
           @NonNull SoftApConfiguration config, boolean isMetered, SoftApHalCallback callback) {
         if (isVendorBridgeModeActive()) {
-            if (config != null && config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_OWE) {
+            if (config != null && config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE_TRANSITION) {
                 Log.d(TAG, "Setup for OWE mode Softap");
                 if (!setupOweSap(config, callback))
                     return false;
@@ -4543,9 +4553,10 @@ public class WifiNative {
                 Log.e(TAG, "Failed to set interface up - " + bridgeInterface);
                 return false;
             }
-        } else if (mHostapdHal.useVendorHostapdHal()
-                   || (config != null && config.getSecurityType()
-                              == SoftApConfiguration.SECURITY_TYPE_OWE)) {
+        } else if (mHostapdHal.useVendorHostapdHal() ||
+                   /* Enable OWE only mode for Vendor Hostapd HIDL V_1.2 */
+                   (HostapdHalHidlImp.serviceDeclared() && config != null &&
+                    config.getSecurityType() == SoftApConfiguration.SECURITY_TYPE_WPA3_OWE)) {
             if (!mHostapdHal.addVendorAccessPoint(ifaceName, config, callback::onFailure)) {
                 Log.e(TAG, "Failed to addVendorAP - " + ifaceName);
                 return false;
@@ -4653,14 +4664,17 @@ public class WifiNative {
      *
      * @param ifaceName Name of the interface.
      * @param anonymousIdentity the anonymouns identity.
+     * @param updateToNativeService write the data to the native service.
      * @return true if succeeds, false otherwise.
      */
-    public boolean setEapAnonymousIdentity(@NonNull String ifaceName, String anonymousIdentity) {
+    public boolean setEapAnonymousIdentity(@NonNull String ifaceName, String anonymousIdentity,
+            boolean updateToNativeService) {
         if (null == anonymousIdentity) {
             Log.e(TAG, "Cannot set null anonymous identity.");
             return false;
         }
-        return mSupplicantStaIfaceHal.setEapAnonymousIdentity(ifaceName, anonymousIdentity);
+        return mSupplicantStaIfaceHal.setEapAnonymousIdentity(ifaceName, anonymousIdentity,
+                updateToNativeService);
     }
 
     /**

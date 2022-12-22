@@ -772,7 +772,8 @@ public class WifiCarrierInfoManager {
         int dataSubId = SubscriptionManager.getDefaultDataSubscriptionId();
         int matchSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
         for (SubscriptionInfo subInfo : mActiveSubInfos) {
-            if (subInfo.getCarrierId() == carrierId) {
+            if (subInfo.getCarrierId() == carrierId
+                    && getCarrierConfigForSubId(subInfo.getSubscriptionId()) != null) {
                 matchSubId = subInfo.getSubscriptionId();
                 if (matchSubId == dataSubId) {
                     // Priority of Data sub is higher than non data sub.
@@ -782,6 +783,29 @@ public class WifiCarrierInfoManager {
         }
         vlogd("matching subId is " + matchSubId);
         return matchSubId;
+    }
+
+    /**
+     * Gets the SimSlotIndex of SIM card for given carrier Id
+     *
+     * @param carrierId carrier id for target carrier
+     * @param subId subscription id for target carrier
+     * @return the matched SimSlotIndex
+     */
+    public int getMatchingSimSlotIndex(int carrierId, int subId) {
+        if (mActiveSubInfos == null || mActiveSubInfos.isEmpty()) {
+            return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        }
+
+        int slot = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        for (SubscriptionInfo subInfo : mActiveSubInfos) {
+            if (subInfo.getCarrierId() == carrierId && subInfo.getSubscriptionId() == subId) {
+                slot = subInfo.getSimSlotIndex();
+                break;
+            }
+        }
+        vlogd("matching simSlot is " + slot + " and SimNumber is " + (slot + 1));
+        return slot;
     }
 
     private int getBestMatchSubscriptionIdForEnterprise(WifiConfiguration config) {

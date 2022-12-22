@@ -17,6 +17,7 @@
 package com.android.server.wifi.hal;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.net.MacAddress;
 import android.util.Log;
 
@@ -29,18 +30,26 @@ import java.util.function.Supplier;
  * Wrapper around a WifiApIface.
  * May be initialized using a HIDL or AIDL WifiApIface.
  */
-public class WifiApIface {
+public class WifiApIface implements WifiHal.WifiInterface {
     private static final String TAG = "WifiApIface";
     private final IWifiApIface mWifiApIface;
 
     public WifiApIface(@NonNull android.hardware.wifi.V1_0.IWifiApIface apIface) {
-        Log.i(TAG, "Creating WifiApIface using the HIDL implementation");
         mWifiApIface = createWifiApIfaceHidlImplMockable(apIface);
+    }
+
+    public WifiApIface(@NonNull android.hardware.wifi.IWifiApIface apIface) {
+        mWifiApIface = createWifiApIfaceAidlImplMockable(apIface);
     }
 
     protected WifiApIfaceHidlImpl createWifiApIfaceHidlImplMockable(
             android.hardware.wifi.V1_0.IWifiApIface apIface) {
         return new WifiApIfaceHidlImpl(apIface);
+    }
+
+    protected WifiApIfaceAidlImpl createWifiApIfaceAidlImplMockable(
+            android.hardware.wifi.IWifiApIface apIface) {
+        return new WifiApIfaceAidlImpl(apIface);
     }
 
     private <T> T validateAndCall(String methodStr, T defaultVal, @NonNull Supplier<T> supplier) {
@@ -54,6 +63,8 @@ public class WifiApIface {
     /**
      * See comments for {@link IWifiApIface#getName()}
      */
+    @Override
+    @Nullable
     public String getName() {
         return validateAndCall("getName", null,
                 () -> mWifiApIface.getName());
@@ -103,9 +114,21 @@ public class WifiApIface {
     }
 
     /**
+     * See comments for {@link IWifiApIface#isSetMacAddressSupported()}
+     */
+    public boolean isSetMacAddressSupported() {
+        return validateAndCall("isSetMacAddressSupported", false,
+                () -> mWifiApIface.isSetMacAddressSupported());
+    }
+
+    /**
      * See comments for {@link IWifiApIface#setMacAddress(MacAddress)}
      */
     public boolean setMacAddress(MacAddress mac) {
+        if (mac == null) {
+            Log.e(TAG, "setMacAddress received a null MAC address");
+            return false;
+        }
         return validateAndCall("setMacAddress", false,
                 () -> mWifiApIface.setMacAddress(mac));
     }

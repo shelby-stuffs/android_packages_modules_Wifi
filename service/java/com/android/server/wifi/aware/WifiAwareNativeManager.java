@@ -23,7 +23,7 @@ import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.server.wifi.HalDeviceManager;
-import com.android.server.wifi.WifiNanIface;
+import com.android.server.wifi.hal.WifiNanIface;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -132,7 +132,7 @@ public class WifiAwareNativeManager {
                 if (mVerboseHalLoggingEnabled) Log.v(TAG, "Obtained a WifiNanIface");
                 if (!iface.registerFrameworkCallback(mWifiAwareNativeCallback)) {
                     Log.e(TAG, "Unable to register callback with WifiNanIface");
-                    mHalDeviceManager.removeNanIface(iface);
+                    mHalDeviceManager.removeIface(iface);
                     awareIsDown(false);
                     return;
                 }
@@ -167,7 +167,7 @@ public class WifiAwareNativeManager {
             }
             mInterfaceDestroyedListener.active = false;
             mInterfaceDestroyedListener = null;
-            mHalDeviceManager.removeNanIface(mWifiNanIface);
+            mHalDeviceManager.removeIface(mWifiNanIface);
             mWifiNanIface = null;
             mWifiAwareNativeCallback.resetChannelInfo();
         }

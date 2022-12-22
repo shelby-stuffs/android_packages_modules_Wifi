@@ -205,7 +205,6 @@ public class ConnectedFreqManager {
         if (configKey == null || TextUtils.isEmpty(configKey)) {
             return new PerNetwork("");
         }
-        if (mNetworkList == null) return null;
         PerNetwork ans = mNetworkList.get(configKey);
         if (ans == null) {
             ans = new PerNetwork(configKey);
@@ -236,8 +235,9 @@ public class ConnectedFreqManager {
      * @param configKey
      */
     public void removeNetwork(String configKey) {
-        if (configKey != null && !TextUtils.isEmpty(configKey))
+        if (!TextUtils.isEmpty(configKey)) {
             mNetworkList.remove(configKey);
+        }
     }
 
     public void addAll(HashMap<String, HashMap<String, String>> list) {
@@ -329,7 +329,7 @@ public class ConnectedFreqManager {
          */
         public HashMap<String, HashMap<String, String>> getFreqList() {
             if (mFreqList == null) {
-                mNetworkList = null;
+                mNetworkList.clear();
                 return new HashMap<String, HashMap<String, String>>();
             }
             return mFreqList;

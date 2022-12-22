@@ -1234,12 +1234,6 @@ public class WifiConfiguration implements Parcelable {
     public boolean requirePmf;
 
     /**
-     * @hide
-     * This configuration is used in AP to extend the coverage.
-     */
-    public boolean shareThisAp;
-
-    /**
      * Update identifier, for Passpoint network.
      * @hide
      */
@@ -1451,14 +1445,12 @@ public class WifiConfiguration implements Parcelable {
     public int numNoInternetAccessReports;
 
     /**
-     * The WiFi configuration is considered to have no internet access for purpose of autojoining
-     * if there has been a report of it having no internet access, and, it never have had
-     * internet access in the past.
+     * The WiFi configuration had no internet access the last time we connected to it.
      * @hide
      */
     @SystemApi
     public boolean hasNoInternetAccess() {
-        return numNoInternetAccessReports > 0 && !validatedInternetAccess;
+        return getNetworkSelectionStatus().hasEverConnected() && !validatedInternetAccess;
     }
 
     /**
@@ -1488,9 +1480,15 @@ public class WifiConfiguration implements Parcelable {
     public boolean osu;
 
     /**
-     * Last time the system was connected to this configuration.
+     * Last time the system was connected to this configuration represented as the difference,
+     * measured in milliseconds, between the last connected time and midnight, January 1, 1970 UTC.
+     * <P>
+     * Note that this information is only in memory will be cleared (reset to 0) for all
+     * WifiConfiguration(s) after a reboot.
      * @hide
      */
+    @SuppressLint("MutableBareField")
+    @SystemApi
     public long lastConnected;
 
     /**
@@ -1511,6 +1509,8 @@ public class WifiConfiguration implements Parcelable {
      * Number of reboots since this config was last used (either connected or updated).
      * @hide
      */
+    @SuppressLint("MutableBareField")
+    @SystemApi
     public int numRebootsSinceLastUse;
 
     /**
@@ -2133,7 +2133,6 @@ public class WifiConfiguration implements Parcelable {
         /**
          * This code is used to disable a network when a security params is disabled
          * by the transition disable indication.
-         * @hide
          */
         public static final int DISABLED_TRANSITION_DISABLE_INDICATION = 13;
         /**
@@ -3191,7 +3190,6 @@ public class WifiConfiguration implements Parcelable {
         priority = 0;
         mDeletionPriority = 0;
         hiddenSSID = false;
-        shareThisAp = false;
         allowedKeyManagement = new BitSet();
         allowedProtocols = new BitSet();
         allowedAuthAlgorithms = new BitSet();
@@ -3549,7 +3547,6 @@ public class WifiConfiguration implements Parcelable {
         }
         sbuf.append("\n");
         sbuf.append("IsDppConfigurator: ").append(this.mIsDppConfigurator).append("\n");
-        sbuf.append("ShareThisAp: ").append(this.shareThisAp).append("\n");
         return sbuf.toString();
     }
 
@@ -3647,6 +3644,7 @@ public class WifiConfiguration implements Parcelable {
     /**
      * Get the authentication type of the network.
      * @return One of the {@link KeyMgmt} constants. e.g. {@link KeyMgmt#WPA2_PSK}.
+     * @throws IllegalStateException if config is invalid for authentication type.
      * @hide
      */
     @SystemApi
@@ -3893,7 +3891,6 @@ public class WifiConfiguration implements Parcelable {
             SSID = source.SSID;
             BSSID = source.BSSID;
             FQDN = source.FQDN;
-            shareThisAp = source.shareThisAp;
             roamingConsortiumIds = source.roamingConsortiumIds.clone();
             providerFriendlyName = source.providerFriendlyName;
             isHomeProviderNetwork = source.isHomeProviderNetwork;
@@ -4000,7 +3997,6 @@ public class WifiConfiguration implements Parcelable {
         mNetworkSelectionStatus.writeToParcel(dest, flags);
         dest.writeString(SSID);
         dest.writeString(BSSID);
-        dest.writeInt(shareThisAp ? 1 : 0);
         dest.writeInt(apBand);
         dest.writeInt(apChannel);
         dest.writeString(FQDN);
@@ -4096,7 +4092,6 @@ public class WifiConfiguration implements Parcelable {
                 config.mNetworkSelectionStatus.readFromParcel(in);
                 config.SSID = in.readString();
                 config.BSSID = in.readString();
-                config.shareThisAp = in.readInt() != 0;
                 config.apBand = in.readInt();
                 config.apChannel = in.readInt();
                 config.FQDN = in.readString();

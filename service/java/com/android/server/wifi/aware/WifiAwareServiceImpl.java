@@ -54,8 +54,9 @@ import com.android.server.wifi.Clock;
 import com.android.server.wifi.FrameworkFacade;
 import com.android.server.wifi.InterfaceConflictManager;
 import com.android.server.wifi.SystemBuildProperties;
-import com.android.server.wifi.WifiNanIface.NanStatusCode;
 import com.android.server.wifi.WifiSettingsConfigStore;
+import com.android.server.wifi.hal.WifiNanIface.NanStatusCode;
+import com.android.server.wifi.WifiThreadRunner;
 import com.android.server.wifi.util.NetdWrapper;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.server.wifi.util.WifiPermissionsWrapper;
@@ -187,7 +188,8 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
     @Override
     public AwareResources getAvailableAwareResources() {
         enforceAccessPermission();
-        return mStateManager.getAvailableAwareResources();
+        return new WifiThreadRunner(mHandler)
+                .call(() -> mStateManager.getAvailableAwareResources(), null);
     }
 
     @Override

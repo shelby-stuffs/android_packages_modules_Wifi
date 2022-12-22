@@ -1028,7 +1028,8 @@ public class WifiConfigManager {
             // modify the network.
             return isCreator
                     || mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
-                    || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid);
+                    || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                    || mWifiPermissionsUtil.checkConfigOverridePermission(uid);
         }
 
         final ContentResolver resolver = mContext.getContentResolver();
@@ -1037,7 +1038,8 @@ public class WifiConfigManager {
         return !isLockdownFeatureEnabled
                 // If not locked down, settings app (i.e user) has permission to modify the network.
                 && (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
-                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid));
+                || mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                || mWifiPermissionsUtil.checkConfigOverridePermission(uid));
     }
 
     private void mergeSecurityParamsListWithInternalWifiConfiguration(
@@ -1120,9 +1122,8 @@ public class WifiConfigManager {
                 internalConfig.SSID = externalConfig.SSID;
             }
         }
-        if (externalConfig.BSSID != null) {
-            internalConfig.BSSID = externalConfig.BSSID.toLowerCase();
-        }
+        internalConfig.BSSID = externalConfig.BSSID == null ? null
+                : externalConfig.BSSID.toLowerCase();
         internalConfig.hiddenSSID = externalConfig.hiddenSSID;
 
         if (externalConfig.preSharedKey != null
@@ -1179,7 +1180,6 @@ public class WifiConfigManager {
         }
 
         internalConfig.allowAutojoin = externalConfig.allowAutojoin;
-        internalConfig.shareThisAp = externalConfig.shareThisAp;
 
         // Copy over the |WifiEnterpriseConfig| parameters if set.
         if (externalConfig.enterpriseConfig != null) {
@@ -1418,7 +1418,8 @@ public class WifiConfigManager {
         // Only allow changes in Repeater Enabled flag if the user has permission to
         if (WifiConfigurationUtil.hasRepeaterEnabledChanged(
                 existingInternalConfig, newInternalConfig)
-                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) {
+                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
+                && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
             Log.e(TAG, "UID " + uid
                     + " does not have permission to modify Repeater Enabled Settings "
                     + " , or add a network with Repeater Enabled set to true "
@@ -1431,6 +1432,7 @@ public class WifiConfigManager {
         if (WifiConfigurationUtil.hasMacRandomizationSettingsChanged(existingInternalConfig,
                 newInternalConfig) && !mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 && !mWifiPermissionsUtil.checkNetworkSetupWizardPermission(uid)
+                && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)
                 && !(newInternalConfig.isPasspoint() && uid == newInternalConfig.creatorUid)
                 && !config.fromWifiNetworkSuggestion
                 && !mWifiPermissionsUtil.isDeviceInDemoMode(mContext)
@@ -1515,7 +1517,7 @@ public class WifiConfigManager {
                     new NetworkUpdateResult(WifiConfiguration.INVALID_NETWORK_ID),
                     existingInternalConfig);
         }
-        if (removeExcessNetworks()) {
+        if (removeExcessNetworks(uid, packageName)) {
             if (mConfiguredNetworks.getForAllUsers(newInternalConfig.networkId) == null) {
                 Log.e(TAG, "Cannot add network because number of configured networks is maxed.");
                 return new Pair<>(
@@ -1620,6 +1622,20 @@ public class WifiConfigManager {
     }
 
     /**
+     * Adds a network configuration to our database if a matching configuration cannot be found.
+     * @param config provided WifiConfiguration object.
+     * @param uid    UID of the app requesting the network addition.
+     * @return
+     */
+    public NetworkUpdateResult addNetwork(WifiConfiguration config, int uid) {
+        config.convertLegacyFieldsToSecurityParamsIfNeeded();
+        if (getInternalConfiguredNetwork(config) == null) {
+            return addOrUpdateNetwork(config, uid);
+        }
+        return new NetworkUpdateResult(WifiConfiguration.INVALID_NETWORK_ID);
+    }
+
+    /**
      * Add a network or update a network configuration to our database.
      * If the supplied networkId is INVALID_NETWORK_ID, we create a new empty
      * network configuration. Otherwise, the networkId should refer to an existing configuration.
@@ -1642,9 +1658,19 @@ public class WifiConfigManager {
         saveToStore(false);
     }
 
+    private boolean isDeviceOwnerProfileOwnerOrSystem(int uid, String packageName) {
+        return mWifiPermissionsUtil.isDeviceOwner(uid, packageName)
+                || mWifiPermissionsUtil.isProfileOwner(uid, packageName)
+                || mWifiPermissionsUtil.isSystem(packageName, uid);
+    }
+
     /**
      * Removes excess networks in case the number of saved networks exceeds the max limit
      * specified in config_wifiMaxNumWifiConfigurations.
+     *
+     * If called by a non DO/PO/system app, and a limit on app-added networks is specified in
+     * config_wifiMaxNumWifiConfigurationsForAppAddedNetworks, only removes excess
+     * app-added networks.
      *
      * Configs are removed in ascending order of
      *     1. Non-carrier networks before carrier networks
@@ -1654,23 +1680,47 @@ public class WifiConfigManager {
      *     5. Open and OWE networks before networks with other security types.
      *     6. Number of associations
      *
+     * @param uid    UID of the app requesting the network addition/modification.
+     * @param packageName Package name of the app requesting the network addition/modification.
      * @return {@code true} if networks were removed, {@code false} otherwise.
      */
-    private boolean removeExcessNetworks() {
-        final int maxNumConfigs = mContext.getResources().getInteger(
+    private boolean removeExcessNetworks(int uid, String packageName) {
+        final int maxNumTotalConfigs = mContext.getResources().getInteger(
                 R.integer.config_wifiMaxNumWifiConfigurations);
-        if (maxNumConfigs < 0) {
-            // Max number of saved networks not specified.
+        final int maxNumAppAddedConfigs = mContext.getResources().getInteger(
+                R.integer.config_wifiMaxNumWifiConfigurationsAddedByAllApps);
+
+        boolean callerIsApp = !isDeviceOwnerProfileOwnerOrSystem(uid, packageName);
+        if (maxNumTotalConfigs < 0 && (!callerIsApp || maxNumAppAddedConfigs < 0)) {
+            // Max number of saved networks not specified or does not need to be checked.
             return false;
         }
 
-        List<WifiConfiguration> savedNetworks = getSavedNetworks(Process.WIFI_UID);
-        final int numExcessNetworks = savedNetworks.size() - maxNumConfigs;
+        int numExcessNetworks = -1;
+        List<WifiConfiguration> networkList = getSavedNetworks(Process.WIFI_UID);
+        if (maxNumTotalConfigs >= 0) {
+            numExcessNetworks = networkList.size() - maxNumTotalConfigs;
+        }
+
+        if (callerIsApp && maxNumAppAddedConfigs >= 0) {
+            List<WifiConfiguration> appAddedNetworks = networkList
+                    .stream()
+                    .filter(n -> !isDeviceOwnerProfileOwnerOrSystem(n.creatorUid, n.creatorName))
+                    .collect(Collectors.toList());
+            int numExcessAppAddedNetworks = appAddedNetworks.size() - maxNumAppAddedConfigs;
+            if (numExcessAppAddedNetworks > 0) {
+                // Only enforce the limit on app-added networks if it has been exceeded.
+                // Otherwise, default to checking the limit on the total number of networks.
+                numExcessNetworks = numExcessAppAddedNetworks;
+                networkList = appAddedNetworks;
+            }
+        }
+
         if (numExcessNetworks <= 0) {
             return false;
         }
 
-        List<WifiConfiguration> configsToDelete = savedNetworks
+        List<WifiConfiguration> configsToDelete = networkList
                 .stream()
                 .sorted(Comparator.comparing((WifiConfiguration config) -> config.carrierId
                         != TelephonyManager.UNKNOWN_CARRIER_ID)
@@ -2428,7 +2478,9 @@ public class WifiConfigManager {
             return false;
         }
         config.validatedInternetAccess = validated;
-        config.numNoInternetAccessReports = 0;
+        if (validated) {
+            config.numNoInternetAccessReports = 0;
+        }
         saveToStore(false);
         return true;
     }
@@ -2833,10 +2885,8 @@ public class WifiConfigManager {
      *               checked for potential links.
      */
     private void attemptNetworkLinking(WifiConfiguration config) {
-        // Only link WPA_PSK config.
-        if (!config.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)) {
-            return;
-        }
+        if (!WifiConfigurationUtil.isConfigLinkable(config)) return;
+
         ScanDetailCache scanDetailCache = getScanDetailCacheForNetwork(config.networkId);
         // Ignore configurations with large number of BSSIDs.
         if (scanDetailCache != null
@@ -2854,10 +2904,9 @@ public class WifiConfigManager {
                 continue;
             }
             // Network Selector will be allowed to dynamically jump from a linked configuration
-            // to another, hence only link configurations that have WPA_PSK security type.
-            if (!linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)) {
-                continue;
-            }
+            // to another, hence only link configurations that have WPA_PSK/SAE security type
+            // if auto upgrade enabled (OR) WPA_PSK if auto upgrade disabled.
+            if (!WifiConfigurationUtil.isConfigLinkable(linkConfig)) continue;
             ScanDetailCache linkScanDetailCache =
                     getScanDetailCacheForNetwork(linkConfig.networkId);
             // Ignore configurations with large number of BSSIDs.
@@ -3673,7 +3722,8 @@ public class WifiConfigManager {
                 mWifiPermissionsUtil.checkNetworkManagedProvisioningPermission(uid);
         // If |uid| corresponds to the admin, allow all modifications.
         if (isAdmin || hasNetworkSettingsPermission
-                || hasNetworkSetupWizardPermission || hasNetworkManagedProvisioningPermission) {
+                || hasNetworkSetupWizardPermission || hasNetworkManagedProvisioningPermission
+                || mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
             return true;
         }
         if (mVerboseLoggingEnabled) {
@@ -4005,13 +4055,22 @@ public class WifiConfigManager {
         }
         for (String configKey : linkedConfigurations.keySet()) {
             WifiConfiguration linkConfig = getConfiguredNetworkWithoutMasking(configKey);
-            if (linkConfig == null ||
-                !linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK))
-                continue;
+            if (linkConfig == null) continue;
 
-            linkConfig.getNetworkSelectionStatus().setCandidateSecurityParams(
-                    SecurityParams.createSecurityParamsBySecurityType(
-                            WifiConfiguration.SECURITY_TYPE_PSK));
+            if (!WifiConfigurationUtil.isConfigLinkable(linkConfig)) continue;
+
+            SecurityParams defaultParams =
+                     SecurityParams.createSecurityParamsBySecurityType(
+                             WifiConfiguration.SECURITY_TYPE_PSK);
+
+            if (!linkConfig.isSecurityType(WifiConfiguration.SECURITY_TYPE_PSK)
+                    || !linkConfig.getSecurityParams(
+                            WifiConfiguration.SECURITY_TYPE_PSK).isEnabled()) {
+                defaultParams = SecurityParams.createSecurityParamsBySecurityType(
+                        WifiConfiguration.SECURITY_TYPE_SAE);
+            }
+
+            linkConfig.getNetworkSelectionStatus().setCandidateSecurityParams(defaultParams);
             linkedNetworks.put(configKey, linkConfig);
         }
         return linkedNetworks;

@@ -566,9 +566,23 @@
     <integer translatable="false" name="config_wifiDisableReasonDhcpFailureThreshold"> 2 </integer>
     <integer translatable="false" name="config_wifiDisableReasonNetworkNotFoundThreshold"> 2 </integer>
     <integer translatable="false" name="config_wifiDisableReasonNoInternetTemporaryThreshold"> 1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonAuthenticationNoCredentialsThreshold"> 3 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonNoInternetPermanentThreshold"> 1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonByWrongPasswordThreshold"> 1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonAuthenticationNoSubscriptionThreshold"> 1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonConsecutiveFailuresThreshold"> 1 </integer>
 
     <!-- Base duration to set a network disabled after validation failure happen-->
+    <integer translatable="false" name="config_wifiDisableReasonAssociationRejectionDurationMs"> 300000 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonAuthenticationFailureDurationMs"> 300000 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonDhcpFailureDurationMs"> 300000 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonNetworkNotFoundDurationMs"> 300000 </integer>
     <integer translatable="false" name="config_wifiDisableReasonNoInternetTemporaryDurationMs"> 600000 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonAuthenticationNoCredentialsDurationMs"> -1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonNoInternetPermanentDurationMs"> -1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonByWrongPasswordDurationMs"> -1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonAuthenticationNoSubscriptionDurationMs"> -1 </integer>
+    <integer translatable="false" name="config_wifiDisableReasonConsecutiveFailuresDurationMs"> 300000 </integer>
 
     <!-- List of constants that indicate the number of consecutive failures per type needed to block a BSSID.
     A blocked BSSID will not be considered in network selection and firmware roaming.-->
@@ -810,11 +824,19 @@
     <!-- Indicate how many digits the postfix are. If the value is negative or smaller than 4,
          the postfix will fallback to the first digit of ANDROID_ID. -->
     <integer translatable="false" name="config_wifiP2pDeviceNamePostfixNumDigits">-1</integer>
+    <!-- Indicate how long p2p extended listen period (in milliseconds) is. -->
+    <integer translatable="false" name="config_wifiP2pExtListenPeriodMs">500</integer>
+    <!-- Indicate how long p2p extended listen interval (in milliseconds) is. -->
+    <integer translatable="false" name="config_wifiP2pExtListenIntervalMs">500</integer>
 
     <!-- Integer threshold for max number of WifiConfigurations that can be saved on the device.
          A value of -1 indicates no limit. If a max number is specified, then under-used configs will
          be deleted to make room for new configs.-->
     <integer translatable="false" name="config_wifiMaxNumWifiConfigurations">-1</integer>
+    <!-- Integer threshold for max number of WifiConfigurations that can be added by all apps (excluding
+         DO, PO, and system apps). A value of -1 indicates no limit. If a max number is specified,
+         then existing app-added configs will be deleted to make room for new app-added configs.-->
+    <integer translatable="false" name="config_wifiMaxNumWifiConfigurationsAddedByAllApps">200</integer>
 
     <!-- Whether to allow Settings or SUW to create insecure Enterprise networks where server
          certificate is not validated, by not specifying a Root CA certificate and/or server domain
@@ -830,6 +852,9 @@
 
     <!-- Wifi driver supports WPA3 Simultaneous Authentication of Equals (WPA3-OWE) for softap -->
     <bool translatable="false" name="config_vendor_wifi_softap_owe_supported">false</bool>
+
+    <!-- Indicate ssid coding from unquoted hexadecimal to gbk character is supported on this device. -->
+    <bool translatable="false" name="config_vendor_wifi_gbk_ssid_supported">true</bool>
 
     <!-- Indicates whether or not the WLAN driver supports the NL80211_CMD_REG_CHANGE or
          NL80211_CMD_WIPHY_REG_CHANGE events which indicate the current country code which is
@@ -852,8 +877,14 @@
     <!-- Indicate the help page link for the Root CA certifiate installation. -->
     <string translatable="false" name="config_wifiCertInstallationHelpLink">https://support.google.com/pixelphone/answer/2844832</string>
 
+    <!-- Indicate the help page link for the APM enhancement. -->
+    <string translatable="false" name="config_wifiApmEnhancementHelpLink">https://support.google.com/pixelphone/answer/12639358</string>
+
     <!-- Indicate the number of networks to restore in a batch. 0 : all networks in a batch -->
     <integer translatable="false" name="config_wifiConfigurationRestoreNetworksBatchNum">50</integer>
+
+    <!-- Enables logging for any tasks running on the Wi-Fi thread which take longer than this threshold (in milliseconds) -->
+    <integer translatable="false" name="config_wifiConfigurationWifiRunnerThresholdInMs">100</integer>
 
     <!-- OEM privileged WiFi admin package names. Empty by default-->
     <string-array translatable="false" name="config_oemPrivilegedWifiAdminPackages">
@@ -872,6 +903,8 @@
     <!-- Indicate the gravity of Wifi dialogs. Must be an integer corresponding to a
          android.view.Gravity.GravityFlags constant. Default = Gravity.NO_GRAVITY (0) -->
     <integer translatable="false" name="config_wifiDialogGravity">0</integer>
+    <!-- Indicate whether to cancel Wifi dialogs when the screen is touched outside the dialog. -->
+    <bool translatable="false" name="config_wifiDialogCanceledOnTouchOutside">false</bool>
     <!-- Whether to show a confirmation dialog to the user if a third party app targeting below SDK
          level Q tries to enable Wi-Fi -->
     <bool translatable="false" name="config_showConfirmationDialogForThirdPartyAppsEnablingWifi">false</bool>
@@ -882,6 +915,13 @@
          received dialog that the user has not responded to. If the device is in vibrate mode, then
          the device will vibrate instead of playing a sound. -->
     <bool translatable="false" name="config_p2pInvitationReceivedDialogNotificationSound">false</bool>
+    <!-- Indicate the time in milliseconds to wait before handling surplus requests from the same
+         peer to avoid duplicate pop-ups. When there is an external approver, a request might be
+         approved soon and the state goes back to ready for next request. Sometimes there might
+         be surplus requests due to packet retransmission and these requests will result in
+         unnecessary pop-ups. Generally a user takes at least 1 second to react to the pop-up,
+         to simulate the similar behavior, the default value is 1000 milliseconds. -->
+    <integer translatable="false" name="config_wifiP2pJoinRequestAuthorizingTimeoutMs">1000</integer>
 
     <!-- Indicates whether or not the Soft AP needs to be restarted when country code changed -->
     <bool translatable="false" name="config_wifiForcedSoftApRestartWhenCountryCodeChanged">true</bool>
@@ -963,4 +1003,10 @@
         <item>ko,EUC-KR</item>
         -->
     </string-array>
+
+    <!-- ACTION_FILE_BUG_DEEPLINK intent name -->
+    <string name="config_wifiBugreportDeepLink" translatable="false">com.google.android.apps.betterbug.intent.FILE_BUG_DEEPLINK</string>
+
+    <!-- boolean indicating whether the caller thread needs to wait for destroyed listeners -->
+    <bool translatable="false" name ="config_wifiWaitForDestroyedListeners">false</bool>
 </resources>

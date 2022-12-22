@@ -37,7 +37,7 @@ import java.util.function.Supplier;
  * Wrapper around a WifiStaIface.
  * May be initialized using a HIDL or AIDL WifiStaIface.
  */
-public class WifiStaIface {
+public class WifiStaIface implements WifiHal.WifiInterface {
     private static final String TAG = "WifiStaIface";
     private final IWifiStaIface mWifiStaIface;
 
@@ -117,10 +117,21 @@ public class WifiStaIface {
         mWifiStaIface = createWifiStaIfaceHidlImplMockable(staIface, context, ssidTranslator);
     }
 
+    public WifiStaIface(@NonNull android.hardware.wifi.IWifiStaIface staIface,
+            @NonNull Context context, @NonNull SsidTranslator ssidTranslator) {
+        mWifiStaIface = createWifiStaIfaceAidlImplMockable(staIface, context, ssidTranslator);
+    }
+
     protected WifiStaIfaceHidlImpl createWifiStaIfaceHidlImplMockable(
             android.hardware.wifi.V1_0.IWifiStaIface staIface, @NonNull Context context,
             @NonNull SsidTranslator ssidTranslator) {
         return new WifiStaIfaceHidlImpl(staIface, context, ssidTranslator);
+    }
+
+    protected WifiStaIfaceAidlImpl createWifiStaIfaceAidlImplMockable(
+            android.hardware.wifi.IWifiStaIface staIface, @NonNull Context context,
+            @NonNull SsidTranslator ssidTranslator) {
+        return new WifiStaIfaceAidlImpl(staIface, context, ssidTranslator);
     }
 
     private <T> T validateAndCall(String methodStr, T defaultVal, @NonNull Supplier<T> supplier) {
@@ -142,6 +153,7 @@ public class WifiStaIface {
     /**
      * See comments for {@link IWifiStaIface#getName()}
      */
+    @Override
     @Nullable
     public String getName() {
         return validateAndCall("getName", null,

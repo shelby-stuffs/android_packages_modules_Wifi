@@ -384,16 +384,6 @@ interface IWifiManager
 
     List<WifiAvailableChannel> getUsableChannels(int band, int mode, int filter);
 
-    int getSoftApWifiStandard();
-
-    boolean isVht8ssCapableDevice();
-
-    boolean isExtendingWifi();
-
-    boolean isWifiCoverageExtendFeatureEnabled();
-
-    void enableWifiCoverageExtendFeature(boolean enable);
-
     boolean isWifiPasspointEnabled();
 
     void setWifiPasspointEnabled(boolean enabled);

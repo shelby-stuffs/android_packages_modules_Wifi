@@ -35,7 +35,7 @@ import androidx.test.filters.SmallTest;
 
 import com.android.server.wifi.HalDeviceManager;
 import com.android.server.wifi.WifiBaseTest;
-import com.android.server.wifi.WifiNanIface;
+import com.android.server.wifi.hal.WifiNanIface;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -164,7 +164,7 @@ public class WifiAwareNativeManagerTest extends WifiBaseTest {
 
         // 3. release (interface released)
         mDut.releaseAware();
-        mInOrder.verify(mHalDeviceManager).removeNanIface(mWifiNanIfaceMock);
+        mInOrder.verify(mHalDeviceManager).removeIface(mWifiNanIfaceMock);
         assertNull("Interface non-null!", mDut.getWifiNanIface());
 
         mDestroyedListenerCaptor.getValue().onDestroyed("nan0");
@@ -187,7 +187,7 @@ public class WifiAwareNativeManagerTest extends WifiBaseTest {
 
         // 7. release (interface released)
         mDut.releaseAware();
-        mInOrder.verify(mHalDeviceManager).removeNanIface(mWifiNanIfaceMock);
+        mInOrder.verify(mHalDeviceManager).removeIface(mWifiNanIfaceMock);
         assertNull("Interface non-null!", mDut.getWifiNanIface());
 
         mDestroyedListenerCaptor.getValue().onDestroyed("nan0");
