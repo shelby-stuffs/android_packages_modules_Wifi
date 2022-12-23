@@ -345,14 +345,24 @@ public final class ScanResult implements Parcelable {
     public static final int KEY_MGMT_DPP = 17;
     /**
      * @hide
-     * Security key management scheme: any unknown AKM.
+     * Security key management scheme: SAE_EXT_KEY.
      */
-    public static final int KEY_MGMT_UNKNOWN = 18;
+    public static final int KEY_MGMT_SAE_EXT_KEY = 18;
+    /**
+     * @hide
+     * Security key management scheme: FT_SAE_EXT_KEY.
+     */
+    public static final int KEY_MGMT_FT_SAE_EXT_KEY = 19;
     /**
      * @hide
      * Security key management scheme: FT_EAP_SHA384.
      */
-    public static final int KEY_MGMT_FT_EAP_SHA384 = 18;
+    public static final int KEY_MGMT_FT_EAP_SHA384 = 20;
+    /**
+     * @hide
+     * Security key management scheme: any unknown AKM.
+     */
+    public static final int KEY_MGMT_UNKNOWN = 21;
     /**
      * @hide
      * No cipher suite.
