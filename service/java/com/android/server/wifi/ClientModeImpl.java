@@ -28,6 +28,7 @@ import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_PRIMARY;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SCAN_ONLY;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SECONDARY_LONG_LIVED;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SECONDARY_TRANSIENT;
+import static com.android.server.wifi.WifiSettingsConfigStore.SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS;
 import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_STA_FACTORY_MAC_ADDRESS;
 import static com.android.server.wifi.proto.WifiStatsLog.WIFI_DISCONNECT_REPORTED__FAILURE_CODE__SUPPLICANT_DISCONNECTED;
 
@@ -36,6 +37,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.AlarmManager;
+import android.app.BroadcastOptions;
 import android.app.admin.SecurityLog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -293,7 +295,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private boolean mIpReachabilityMonitorActive = true;
 
     private String getTag() {
-        return TAG + "[" + (mInterfaceName == null ? "unknown" : mInterfaceName) + "]";
+        return TAG + "[" + mId + ":" + (mInterfaceName == null ? "unknown" : mInterfaceName) + "]";
     }
 
     private void processRssiThreshold(byte curRssi, int reason,
@@ -2769,10 +2771,18 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         Intent intent = new Intent(WifiManager.RSSI_CHANGED_ACTION);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
         intent.putExtra(WifiManager.EXTRA_NEW_RSSI, newRssi);
+        final BroadcastOptions opts;
+        if (SdkLevel.isAtLeastU()) {
+            opts = BroadcastOptions.makeBasic();
+            opts.setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT);
+        } else {
+            opts = null;
+        }
         mBroadcastQueue.queueOrSendBroadcast(
                 mClientModeManager,
                 () -> mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
-                        android.Manifest.permission.ACCESS_WIFI_STATE));
+                        android.Manifest.permission.ACCESS_WIFI_STATE,
+                        opts == null ? null : opts.toBundle()));
     }
 
     private void sendLinkConfigurationChangedBroadcast() {
@@ -3013,6 +3023,69 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         updateCurrentConnectionInfo();
     }
 
+    /**
+     * Update mapping of affiliated BSSID in blocklist. Called when there is a change in MLO links.
+     */
+    private void updateBlockListAffiliatedBssids() {
+        /**
+         * getAffiliatedMloLinks() returns a list of MloLink objects for all the links
+         * advertised by AP-MLD including the associated link. Update mWifiBlocklistMonitor
+         * with all affiliated AP link MAC addresses, excluding the associated link, indexed
+         * with associated AP link MAC address (BSSID).
+         * For e.g.
+         *  link1_bssid -> affiliated {link2_bssid, link3_bssid}
+         * Above mapping is used to block list all affiliated links when associated link is
+         * block listed.
+         */
+        List<String> affiliatedBssids = new ArrayList<>();
+        for (MloLink link : mWifiInfo.getAffiliatedMloLinks()) {
+            if (!Objects.equals(mWifiInfo.getBSSID(), link.getApMacAddress().toString())) {
+                affiliatedBssids.add(link.getApMacAddress().toString());
+            }
+        }
+        mWifiBlocklistMonitor.setAffiliatedBssids(mWifiInfo.getBSSID(), affiliatedBssids);
+    }
+
+    /**
+     * Clear MLO link states to UNASSOCIATED.
+     */
+    private void clearMloLinkStates() {
+        for (MloLink link : mWifiInfo.getAffiliatedMloLinks()) {
+            link.setState(MloLink.MLO_LINK_STATE_UNASSOCIATED);
+        }
+    }
+
+    /**
+     * Update the MLO link states to ACTIVE or IDLE depending on any traffic stream is mapped to the
+     * link.
+     *
+     * @param info MLO link object from HAL.
+     */
+    private void updateMloLinkStates(@Nullable WifiNative.ConnectionMloLinksInfo info) {
+        if (info == null) return;
+        for (int i = 0; i < info.links.length; i++) {
+            mWifiInfo.updateMloLinkState(info.links[i].getLinkId(),
+                    info.links[i].isAnyTidMapped() ? MloLink.MLO_LINK_STATE_ACTIVE
+                            : MloLink.MLO_LINK_STATE_IDLE);
+        }
+    }
+    /**
+     * Update the MLO link states to ACTIVE or IDLE depending on any traffic stream is mapped to the
+     * link. Also, update the link MAC address.
+     *
+     * @param info MLO link object from HAL.
+     */
+    private void updateMloLinkAddrAndStates(@Nullable WifiNative.ConnectionMloLinksInfo info) {
+        if (info == null) return;
+        for (int i = 0; i < info.links.length; i++) {
+            mWifiInfo.updateMloLinkStaAddress(info.links[i].getLinkId(),
+                    info.links[i].getMacAddress());
+            mWifiInfo.updateMloLinkState(info.links[i].getLinkId(),
+                    info.links[i].isAnyTidMapped() ? MloLink.MLO_LINK_STATE_ACTIVE
+                            : MloLink.MLO_LINK_STATE_IDLE);
+        }
+    }
+
     private void updateWifiInfoLinkParamsAfterAssociation() {
         mLastConnectionCapabilities = mWifiNative.getConnectionCapabilities(mInterfaceName);
         int maxTxLinkSpeedMbps = mThroughputPredictor.predictMaxTxThroughput(
@@ -3025,34 +3098,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mWifiMetrics.setConnectionMaxSupportedLinkSpeedMbps(mInterfaceName,
                 maxTxLinkSpeedMbps, maxRxLinkSpeedMbps);
         if (mLastConnectionCapabilities.wifiStandard == ScanResult.WIFI_STANDARD_11BE) {
-            WifiNative.ConnectionMloLinksInfo info =
-                    mWifiNative.getConnectionMloLinksInfo(mInterfaceName);
-            if (info != null) {
-                for (int i = 0; i < info.links.length; i++) {
-                    mWifiInfo.updateMloLinkStaAddress(info.links[i].linkId,
-                            info.links[i].staMacAddress);
-                    mWifiInfo.updateMloLinkState(
-                            info.links[i].linkId, MloLink.MLO_LINK_STATE_ACTIVE);
-                }
-                /**
-                 * getAffiliatedMloLinks() returns a list of MloLink objects for all the links
-                 * advertised by AP-MLD including the associated link. Update mWifiBlocklistMonitor
-                 * with all affiliated AP link MAC addresses, excluding the associated link, indexed
-                 * with associated AP link MAC address (BSSID).
-                 * For e.g.
-                 *  link1_bssid -> affiliated {link2_bssid, link3_bssid}
-                 * Above mapping is used to block list all affiliated links when associated link is
-                 * block listed.
-                 */
-                List<MloLink> links = mWifiInfo.getAffiliatedMloLinks();
-                List<String> affiliatedBssids = new ArrayList<>();
-                for (MloLink link: links) {
-                    if (!Objects.equals(mWifiInfo.getBSSID(), link.getApMacAddress().toString())) {
-                        affiliatedBssids.add(link.getApMacAddress().toString());
-                    }
-                }
-                mWifiBlocklistMonitor.setAffiliatedBssids(mWifiInfo.getBSSID(), affiliatedBssids);
-            }
+            updateMloLinkAddrAndStates(mWifiNative.getConnectionMloLinksInfo(mInterfaceName));
+            updateBlockListAffiliatedBssids();
         }
         if (mVerboseLoggingEnabled) {
             StringBuilder sb = new StringBuilder();
@@ -4683,7 +4730,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (!uids.isEmpty()
                 && !mWifiConnectivityManager.hasMultiInternetConnection()) {
             // Remove internet capability.
-            builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            if (!mNetworkFactory.shouldHaveInternetCapabilities()) {
+                builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            }
             if (SdkLevel.isAtLeastS()) {
                 builder.setUids(getUidRangeSet(uids));
             } else {
@@ -6152,6 +6201,32 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     }
                     break;
                 }
+                case WifiMonitor.MLO_LINKS_INFO_CHANGED:
+                    WifiMonitor.MloLinkInfoChangeReason reason =
+                            (WifiMonitor.MloLinkInfoChangeReason) message.obj;
+                    WifiNative.ConnectionMloLinksInfo newInfo =
+                            mWifiNative.getConnectionMloLinksInfo(mInterfaceName);
+                    if (reason == WifiMonitor.MloLinkInfoChangeReason.TID_TO_LINK_MAP) {
+                        // Traffic stream mapping changed. Update link states.
+                        updateMloLinkStates(newInfo);
+                        // There is a change in link capabilities. Will trigger android.net
+                        // .ConnectivityManager.NetworkCallback.onCapabilitiesChanged().
+                        updateCapabilities();
+                    } else if (reason
+                            == WifiMonitor.MloLinkInfoChangeReason.MULTI_LINK_RECONFIG_AP_REMOVAL) {
+                        // Link is removed. Set removed link state to MLO_LINK_STATE_UNASSOCIATED.
+                        // Also update block list mapping, as there is a change in affiliated
+                        // BSSIDs.
+                        clearMloLinkStates();
+                        updateMloLinkStates(newInfo);
+                        updateBlockListAffiliatedBssids();
+                        // There is a change in link capabilities. Will trigger android.net
+                        // .ConnectivityManager.NetworkCallback.onCapabilitiesChanged().
+                        updateCapabilities();
+                    } else {
+                        logw("MLO_LINKS_INFO_CHANGED with UNKNOWN reason");
+                    }
+                    break;
                 default: {
                     handleStatus = NOT_HANDLED;
                     break;
@@ -7131,9 +7206,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * a factory MAC address stored in config store, retrieve it now and store it.
      *
      * Note:
-     * <li> This is needed to ensure that we use the same MAC address for connecting to
-     * networks with MAC randomization disabled regardless of whether the connection is
-     * occurring on "wlan0" or "wlan1" due to STA + STA. </li>
      * <li> Retries added to deal with any transient failures when invoking
      * {@link WifiNative#getStaFactoryMacAddress(String)}.
      */
@@ -7143,20 +7215,26 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mWifiGlobals.isSaveFactoryMacToConfigStoreEnabled();
         if (saveFactoryMacInConfigStore) {
             // Already present, just return.
-            String factoryMacAddressStr = mSettingsConfigStore.get(WIFI_STA_FACTORY_MAC_ADDRESS);
+            String factoryMacAddressStr = mSettingsConfigStore.get(isPrimary()
+                    ? WIFI_STA_FACTORY_MAC_ADDRESS : SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS);
             if (factoryMacAddressStr != null) return MacAddress.fromString(factoryMacAddressStr);
         }
         MacAddress factoryMacAddress = mWifiNative.getStaFactoryMacAddress(mInterfaceName);
         if (factoryMacAddress == null) {
             // the device may be running an older HAL (version < 1.3).
-            Log.w(TAG, "Failed to retrieve factory MAC address");
+            Log.w(TAG, (isPrimary() ? "Primary" : "Secondary")
+                    + " failed to retrieve factory MAC address");
             return null;
         }
         if (saveFactoryMacInConfigStore) {
-            mSettingsConfigStore.put(WIFI_STA_FACTORY_MAC_ADDRESS, factoryMacAddress.toString());
-            Log.i(TAG, "Factory MAC address stored in config store: " + factoryMacAddress);
+            mSettingsConfigStore.put(isPrimary()
+                            ? WIFI_STA_FACTORY_MAC_ADDRESS : SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS,
+                    factoryMacAddress.toString());
+            Log.i(TAG, (isPrimary() ? "Primary" : "Secondary")
+                    + " factory MAC address stored in config store: " + factoryMacAddress);
         }
-        Log.i(TAG, "Factory MAC address retrieved: " + factoryMacAddress);
+        Log.i(TAG, (isPrimary() ? "Primary" : "Secondary")
+                + " factory MAC address retrieved: " + factoryMacAddress);
         return factoryMacAddress;
     }
 

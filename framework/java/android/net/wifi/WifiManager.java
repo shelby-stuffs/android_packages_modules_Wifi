@@ -3650,6 +3650,12 @@ public class WifiManager {
      */
     public static final long WIFI_FEATURE_TLS_V1_3 = 1L << 56;
 
+    /**
+     * Support for Dual Band Simultaneous (DBS) operation.
+     * @hide
+     */
+    public static final long WIFI_FEATURE_DUAL_BAND_SIMULTANEOUS = 1L << 57;
+
     private long getSupportedFeatures() {
         try {
             return mService.getSupportedFeatures();
@@ -7874,6 +7880,13 @@ public class WifiManager {
     }
 
     /**
+     * @return true if this device supports Dual Band Simultaneous (DBS) operation.
+     */
+    public boolean isDualBandSimultaneousSupported() {
+        return isFeatureSupported(WIFI_FEATURE_DUAL_BAND_SIMULTANEOUS);
+    }
+
+    /**
      * Gets the factory Wi-Fi MAC addresses.
      * @return Array of String representing Wi-Fi MAC addresses sorted lexically or an empty Array
      * if failed.
@@ -10378,6 +10391,22 @@ public class WifiManager {
                             executor.execute(() -> resultCallback.accept(canCreate, finalSet));
                         }
                     });
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Returns the max number of channels that is allowed to be set on a
+     * {@link WifiNetworkSpecifier}.
+     * @see WifiNetworkSpecifier.Builder#setPreferredChannelsFrequenciesMhz(int[])
+     *
+     * @return The max number of channels can be set on a request.
+     */
+
+    public int getMaxNumberOfChannelsPerNetworkSpecifierRequest() {
+        try {
+            return mService.getMaxNumberOfChannelsPerRequest();
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

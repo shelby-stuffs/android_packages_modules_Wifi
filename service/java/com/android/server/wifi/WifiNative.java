@@ -47,6 +47,7 @@ import android.net.wifi.nl80211.RadioChainInfo;
 import android.net.wifi.nl80211.WifiNl80211Manager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.SystemClock;
 import android.os.WorkSource;
 import android.text.TextUtils;
@@ -61,6 +62,7 @@ import com.android.internal.util.HexDump;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.server.wifi.SupplicantStaIfaceHal.QosPolicyStatus;
 import com.android.server.wifi.hotspot2.NetworkDetail;
+import com.android.server.wifi.mockwifi.MockWifiServiceUtil;
 import com.android.server.wifi.util.FrameParser;
 import com.android.server.wifi.util.InformationElementUtil;
 import com.android.server.wifi.util.NativeUtil;
@@ -77,6 +79,7 @@ import java.nio.ByteOrder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -120,6 +123,7 @@ public class WifiNative {
     private long mCachedFeatureSet;
     private boolean mQosPolicyFeatureEnabled = false;
     private final Map<String, String> mWifiCondIfacesForBridgedAp = new ArrayMap<>();
+    private MockWifiServiceUtil mMockWifiModem = null;
 
     public WifiNative(WifiVendorHal vendorHal,
                       SupplicantStaIfaceHal staIfaceHal, HostapdHal hostapdHal,
@@ -279,6 +283,7 @@ public class WifiNative {
         public NetworkObserverInternal networkObserver;
         /** Interface feature set / capabilities */
         public long featureSet;
+        public int bandsSupported;
         public DeviceWiphyCapabilities phyCapabilities;
 
         Iface(int id, @Iface.IfaceType int type) {
@@ -1235,6 +1240,7 @@ public class WifiNative {
             Log.i(TAG, "Successfully setup " + iface);
 
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
+            updateSupportedBandForStaInternal(iface);
             return iface.name;
         }
     }
@@ -1329,6 +1335,7 @@ public class WifiNative {
             Log.i(TAG, "Successfully setup " + iface);
 
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
+            updateSupportedBandForStaInternal(iface);
             return iface.name;
         }
     }
@@ -1369,6 +1376,7 @@ public class WifiNative {
             iface.type = Iface.IFACE_TYPE_STA_FOR_SCAN;
             stopSupplicantIfNecessary();
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
+            updateSupportedBandForStaInternal(iface);
             iface.phyCapabilities = null;
             Log.i(TAG, "Successfully switched to scan mode on iface=" + iface);
             return true;
@@ -1427,6 +1435,7 @@ public class WifiNative {
             iface.type = Iface.IFACE_TYPE_STA_FOR_CONNECTIVITY;
             iface.featureSet = getSupportedFeatureSetInternal(iface.name);
             saveCompleteFeatureSetInConfigStoreIfNecessary(iface.featureSet);
+            updateSupportedBandForStaInternal(iface);
             mIsEnhancedOpenSupported = (iface.featureSet & WIFI_FEATURE_OWE) != 0;
             Log.i(TAG, "Successfully switched to connectivity mode on iface=" + iface);
             return true;
@@ -2885,8 +2894,11 @@ public class WifiNative {
          * peer DPP configurator.
          *
          * @param newWifiConfiguration New Wi-Fi configuration received from the configurator
+         * @param connStatusRequested Flag to indicate that the configurator requested
+         *                            connection status
          */
-        void onSuccessConfigReceived(WifiConfiguration newWifiConfiguration);
+        void onSuccessConfigReceived(WifiConfiguration newWifiConfiguration,
+                boolean connStatusRequested);
 
         /**
          * DPP Success event.
@@ -2918,6 +2930,13 @@ public class WifiNative {
          * @param key Configurator's private EC key.
          */
         void onDppConfiguratorKeyUpdate(byte[] key);
+
+        /**
+         * Indicates that DPP connection status result frame is sent
+         *
+         * @param result DPP Status value indicating the result of a connection attempt.
+         */
+        void onConnectionStatusResultSent(int result);
     }
 
     /**
@@ -3470,6 +3489,22 @@ public class WifiNative {
     }
 
     /**
+     * Get the supported bands for STA mode.
+     * @return supported bands
+     */
+    public @WifiScanner.WifiBand int getSupportedBandsForSta(String ifaceName) {
+        synchronized (mLock) {
+            if (ifaceName != null) {
+                Iface iface = mIfaceMgr.getIface(ifaceName);
+                if (iface != null) {
+                    return iface.bandsSupported;
+                }
+            }
+            return WifiScanner.WIFI_BAND_UNSPECIFIED;
+        }
+    }
+
+    /**
      * Get the supported features
      *
      * @param ifaceName Name of the interface.
@@ -3488,6 +3523,47 @@ public class WifiNative {
             }
         }
         return featureSet;
+    }
+
+    private void updateSupportedBandForStaInternal(Iface iface) {
+        List<WifiAvailableChannel> usableChannelList =
+                mWifiVendorHal.getUsableChannels(WifiScanner.WIFI_BAND_24_5_WITH_DFS_6_60_GHZ,
+                        WifiAvailableChannel.OP_MODE_STA,
+                        WifiAvailableChannel.FILTER_REGULATORY);
+        int bands = 0;
+        if (usableChannelList == null) {
+            // If HAL doesn't support getUsableChannels then check wificond
+            if (getChannelsForBand(WifiScanner.WIFI_BAND_24_GHZ).length > 0) {
+                bands |= WifiScanner.WIFI_BAND_24_GHZ;
+            }
+            if (getChannelsForBand(WifiScanner.WIFI_BAND_5_GHZ).length > 0) {
+                bands |= WifiScanner.WIFI_BAND_5_GHZ;
+            }
+            if (getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).length > 0) {
+                bands |= WifiScanner.WIFI_BAND_6_GHZ;
+            }
+            if (getChannelsForBand(WifiScanner.WIFI_BAND_60_GHZ).length > 0) {
+                bands |= WifiScanner.WIFI_BAND_60_GHZ;
+            }
+        } else {
+            for (int i = 0; i < usableChannelList.size(); i++) {
+                int frequency = usableChannelList.get(i).getFrequencyMhz();
+                if (ScanResult.is24GHz(frequency)) {
+                    bands |= WifiScanner.WIFI_BAND_24_GHZ;
+                } else if (ScanResult.is5GHz(frequency)) {
+                    bands |= WifiScanner.WIFI_BAND_5_GHZ;
+                } else if (ScanResult.is6GHz(frequency)) {
+                    bands |= WifiScanner.WIFI_BAND_6_GHZ;
+                } else if (ScanResult.is60GHz(frequency)) {
+                    bands |= WifiScanner.WIFI_BAND_60_GHZ;
+                }
+            }
+        }
+        if (mVerboseLoggingEnabled) {
+            Log.i(TAG, "updateSupportedBandForStaInternal " + iface.name + " : 0x"
+                    + Integer.toHexString(bands));
+        }
+        iface.bandsSupported = bands;
     }
 
     /**
@@ -3522,12 +3598,73 @@ public class WifiNative {
      * Class to represent a connection MLO Link
      */
     public static class ConnectionMloLink {
-        public int linkId;
-        public MacAddress staMacAddress;
+        private int mLinkId;
+        private MacAddress mStaMacAddress;
+        private BitSet mTidsUplinkMap;
+        private BitSet mTidsDownlinkMap;
 
-        ConnectionMloLink() {
-            // Nothing for now
+        ConnectionMloLink(int id, MacAddress mac, byte tidsUplink, byte tidsDownlink) {
+            mLinkId = id;
+            mStaMacAddress = mac;
+            mTidsDownlinkMap = BitSet.valueOf(new byte[] { tidsDownlink });
+            mTidsUplinkMap = BitSet.valueOf(new byte[] { tidsUplink });
         };
+
+        /**
+         * Check if there is any TID mapped to this link in uplink of downlink direction.
+         *
+         * @return true if there is any TID mapped to this link, otherwise false.
+         */
+        public boolean isAnyTidMapped() {
+            if (mTidsDownlinkMap.isEmpty() && mTidsUplinkMap.isEmpty()) {
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * Check if a TID is mapped to this link in uplink direction.
+         *
+         * @param tid TID value.
+         * @return true if the TID is mapped in uplink direction. Otherwise, false.
+         */
+        public boolean isTidMappedToUplink(byte tid) {
+            if (tid < mTidsUplinkMap.length()) {
+                return mTidsUplinkMap.get(tid);
+            }
+            return false;
+        }
+
+        /**
+         * Check if a TID is mapped to this link in downlink direction. Otherwise, false.
+         *
+         * @param tid TID value
+         * @return true if the TID is mapped in downlink direction. Otherwise, false.
+         */
+        public boolean isTidMappedtoDownlink(byte tid) {
+            if (tid < mTidsDownlinkMap.length()) {
+                return mTidsDownlinkMap.get(tid);
+            }
+            return false;
+        }
+
+        /**
+         * Get link id for the link.
+         *
+         * @return link id.
+         */
+        public int getLinkId() {
+            return mLinkId;
+        }
+
+        /**
+         * Get link address.
+         *
+         * @return link mac address.
+         */
+        public MacAddress getMacAddress() {
+            return mStaMacAddress;
+        }
     }
 
     /**
@@ -4646,5 +4783,57 @@ public class WifiNative {
     /** Checks if there are any iface active. */
     boolean hasAnyIface() {
         return mIfaceMgr.hasAnyIface();
+    }
+
+    /**
+     * Sets or clean mock wifi service
+     *
+     * @param serviceName the service name of mock wifi service. When service name is empty, the
+     *                    framework will clean mock wifi service.
+     */
+    public void setMockWifiService(String serviceName) {
+        Log.d(TAG, "set MockWifiModemService to " + serviceName);
+        if (TextUtils.isEmpty(serviceName)) {
+            mMockWifiModem = null;
+            return;
+        }
+        mMockWifiModem = new MockWifiServiceUtil(mContext, serviceName);
+        if (mMockWifiModem == null) {
+            Log.e(TAG, "MockWifiServiceUtil creation failed.");
+            return;
+        }
+
+        // mock wifi modem service is set, try to bind all supported mock HAL services
+        mMockWifiModem.bindAllMockModemService();
+        for (int service = MockWifiServiceUtil.MIN_SERVICE_IDX;
+                service < MockWifiServiceUtil.NUM_SERVICES; service++) {
+            int retryCount = 0;
+            IBinder binder;
+            do {
+                binder = mMockWifiModem.getServiceBinder(service);
+                retryCount++;
+                if (binder == null) {
+                    Log.d(TAG, "Retry(" + retryCount + ") for "
+                            + mMockWifiModem.getModuleName(service));
+                    try {
+                        Thread.sleep(MockWifiServiceUtil.BINDER_RETRY_MILLIS);
+                    } catch (InterruptedException e) {
+                    }
+                }
+            } while ((binder == null) && (retryCount < MockWifiServiceUtil.BINDER_MAX_RETRY));
+
+            if (binder == null) {
+                Log.e(TAG, "Mock " + mMockWifiModem.getModuleName(service) + " bind fail");
+            }
+        }
+    }
+
+    /**
+     *  Returns mock wifi service name.
+     */
+    public String getMockWifiServiceName() {
+        String serviceName = mMockWifiModem != null ? mMockWifiModem.getServiceName() : null;
+        Log.d(TAG, "getMockWifiServiceName - service name is " + serviceName);
+        return serviceName;
     }
 }
