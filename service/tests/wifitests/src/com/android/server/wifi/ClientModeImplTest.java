@@ -39,6 +39,7 @@ import static com.android.server.wifi.ClientModeImpl.ARP_TABLE_PATH;
 import static com.android.server.wifi.ClientModeImpl.CMD_PRE_DHCP_ACTION;
 import static com.android.server.wifi.ClientModeImpl.CMD_UNWANTED_NETWORK;
 import static com.android.server.wifi.ClientModeImpl.WIFI_WORK_SOURCE;
+import static com.android.server.wifi.WifiSettingsConfigStore.SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS;
 import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_STA_FACTORY_MAC_ADDRESS;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -75,6 +76,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
+import android.Manifest;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
@@ -142,6 +144,7 @@ import android.os.Looper;
 import android.os.Messenger;
 import android.os.PowerManager;
 import android.os.Process;
+import android.os.UserHandle;
 import android.os.test.TestLooper;
 import android.provider.Settings;
 import android.telephony.TelephonyManager;
@@ -3423,6 +3426,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.enableRssiPolling(true);
         connect();
         mLooper.dispatchAll();
+        assertRssiChangeBroadcastSent();
         when(mClock.getWallClockMillis()).thenReturn(startMillis + 3333);
         mLooper.dispatchAll();
         WifiInfo wifiInfo = mWifiInfo;
@@ -5130,7 +5134,7 @@ public class ClientModeImplTest extends WifiBaseTest {
      * when both Tx and Rx link speed are unavailable.
      */
     @Test
-    public void verifyNetworkCapabilitiesForSpecificRequest() throws Exception {
+    public void verifyNetworkCapabilitiesForSpecificRequestWithInternet() throws Exception {
         mWifiInfo.setFrequency(2437);
         when(mPerNetwork.getTxLinkBandwidthKbps()).thenReturn(30_000);
         when(mPerNetwork.getRxLinkBandwidthKbps()).thenReturn(40_000);
@@ -5177,6 +5181,58 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
+     * Verify that we set the INTERNET capability in the network agent when connected
+     * as a result of the new network which indicate the internet capabilites should be set.
+     */
+    @Test
+    public void verifyNetworkCapabilitiesForSpecificRequest() throws Exception {
+        mWifiInfo.setFrequency(2437);
+        when(mPerNetwork.getTxLinkBandwidthKbps()).thenReturn(30_000);
+        when(mPerNetwork.getRxLinkBandwidthKbps()).thenReturn(40_000);
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUids(any(), any()))
+                .thenReturn(Set.of(TEST_UID));
+        when(mWifiNetworkFactory.getSpecificNetworkRequestUidAndPackageName(any(), any()))
+                .thenReturn(Pair.create(TEST_UID, OP_PACKAGE_NAME));
+        when(mWifiNetworkFactory.shouldHaveInternetCapabilities()).thenReturn(true);
+        // Simulate the first connection.
+        connectWithValidInitRssi(-42);
+        ArgumentCaptor<NetworkCapabilities> networkCapabilitiesCaptor =
+                ArgumentCaptor.forClass(NetworkCapabilities.class);
+
+        verify(mWifiInjector).makeWifiNetworkAgent(
+                networkCapabilitiesCaptor.capture(), any(), any(), any(), any());
+
+        NetworkCapabilities networkCapabilities = networkCapabilitiesCaptor.getValue();
+        assertNotNull(networkCapabilities);
+
+        // should not have internet capability.
+        assertTrue(networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+
+        NetworkSpecifier networkSpecifier = networkCapabilities.getNetworkSpecifier();
+        assertTrue(networkSpecifier instanceof WifiNetworkAgentSpecifier);
+        WifiNetworkAgentSpecifier wifiNetworkAgentSpecifier =
+                (WifiNetworkAgentSpecifier) networkSpecifier;
+
+        // createNetworkAgentSpecifier does not write the BSSID to the current wifi configuration.
+        WifiConfiguration expectedConfig = new WifiConfiguration(
+                mCmi.getConnectedWifiConfiguration());
+        expectedConfig.BSSID = TEST_BSSID_STR;
+        WifiNetworkAgentSpecifier expectedWifiNetworkAgentSpecifier =
+                new WifiNetworkAgentSpecifier(expectedConfig, ScanResult.WIFI_BAND_24_GHZ,
+                        true /* matchLocalOnlySpecifiers */);
+        assertEquals(expectedWifiNetworkAgentSpecifier, wifiNetworkAgentSpecifier);
+        if (SdkLevel.isAtLeastS()) {
+            assertEquals(Set.of(new Range<Integer>(TEST_UID, TEST_UID)),
+                    networkCapabilities.getUids());
+        } else {
+            assertEquals(TEST_UID, networkCapabilities.getRequestorUid());
+            assertEquals(OP_PACKAGE_NAME, networkCapabilities.getRequestorPackageName());
+        }
+        assertEquals(30_000, networkCapabilities.getLinkUpstreamBandwidthKbps());
+        assertEquals(40_000, networkCapabilities.getLinkDownstreamBandwidthKbps());
+    }
+
+    /**
      *  Verifies that no RSSI change broadcast should be sent
      */
     private void failOnRssiChangeBroadcast() throws Exception {
@@ -5196,6 +5252,26 @@ public class ClientModeImplTest extends WifiBaseTest {
             }
             return null;
         }).when(mContext).sendBroadcastAsUser(any(), any(), anyString());
+
+        doAnswer(invocation -> {
+            final Intent intent = invocation.getArgument(0);
+            if (WifiManager.RSSI_CHANGED_ACTION.equals(intent.getAction())) {
+                fail("Should not send RSSI_CHANGED broadcast!");
+            }
+            return null;
+        }).when(mContext).sendBroadcastAsUser(any(), any(), anyString(), any());
+    }
+
+    /**
+     * Verifies that RSSI change broadcast is sent.
+     */
+    private void assertRssiChangeBroadcastSent() throws Exception {
+        ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
+        verify(mContext).sendBroadcastAsUser(intentCaptor.capture(),
+                eq(UserHandle.ALL), eq(Manifest.permission.ACCESS_WIFI_STATE), any());
+        Intent intent = intentCaptor.getValue();
+        assertNotNull(intent);
+        assertEquals(WifiManager.RSSI_CHANGED_ACTION, intent.getAction());
     }
 
     /**
@@ -5434,6 +5510,18 @@ public class ClientModeImplTest extends WifiBaseTest {
         // get it again, should now use the config store MAC address, not native.
         assertEquals(TEST_GLOBAL_MAC_ADDRESS.toString(), mCmi.getFactoryMacAddress());
         verify(mSettingsConfigStore).get(WIFI_STA_FACTORY_MAC_ADDRESS);
+
+        // Verify secondary MAC is not stored
+        verify(mSettingsConfigStore, never()).put(
+                eq(SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS), any());
+        verify(mSettingsConfigStore, never()).get(SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS);
+
+        // Query again as secondary STA, and then verify the result is saved to secondary.
+        when(mClientModeManager.getRole()).thenReturn(ROLE_CLIENT_SECONDARY_LONG_LIVED);
+        mCmi.getFactoryMacAddress();
+        verify(mWifiNative).getStaFactoryMacAddress(WIFI_IFACE_NAME);
+        verify(mSettingsConfigStore).put(eq(SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS), any());
+        verify(mSettingsConfigStore).get(SECONDARY_WIFI_STA_FACTORY_MAC_ADDRESS);
 
         verifyNoMoreInteractions(mWifiNative, mSettingsConfigStore);
     }
@@ -8709,15 +8797,10 @@ public class ClientModeImplTest extends WifiBaseTest {
         mConnectionCapabilities.wifiStandard = ScanResult.WIFI_STANDARD_11BE;
         WifiNative.ConnectionMloLinksInfo info = new WifiNative.ConnectionMloLinksInfo();
         info.links = new WifiNative.ConnectionMloLink[2];
-
-        info.links[0] = new WifiNative.ConnectionMloLink();
-        info.links[0].linkId = TEST_MLO_LINK_ID;
-        info.links[0].staMacAddress = TEST_MLO_LINK_ADDR;
-
-        info.links[1] = new WifiNative.ConnectionMloLink();
-        info.links[1].linkId = TEST_MLO_LINK_ID_1;
-        info.links[1].staMacAddress = TEST_MLO_LINK_ADDR_1;
-
+        info.links[0] = new WifiNative.ConnectionMloLink(TEST_MLO_LINK_ID,
+                TEST_MLO_LINK_ADDR, Byte.MIN_VALUE, Byte.MAX_VALUE);
+        info.links[1] = new WifiNative.ConnectionMloLink(TEST_MLO_LINK_ID_1, TEST_MLO_LINK_ADDR_1,
+                Byte.MAX_VALUE, Byte.MIN_VALUE);
         when(mWifiNative.getConnectionMloLinksInfo(WIFI_IFACE_NAME)).thenReturn(info);
     }
 
@@ -8817,6 +8900,63 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(WifiMonitor.NETWORK_DISCONNECTION_EVENT, disconnectEventInfo);
         mLooper.dispatchAll();
         verify(mWifiBlocklistMonitor).removeAffiliatedBssids(eq(TEST_BSSID_STR));
+    }
+
+    private void configureMloLinksInfoWithIdleLinks() {
+        mConnectionCapabilities.wifiStandard = ScanResult.WIFI_STANDARD_11BE;
+        WifiNative.ConnectionMloLinksInfo info = new WifiNative.ConnectionMloLinksInfo();
+        info.links = new WifiNative.ConnectionMloLink[2];
+        info.links[0] = new WifiNative.ConnectionMloLink(TEST_MLO_LINK_ID,
+                TEST_MLO_LINK_ADDR, (byte) 0xFF, (byte) 0xFF);
+        info.links[1] = new WifiNative.ConnectionMloLink(TEST_MLO_LINK_ID_1, TEST_MLO_LINK_ADDR_1,
+                (byte) 0, (byte) 0);
+        when(mWifiNative.getConnectionMloLinksInfo(WIFI_IFACE_NAME)).thenReturn(info);
+    }
+
+    private void reconfigureMloLinksInfoWithOneLink() {
+        mConnectionCapabilities.wifiStandard = ScanResult.WIFI_STANDARD_11BE;
+        WifiNative.ConnectionMloLinksInfo info = new WifiNative.ConnectionMloLinksInfo();
+        info.links = new WifiNative.ConnectionMloLink[1];
+        info.links[0] = new WifiNative.ConnectionMloLink(TEST_MLO_LINK_ID,
+                TEST_MLO_LINK_ADDR, (byte) 0xFF, (byte) 0xFF);
+        when(mWifiNative.getConnectionMloLinksInfo(WIFI_IFACE_NAME)).thenReturn(info);
+    }
+
+    @Test
+    public void verifyMloLinkChangeTidToLinkMapping() throws Exception {
+        // Initialize
+        connect();
+        setScanResultWithMloInfo();
+        setConnectionMloLinksInfo();
+        mLooper.dispatchAll();
+
+        // Association
+        mCmi.sendMessage(WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT, 0, 0,
+                new StateChangeResult(FRAMEWORK_NETWORK_ID, TEST_WIFI_SSID, TEST_BSSID_STR,
+                        SupplicantState.ASSOCIATED));
+        mLooper.dispatchAll();
+        // Make sure all links are active
+        for (MloLink link: mWifiInfo.getAffiliatedMloLinks()) {
+            assertEquals(link.getState(), MloLink.MLO_LINK_STATE_ACTIVE);
+        }
+
+        // TID to link mapping. Make sure one link is IDLE.
+        configureMloLinksInfoWithIdleLinks();
+        mCmi.sendMessage(WifiMonitor.MLO_LINKS_INFO_CHANGED,
+                WifiMonitor.MloLinkInfoChangeReason.TID_TO_LINK_MAP);
+        mLooper.dispatchAll();
+        List<MloLink> links = mWifiInfo.getAffiliatedMloLinks();
+        assertEquals(links.get(0).getState(), MloLink.MLO_LINK_STATE_ACTIVE);
+        assertEquals(links.get(1).getState(), MloLink.MLO_LINK_STATE_IDLE);
+
+        // LInk Removal. Make sure removed link is UNASSOCIATED.
+        reconfigureMloLinksInfoWithOneLink();
+        mCmi.sendMessage(WifiMonitor.MLO_LINKS_INFO_CHANGED,
+                WifiMonitor.MloLinkInfoChangeReason.MULTI_LINK_RECONFIG_AP_REMOVAL);
+        mLooper.dispatchAll();
+        links = mWifiInfo.getAffiliatedMloLinks();
+        assertEquals(links.get(0).getState(), MloLink.MLO_LINK_STATE_ACTIVE);
+        assertEquals(links.get(1).getState(), MloLink.MLO_LINK_STATE_UNASSOCIATED);
     }
 
     /**

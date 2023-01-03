@@ -938,4 +938,9 @@ public class BaseWifiService extends IWifiManager.Stub {
             boolean requireNewInterface, IInterfaceCreationInfoCallback callback) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public int getMaxNumberOfChannelsPerRequest() {
+        throw new UnsupportedOperationException();
+    }
 }
