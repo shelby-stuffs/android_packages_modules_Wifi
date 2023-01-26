@@ -443,6 +443,11 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public boolean validateSoftApConfiguration(SoftApConfiguration config) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int startLocalOnlyHotspot(ILocalOnlyHotspotCallback callback, String packageName,
             String featureId, SoftApConfiguration customConfig, Bundle extras) {
         throw new UnsupportedOperationException();
@@ -859,9 +864,15 @@ public class BaseWifiService extends IWifiManager.Stub {
         throw new UnsupportedOperationException();
     }
 
-    @Override
+    /** TO BE REMOVED */
     public List<WifiAvailableChannel> getUsableChannels(
             int band, int mode, int filter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<WifiAvailableChannel> getUsableChannels(
+            int band, int mode, int filter, String packageName, Bundle extras) {
         throw new UnsupportedOperationException();
     }
 

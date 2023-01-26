@@ -2964,6 +2964,30 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         return state;
     }
 
+    private void handleNetworkConnectionEventInfo(
+            WifiConfiguration config, NetworkConnectionEventInfo connectionInfo) {
+        if (connectionInfo == null) return;
+
+        mWifiInfo.setBSSID(connectionInfo.bssid);
+        mWifiInfo.setNetworkId(connectionInfo.networkId);
+
+        if (config != null && connectionInfo.keyMgmtMask != null) {
+            // Besides allowed key management, pmf and wep keys are necessary to
+            // identify WPA3 Enterprise and WEP, so the original configuration
+            // is still necessary.
+            WifiConfiguration tmp = new WifiConfiguration(config);
+            tmp.setSecurityParams(connectionInfo.keyMgmtMask);
+            mWifiInfo.setCurrentSecurityType(tmp.getDefaultSecurityParams().getSecurityType());
+            // Update the last used security params.
+            config.getNetworkSelectionStatus().setLastUsedSecurityParams(
+                    tmp.getDefaultSecurityParams());
+            mWifiConfigManager.setNetworkLastUsedSecurityParams(config.networkId,
+                    tmp.getDefaultSecurityParams());
+            Log.i(getTag(), "Update current security type to " + mWifiInfo.getCurrentSecurityType()
+                    + " from network connection event.");
+        }
+    }
+
     private void updateWifiInfoWhenConnected(@NonNull WifiConfiguration config) {
         mWifiInfo.setEphemeral(config.ephemeral);
         mWifiInfo.setTrusted(config.trusted);
@@ -2980,6 +3004,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         SecurityParams securityParams = config.getNetworkSelectionStatus()
                 .getLastUsedSecurityParams();
         if (securityParams != null) {
+            Log.i(getTag(), "Update current security type to " + securityParams.getSecurityType());
             mWifiInfo.setCurrentSecurityType(securityParams.getSecurityType());
         } else {
             mWifiInfo.clearCurrentSecurityType();
@@ -5144,8 +5169,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         sendMessage(CMD_DISCONNECT, StaEvent.DISCONNECT_UNKNOWN_NETWORK);
                         break;
                     }
-                    mWifiInfo.setBSSID(mLastBssid);
-                    mWifiInfo.setNetworkId(mLastNetworkId);
+                    handleNetworkConnectionEventInfo(config, connectionInfo);
                     mWifiInfo.setMacAddress(mWifiNative.getMacAddress(mInterfaceName));
 
                     ScanDetailCache scanDetailCache =
@@ -5936,9 +5960,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 case WifiMonitor.NETWORK_CONNECTION_EVENT: {
                     NetworkConnectionEventInfo connectionInfo =
                             (NetworkConnectionEventInfo) message.obj;
-                    mWifiInfo.setBSSID(connectionInfo.bssid);
                     mLastNetworkId = connectionInfo.networkId;
-                    mWifiInfo.setNetworkId(mLastNetworkId);
+                    handleNetworkConnectionEventInfo(
+                            getConnectedWifiConfigurationInternal(), connectionInfo);
                     mWifiInfo.setMacAddress(mWifiNative.getMacAddress(mInterfaceName));
                     updateLayer2Information();
                     updateCurrentConnectionInfo();
@@ -6503,8 +6527,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                                 (NetworkConnectionEventInfo) message.obj;
                         mLastNetworkId = connectionInfo.networkId;
                         mLastBssid = connectionInfo.bssid;
-                        mWifiInfo.setBSSID(mLastBssid);
-                        mWifiInfo.setNetworkId(mLastNetworkId);
+                        handleNetworkConnectionEventInfo(
+                                getConnectedWifiConfigurationInternal(), connectionInfo);
                         updateLayer2Information();
                         sendNetworkChangeBroadcastWithCurrentState();
                         updateCurrentConnectionInfo();
@@ -7863,9 +7887,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         linkedConfig.networkId, params));
 
         List<String> allowlistSsids = new ArrayList<>(linkedNetworks.values().stream()
+                .filter(linkedConfig -> linkedConfig.allowAutojoin)
                 .map(linkedConfig -> linkedConfig.SSID)
                 .collect(Collectors.toList()));
-        if (linkedNetworks.size() > 0) {
+        if (allowlistSsids.size() > 0) {
             allowlistSsids.add(config.SSID);
         }
         mWifiBlocklistMonitor.setAllowlistSsids(config.SSID, allowlistSsids);

@@ -60,6 +60,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
@@ -509,6 +510,29 @@ public class WifiManagerTest {
 
         when(mWifiService.stopSoftAp()).thenReturn(false);
         assertFalse(mWifiManager.stopSoftAp());
+    }
+
+    /**
+     * Check the call to validateSoftApConfiguration calls WifiService to
+     * validateSoftApConfiguration.
+     */
+    @Test
+    public void testValidateSoftApConfigurationCallsService() throws Exception {
+        SoftApConfiguration apConfig = generatorTestSoftApConfig();
+        when(mWifiService.validateSoftApConfiguration(any())).thenReturn(true);
+        assertTrue(mWifiManager.validateSoftApConfiguration(apConfig));
+
+        when(mWifiService.validateSoftApConfiguration(any())).thenReturn(false);
+        assertFalse(mWifiManager.validateSoftApConfiguration(apConfig));
+    }
+
+    /**
+     * Throws  IllegalArgumentException when calling validateSoftApConfiguration with null.
+     */
+    @Test
+    public void testValidateSoftApConfigurationWithNullConfiguration() throws Exception {
+        assertThrows(IllegalArgumentException.class,
+                () -> mWifiManager.validateSoftApConfiguration(null));
     }
 
     /**
@@ -3573,7 +3597,7 @@ public class WifiManagerTest {
                 | WifiAvailableChannel.OP_MODE_WIFI_DIRECT_CLI;
         mWifiManager.getAllowedChannels(band, mode);
         verify(mWifiService).getUsableChannels(eq(band), eq(mode),
-                eq(WifiAvailableChannel.FILTER_REGULATORY));
+                eq(WifiAvailableChannel.FILTER_REGULATORY), eq(TEST_PACKAGE_NAME), any());
     }
 
     /**
@@ -3588,7 +3612,8 @@ public class WifiManagerTest {
         mWifiManager.getUsableChannels(band, mode);
         verify(mWifiService).getUsableChannels(eq(band), eq(mode),
                 eq(WifiAvailableChannel.FILTER_CONCURRENCY
-                    | WifiAvailableChannel.FILTER_CELLULAR_COEXISTENCE));
+                    | WifiAvailableChannel.FILTER_CELLULAR_COEXISTENCE),
+                eq(TEST_PACKAGE_NAME), any());
     }
 
     /**

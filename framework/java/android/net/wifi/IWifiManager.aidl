@@ -211,6 +211,8 @@ interface IWifiManager
 
     boolean stopSoftAp();
 
+    boolean validateSoftApConfiguration(in SoftApConfiguration config);
+
     int startLocalOnlyHotspot(in ILocalOnlyHotspotCallback callback, String packageName,
                               String featureId, in SoftApConfiguration customConfig, in Bundle extras);
 
@@ -382,7 +384,7 @@ interface IWifiManager
 
     void flushPasspointAnqpCache(String packageName);
 
-    List<WifiAvailableChannel> getUsableChannels(int band, int mode, int filter);
+    List<WifiAvailableChannel> getUsableChannels(int band, int mode, int filter, String packageName, in Bundle extras);
 
     boolean isWifiPasspointEnabled();
 

@@ -55,8 +55,6 @@ import org.json.JSONException;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -238,6 +236,7 @@ public class HalDeviceManager {
      */
     public void stop() {
         stopWifi();
+        mWifiHal.invalidate();
     }
 
     /**
@@ -803,6 +802,10 @@ public class HalDeviceManager {
 
         IfaceCreationData creationData;
         synchronized (mLock) {
+            if (!mWifiHal.isInitializationComplete()) {
+                Log.e(TAG, "reportImpactToCreateIface: Wifi Hal is not available");
+                return null;
+            }
             WifiChipInfo[] chipInfos = getAllChipInfo();
             if (chipInfos == null) {
                 Log.e(TAG, "createIface: no chip info found");
@@ -1391,6 +1394,10 @@ public class HalDeviceManager {
     private void stopWifi() {
         if (VDBG) Log.d(TAG, "stopWifi");
         synchronized (mLock) {
+            if (!mWifiHal.isInitializationComplete()) {
+                Log.w(TAG, "stopWifi was called, but Wifi Hal is not initialized");
+                return;
+            }
             if (!mWifiHal.stop()) {
                 Log.e(TAG, "Cannot stop IWifi");
             }
@@ -1885,90 +1892,6 @@ public class HalDeviceManager {
         return false;
     }
 
-    private static final int PRIORITY_INTERNAL = 0;
-    private static final int PRIORITY_BG = 1;
-    private static final int PRIORITY_FG_SERVICE = 2;
-    private static final int PRIORITY_FG_APP = 3;
-    private static final int PRIORITY_SYSTEM = 4;
-    private static final int PRIORITY_PRIVILEGED = 5;
-    // Keep these in sync with any additions/deletions to above buckets.
-    private static final int PRIORITY_MIN = PRIORITY_INTERNAL;
-    private static final int PRIORITY_MAX = PRIORITY_PRIVILEGED;
-    @IntDef(prefix = { "PRIORITY_" }, value = {
-            PRIORITY_INTERNAL,
-            PRIORITY_BG,
-            PRIORITY_FG_SERVICE,
-            PRIORITY_FG_APP,
-            PRIORITY_SYSTEM,
-            PRIORITY_PRIVILEGED,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface RequestorWsPriority {}
-
-    /**
-     * Returns integer priority level for the provided |ws| based on rules mentioned in
-     * {@link #selectInterfacesToDelete(int, int, WorkSource, int, WifiIfaceInfo[])}.
-     */
-    private static @RequestorWsPriority int getRequestorWsPriority(WorkSourceHelper ws) {
-        if (ws.hasAnyPrivilegedAppRequest()) return PRIORITY_PRIVILEGED;
-        if (ws.hasAnySystemAppRequest()) return PRIORITY_SYSTEM;
-        if (ws.hasAnyForegroundAppRequest(/* allowOverlayBypass */ true)) return PRIORITY_FG_APP;
-        if (ws.hasAnyForegroundServiceRequest()) return PRIORITY_FG_SERVICE;
-        if (ws.hasAnyInternalRequest()) return PRIORITY_INTERNAL;
-        return PRIORITY_BG;
-    }
-
-    /**
-     * Returns true if the requested iface can delete an existing iface only after user approval.
-     */
-    public boolean needsUserApprovalToDelete(
-            int requestedCreateType, WorkSource newWorksource,
-            int existingCreateType, WorkSource existingWorksource) {
-        return needsUserApprovalToDelete(
-                requestedCreateType,
-                getRequestorWsPriority(mWifiInjector.makeWsHelper(newWorksource)),
-                existingCreateType,
-                getRequestorWsPriority(mWifiInjector.makeWsHelper(existingWorksource)));
-    }
-
-    private boolean needsUserApprovalToDelete(
-            int requestedCreateType, int newRequestorWsPriority,
-            int existingCreateType, int existingRequestorWsPriority) {
-        if (!mWifiUserApprovalRequiredForD2dInterfacePriority
-                || newRequestorWsPriority <= PRIORITY_BG
-                || existingRequestorWsPriority == PRIORITY_INTERNAL) {
-            return false;
-        }
-
-        // Allow LOHS to beat Settings STA if there's no STA+AP concurrency (legacy behavior)
-        if (allowedToDeleteForNoStaApConcurrencyLohs(
-                requestedCreateType, newRequestorWsPriority,
-                existingCreateType, existingRequestorWsPriority)) {
-            return false;
-        }
-
-        if (requestedCreateType == HDM_CREATE_IFACE_AP
-                || requestedCreateType == HDM_CREATE_IFACE_AP_BRIDGE) {
-            if (existingCreateType == HDM_CREATE_IFACE_P2P
-                    || existingCreateType == HDM_CREATE_IFACE_NAN) {
-                return true;
-            }
-        } else if (requestedCreateType == HDM_CREATE_IFACE_P2P) {
-            if (existingCreateType == HDM_CREATE_IFACE_AP
-                    || existingCreateType == HDM_CREATE_IFACE_AP_BRIDGE
-                    || existingCreateType == HDM_CREATE_IFACE_NAN) {
-                return true;
-            }
-        } else if (requestedCreateType == HDM_CREATE_IFACE_NAN) {
-            if (existingCreateType == HDM_CREATE_IFACE_AP
-                    || existingCreateType == HDM_CREATE_IFACE_AP_BRIDGE
-                    || existingCreateType == HDM_CREATE_IFACE_P2P) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * Returns whether interface request from |newRequestorWsPriority| is allowed to delete an
      * interface request from |existingRequestorWsPriority|.
@@ -1984,19 +1907,24 @@ public class HalDeviceManager {
      */
     private boolean allowedToDelete(
             @HdmIfaceTypeForCreation int requestedCreateType,
-            @RequestorWsPriority int newRequestorWsPriority,
+            @NonNull WorkSourceHelper newRequestorWs,
             @HdmIfaceTypeForCreation int existingCreateType,
-            @RequestorWsPriority int existingRequestorWsPriority) {
+            @NonNull WorkSourceHelper existingRequestorWs) {
         if (!SdkLevel.isAtLeastS()) {
             return allowedToDeleteForR(requestedCreateType, existingCreateType);
         }
 
         // Defer deletion decision to the InterfaceConflictManager dialog.
-        if (needsUserApprovalToDelete(requestedCreateType, newRequestorWsPriority,
-                existingCreateType, existingRequestorWsPriority)) {
+        if (mWifiInjector.getInterfaceConflictManager().needsUserApprovalToDelete(
+                        requestedCreateType, newRequestorWs,
+                        existingCreateType, existingRequestorWs)) {
             return true;
         }
 
+        @HdmIfaceTypeForCreation int newRequestorWsPriority =
+                newRequestorWs.getRequestorWsPriority();
+        @HdmIfaceTypeForCreation int existingRequestorWsPriority =
+                existingRequestorWs.getRequestorWsPriority();
         // If the new request is higher priority than existing priority, then the new requestor
         // wins. This is because at all other priority levels (except privileged), existing caller
         // wins if both the requests are at the same priority level.
@@ -2012,7 +1940,7 @@ public class HalDeviceManager {
             // If both the requests are privileged, the new requestor wins. The exception is for
             // backwards compatibility with P2P Settings, prefer SoftAP over P2P for when the user
             // enables SoftAP with P2P Settings open.
-            if (newRequestorWsPriority == PRIORITY_PRIVILEGED) {
+            if (newRequestorWsPriority == WorkSourceHelper.PRIORITY_PRIVILEGED) {
                 if (requestedCreateType == HDM_CREATE_IFACE_P2P
                         && (existingCreateType == HDM_CREATE_IFACE_AP
                         || existingCreateType == HDM_CREATE_IFACE_AP_BRIDGE)) {
@@ -2038,9 +1966,9 @@ public class HalDeviceManager {
      */
     private boolean allowedToDeleteForNoStaApConcurrencyLohs(
             @HdmIfaceTypeForCreation int requestedCreateType,
-            @RequestorWsPriority int newRequestorWsPriority,
+            @WorkSourceHelper.RequestorWsPriority int newRequestorWsPriority,
             @HdmIfaceTypeForCreation int existingCreateType,
-            @RequestorWsPriority int existingRequestorWsPriority) {
+            @WorkSourceHelper.RequestorWsPriority int existingRequestorWsPriority) {
         return !canDeviceSupportCreateTypeCombo(
                 new SparseArray<Integer>() {{
                     put(HDM_CREATE_IFACE_STA, 1);
@@ -2048,10 +1976,10 @@ public class HalDeviceManager {
                 }})
                 && (requestedCreateType == HDM_CREATE_IFACE_AP
                 || requestedCreateType == HDM_CREATE_IFACE_AP_BRIDGE)
-                && newRequestorWsPriority != PRIORITY_INTERNAL
-                && newRequestorWsPriority != PRIORITY_PRIVILEGED
+                && newRequestorWsPriority != WorkSourceHelper.PRIORITY_INTERNAL
+                && newRequestorWsPriority != WorkSourceHelper.PRIORITY_PRIVILEGED
                 && existingCreateType == HDM_CREATE_IFACE_STA
-                && existingRequestorWsPriority == PRIORITY_PRIVILEGED;
+                && existingRequestorWsPriority == WorkSourceHelper.PRIORITY_PRIVILEGED;
     }
 
     /**
@@ -2153,10 +2081,10 @@ public class HalDeviceManager {
                 lookupError = true;
                 break;
             }
-            int newRequestorWsPriority = getRequestorWsPriority(newRequestorWsHelper);
-            int existingRequestorWsPriority = getRequestorWsPriority(cacheEntry.requestorWsHelper);
-            boolean isAllowedToDelete = allowedToDelete(requestedCreateType, newRequestorWsPriority,
-                    existingCreateType, existingRequestorWsPriority);
+            int newRequestorWsPriority = newRequestorWsHelper.getRequestorWsPriority();
+            int existingRequestorWsPriority = cacheEntry.requestorWsHelper.getRequestorWsPriority();
+            boolean isAllowedToDelete = allowedToDelete(requestedCreateType, newRequestorWsHelper,
+                    existingCreateType, cacheEntry.requestorWsHelper);
             if (VDBG) {
                 Log.d(TAG, "info=" + info + ":  allowedToDelete=" + isAllowedToDelete
                         + " (requestedCreateType=" + requestedCreateType
@@ -2178,7 +2106,7 @@ public class HalDeviceManager {
             int numIfacesToDelete = 0;
             ifacesToDelete = new ArrayList<>(requestedQuantity);
             // Iterate from lowest priority to highest priority ifaces.
-            for (int i = PRIORITY_MIN; i <= PRIORITY_MAX; i++) {
+            for (int i = WorkSourceHelper.PRIORITY_MIN; i <= WorkSourceHelper.PRIORITY_MAX; i++) {
                 List<WifiIfaceInfo> ifacesToDeleteListWithinPriority =
                         ifacesToDeleteMap.getOrDefault(i, new ArrayList<>());
                 int numIfacesToDeleteWithinPriority =
@@ -2824,8 +2752,8 @@ public class HalDeviceManager {
                     // keep the highest priority entry for comparision.
                     if (ifaceEntry == null) {
                         ifaceEntry = entry;
-                    } else if (getRequestorWsPriority(ifaceEntry.requestorWsHelper)
-                                > getRequestorWsPriority(entry.requestorWsHelper)) {
+                    } else if (ifaceEntry.requestorWsHelper.getRequestorWsPriority()
+                                > entry.requestorWsHelper.getRequestorWsPriority()) {
                         ifaceEntry = entry;
                     }
                 }
@@ -2849,13 +2777,13 @@ public class HalDeviceManager {
             }
             // 4. if newIface worksource has higher priority over existing Ws. return false;
             WorkSourceHelper newRequestorWsHelper = mWifiInjector.makeWsHelper(requestorWs);
-            int newRequestorWsPriority = getRequestorWsPriority(newRequestorWsHelper);
-            int ifaceEntryRequestorWsPriority = getRequestorWsPriority(ifaceEntry.requestorWsHelper);
+            int newRequestorWsPriority = newRequestorWsHelper.getRequestorWsPriority();
+            int ifaceEntryRequestorWsPriority = ifaceEntry.requestorWsHelper.getRequestorWsPriority();
 
             Log.d(TAG, "needToDeleteIfacesDueToBridgeMode: newRequestorWsPriority["+ifaceTypeToCreate+"]: " + newRequestorWsPriority
                         + " ifaceEntryRequestorWsPriority["+ifaceTypeToDelete+"]: " + ifaceEntryRequestorWsPriority);
-            if (!allowedToDelete(ifaceTypeToCreate, newRequestorWsPriority,
-                                 ifaceTypeToDelete, ifaceEntryRequestorWsPriority)) {
+            if (!allowedToDelete(ifaceTypeToCreate, newRequestorWsHelper,
+                                 ifaceTypeToDelete, ifaceEntry.requestorWsHelper)) {
                 return false;
             }
 
