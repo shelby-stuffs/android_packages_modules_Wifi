@@ -423,13 +423,16 @@ public class XmlUtil {
          * key is stored in plaintext, else the encrypted psk is stored.
          */
         private static void writePreSharedKeyToXml(
-                XmlSerializer out, String preSharedKey,
+                XmlSerializer out, WifiConfiguration wifiConfig,
                 @Nullable WifiConfigStoreEncryptionUtil encryptionUtil)
                 throws XmlPullParserException, IOException {
             EncryptedData encryptedData = null;
-            if (encryptionUtil != null) {
-                if (preSharedKey != null) {
-                    encryptedData = encryptionUtil.encrypt(preSharedKey.getBytes());
+            if (encryptionUtil != null && wifiConfig.preSharedKey != null) {
+                if (wifiConfig.hasEncryptedPreSharedKey() && !wifiConfig.hasPreSharedKeyChanged()) {
+                    encryptedData = new EncryptedData(wifiConfig.getEncryptedPreSharedKey(),
+                            wifiConfig.getEncryptedPreSharedKeyIv());
+                } else {
+                    encryptedData = encryptionUtil.encrypt(wifiConfig.preSharedKey.getBytes());
                     if (encryptedData == null) {
                         // We silently fail encryption failures!
                         Log.wtf(TAG, "Encryption of preSharedKey failed");
@@ -437,11 +440,14 @@ public class XmlUtil {
                 }
             }
             if (encryptedData != null) {
-                XmlUtil.writeNextSectionStart(out, XML_TAG_PRE_SHARED_KEY);
+                writeNextSectionStart(out, XML_TAG_PRE_SHARED_KEY);
                 EncryptedDataXmlUtil.writeToXml(out, encryptedData);
-                XmlUtil.writeNextSectionEnd(out, XML_TAG_PRE_SHARED_KEY);
+                wifiConfig.setEncryptedPreSharedKey(encryptedData.getEncryptedData(),
+                        encryptedData.getIv());
+                wifiConfig.setHasPreSharedKeyChanged(false);
+                writeNextSectionEnd(out, XML_TAG_PRE_SHARED_KEY);
             } else {
-                XmlUtil.writeNextValue(out, XML_TAG_PRE_SHARED_KEY, preSharedKey);
+                writeNextValue(out, XML_TAG_PRE_SHARED_KEY, wifiConfig.preSharedKey);
             }
         }
 
@@ -528,7 +534,7 @@ public class XmlUtil {
                 throws XmlPullParserException, IOException {
             XmlUtil.writeNextValue(out, XML_TAG_CONFIG_KEY, configuration.getKey());
             XmlUtil.writeNextValue(out, XML_TAG_SSID, configuration.SSID);
-            writePreSharedKeyToXml(out, configuration.preSharedKey, encryptionUtil);
+            writePreSharedKeyToXml(out, configuration, encryptionUtil);
             writeWepKeysToXml(out, configuration.wepKeys);
             XmlUtil.writeNextValue(out, XML_TAG_WEP_TX_KEY_INDEX, configuration.wepTxKeyIndex);
             XmlUtil.writeNextValue(out, XML_TAG_HIDDEN_SSID, configuration.hiddenSSID);
@@ -1002,6 +1008,9 @@ public class XmlUtil {
                                 Log.wtf(TAG, "Decryption of preSharedKey failed");
                             } else {
                                 configuration.preSharedKey = new String(preSharedKeyBytes);
+                                configuration.setEncryptedPreSharedKey(
+                                        encryptedData.getEncryptedData(),
+                                        encryptedData.getIv());
                             }
                             break;
                         case XML_TAG_SECURITY_PARAMS_LIST:
@@ -1942,7 +1951,8 @@ public class XmlUtil {
          * @param softApConfig configuration of the Soft AP.
          */
         public static void writeSoftApConfigurationToXml(@NonNull XmlSerializer out,
-                @NonNull SoftApConfiguration softApConfig)
+                @NonNull SoftApConfiguration softApConfig,
+                WifiConfigStoreEncryptionUtil encryptionUtil)
                 throws XmlPullParserException, IOException {
             XmlUtil.writeNextValue(out, XML_TAG_WIFI_SSID, softApConfig.getWifiSsid().toString());
             if (softApConfig.getBssid() != null) {
@@ -1956,8 +1966,8 @@ public class XmlUtil {
             XmlUtil.writeNextValue(out, XML_TAG_HIDDEN_SSID, softApConfig.isHiddenSsid());
             XmlUtil.writeNextValue(out, XML_TAG_SECURITY_TYPE, softApConfig.getSecurityType());
             if (!ApConfigUtil.isNonPasswordAP(softApConfig.getSecurityType())) {
-                XmlUtil.writeNextValue(out, XML_TAG_PASSPHRASE,
-                        softApConfig.getPassphrase());
+                XmlUtil.writeSoftApPassphraseToXml(out, softApConfig.getPassphrase(),
+                        encryptionUtil);
             }
 
             XmlUtil.writeNextValue(out, XML_TAG_MAX_NUMBER_OF_CLIENTS,
@@ -2018,7 +2028,9 @@ public class XmlUtil {
          */
         @Nullable
         public static SoftApConfiguration parseFromXml(XmlPullParser in, int outerTagDepth,
-                SettingsMigrationDataHolder settingsMigrationDataHolder)
+                SettingsMigrationDataHolder settingsMigrationDataHolder,
+                boolean shouldExpectEncryptedCredentials,
+                @Nullable WifiConfigStoreEncryptionUtil encryptionUtil)
                 throws XmlPullParserException, IOException  {
             SoftApConfiguration.Builder softApConfigBuilder = new SoftApConfiguration.Builder();
             int securityType = SoftApConfiguration.SECURITY_TYPE_OPEN;
@@ -2196,6 +2208,10 @@ public class XmlUtil {
                                                     in, outerTagDepth + 1));
                                 }
                                 break;
+                            case XML_TAG_PASSPHRASE:
+                                passphrase = readSoftApPassphraseFromXml(in, outerTagDepth,
+                                        shouldExpectEncryptedCredentials, encryptionUtil);
+                                break;
                             default:
                                 Log.w(TAG, "Ignoring unknown tag found: " + tagName);
                                 break;
@@ -2245,6 +2261,44 @@ public class XmlUtil {
             }
             return softApConfigBuilder.build();
         } // End of parseFromXml
+    }
+
+    private static void writeSoftApPassphraseToXml(
+            XmlSerializer out, String passphrase, WifiConfigStoreEncryptionUtil encryptionUtil)
+            throws XmlPullParserException, IOException {
+        EncryptedData encryptedData = null;
+        if (encryptionUtil != null && passphrase != null) {
+            encryptedData = encryptionUtil.encrypt(passphrase.getBytes());
+            if (encryptedData == null) {
+                // We silently fail encryption failures!
+                Log.wtf(TAG, "Encryption of softAp passphrase failed");
+            }
+        }
+        if (encryptedData != null) {
+            writeNextSectionStart(out, SoftApConfigurationXmlUtil.XML_TAG_PASSPHRASE);
+            EncryptedDataXmlUtil.writeToXml(out, encryptedData);
+            writeNextSectionEnd(out, SoftApConfigurationXmlUtil.XML_TAG_PASSPHRASE);
+        } else {
+            writeNextValue(out, SoftApConfigurationXmlUtil.XML_TAG_PASSPHRASE, passphrase);
+        }
+    }
+
+    private static String readSoftApPassphraseFromXml(XmlPullParser in, int outerTagDepth,
+            boolean shouldExpectEncryptedCredentials, WifiConfigStoreEncryptionUtil encryptionUtil)
+            throws XmlPullParserException, IOException {
+        if (!shouldExpectEncryptedCredentials || encryptionUtil == null) {
+            throw new XmlPullParserException(
+                    "Encrypted passphraseBytes section not expected");
+        }
+        EncryptedData encryptedData =
+                XmlUtil.EncryptedDataXmlUtil.parseFromXml(in, outerTagDepth + 1);
+        byte[] passphraseBytes = encryptionUtil.decrypt(encryptedData);
+        if (passphraseBytes == null) {
+            Log.wtf(TAG, "Decryption of passphraseBytes failed");
+            return null;
+        } else {
+            return new String(passphraseBytes);
+        }
     }
 }
 

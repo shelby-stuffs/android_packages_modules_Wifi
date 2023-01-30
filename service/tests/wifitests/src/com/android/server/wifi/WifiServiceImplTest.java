@@ -110,6 +110,7 @@ import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.WifiSsidPolicy;
+import android.app.compat.CompatChanges;
 import android.app.test.MockAnswerUtil.AnswerWithArguments;
 import android.bluetooth.BluetoothAdapter;
 import android.compat.testing.PlatformCompatChangeRule;
@@ -150,6 +151,7 @@ import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ISuggestionUserApprovalStatusListener;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
+import android.net.wifi.IWifiNetworkSelectionConfigListener;
 import android.net.wifi.IWifiVerboseLoggingStatusChangedListener;
 import android.net.wifi.ScanResult;
 import android.net.wifi.SecurityParams;
@@ -217,9 +219,6 @@ import com.android.server.wifi.util.WifiPermissionsWrapper;
 import com.android.wifi.resources.R;
 
 import com.google.common.base.Strings;
-
-import libcore.junit.util.compat.CoreCompatChangeRule.DisableCompatChanges;
-import libcore.junit.util.compat.CoreCompatChangeRule.EnableCompatChanges;
 
 import org.junit.After;
 import org.junit.Before;
@@ -431,6 +430,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
     @Mock SsidTranslator mSsidTranslator;
     @Mock InterfaceConflictManager mInterfaceConflictManager;
     @Mock WifiKeyStore mWifiKeyStore;
+    @Mock ScoringParams mScoringParams;
 
     @Captor ArgumentCaptor<Intent> mIntentCaptor;
 
@@ -448,6 +448,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         MockitoAnnotations.initMocks(this);
         mSession = mockitoSession()
                 .mockStatic(SubscriptionManager.class)
+                .mockStatic(CompatChanges.class)
                 .startMocking();
 
         mLog = spy(new LogcatLog(TAG));
@@ -595,6 +596,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         when(mWifiInjector.getSsidTranslator()).thenReturn(mSsidTranslator);
         when(mWifiInjector.getInterfaceConflictManager()).thenReturn(mInterfaceConflictManager);
         when(mWifiInjector.getWifiKeyStore()).thenReturn(mWifiKeyStore);
+        when(mWifiInjector.getScoringParams()).thenReturn(mScoringParams);
 
         doAnswer(new AnswerWithArguments() {
             public void answer(Runnable onStoppedListener) throws Throwable {
@@ -4801,28 +4803,14 @@ public class WifiServiceImplTest extends WifiBaseTest {
      * trigeering the process of the network restoration in batches.
      */
     @Test
-    @EnableCompatChanges({NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE})
     public void testRestoreNetworksWithBatchOverrideDisallowed() {
+        lenient().when(CompatChanges.isChangeEnabled(eq(NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE),
+                anyInt())).thenReturn(true);
         testRestoreNetworkConfiguration(0 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(1 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(20 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(700 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(700 /* configNum */, 0 /* batchNum*/, false);
-    }
-
-    /**
-     * Verify that a call to
-     * {@link WifiServiceImpl#restoreNetworks(List)}
-     * trigeering the process of the network restoration in batches.
-     */
-    @Test
-    @DisableCompatChanges({NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE})
-    public void testRestoreNetworksWithBatchOverrideAllowed() {
-        testRestoreNetworkConfiguration(0 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(1 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(20 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(700 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(700 /* configNum */, 0 /* batchNum*/, true);
     }
 
     /**
@@ -7707,6 +7695,97 @@ public class WifiServiceImplTest extends WifiBaseTest {
         verify(mLastCallerInfoManager).put(
                 eq(WifiManager.API_SET_NETWORK_SELECTION_CONFIG),
                 anyInt(), anyInt(), anyInt(), any(), eq(true));
+    }
+
+    @Test
+    public void testGetNetworkSelectionConfig_Exceptions() {
+        assumeTrue(SdkLevel.isAtLeastT());
+        IWifiNetworkSelectionConfigListener listener =
+                mock(IWifiNetworkSelectionConfigListener.class);
+        // null listener ==> IllegalArgumentException
+        assertThrows(IllegalArgumentException.class,
+                () -> mWifiServiceImpl.getNetworkSelectionConfig(null));
+
+        // No permission ==> SecurityException
+        assertThrows(SecurityException.class,
+                () -> mWifiServiceImpl.getNetworkSelectionConfig(listener));
+    }
+
+    @Test
+    public void testGetNetworkSelectionConfig_GoodCase() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        IWifiNetworkSelectionConfigListener listener =
+                mock(IWifiNetworkSelectionConfigListener.class);
+        InOrder inOrder = inOrder(listener);
+
+        int [] defaultRssi2 = {-83, -80, -73, -60};
+        int [] defaultRssi5 = {-80, -77, -70, -57};
+        int [] defaultRssi6 = {-80, -77, -70, -57};
+        int [] customRssi2 = {-80, -70, -60, -50};
+        int [] customRssi5 = {-80, -75, -70, -65};
+        int [] customRssi6 = {-75, -70, -65, -60};
+        int [] resetArray = {0, 0, 0, 0};
+
+        // has permission to call API
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
+
+        // configure the default values for RSSI thresholds from ScoringParams
+        when(mScoringParams.getRssiArray(ScanResult.BAND_24_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi2);
+        when(mScoringParams.getRssiArray(ScanResult.BAND_5_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi5);
+        when(mScoringParams.getRssiArray(ScanResult.BAND_6_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi6);
+
+        // getting the WifiNetworkSelectionConfig when one hasn't been set returns the default one
+        // built from the builder with RSSI thresholds from ScoringParams
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+        WifiNetworkSelectionConfig defaultConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, defaultRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, defaultRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+        inOrder.verify(listener).onResult(defaultConfig);
+
+        // set the WifiNetworkSelectionConfig and verify that same config is retrieved
+        WifiNetworkSelectionConfig customConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, customRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, customRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, customRssi6)
+                .setUserConnectChoiceOverrideEnabled(false)
+                .setLastSelectionWeightEnabled(false)
+                .build();
+
+        mWifiServiceImpl.setNetworkSelectionConfig(customConfig);
+        mLooper.dispatchAll();
+        verify(mWifiConnectivityManager).setNetworkSelectionConfig(customConfig);
+
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+        inOrder.verify(listener).onResult(customConfig);
+
+        // resetting the RSSI thresholds returns the config with RSSI from ScoringParams
+        WifiNetworkSelectionConfig resetConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, resetArray)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, resetArray)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+
+        WifiNetworkSelectionConfig resetExpectedConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, defaultRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, defaultRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+
+        mWifiServiceImpl.setNetworkSelectionConfig(resetConfig);
+        mLooper.dispatchAll();
+        verify(mWifiConnectivityManager).setNetworkSelectionConfig(resetConfig);
+
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+
+        inOrder.verify(listener).onResult(resetExpectedConfig);
     }
 
     @Test

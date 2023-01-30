@@ -93,7 +93,6 @@ import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.nl80211.DeviceWiphyCapabilities;
-import android.net.wifi.nl80211.WifiNl80211Manager;
 import android.net.wifi.util.ScanResultUtil;
 import android.os.BatteryStatsManager;
 import android.os.Build;
@@ -2595,15 +2594,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private WifiLinkLayerStats updateLinkLayerStatsRssiSpeedFrequencyCapabilities(long txBytes,
             long rxBytes) {
         WifiLinkLayerStats stats = getWifiLinkLayerStats();
-        WifiNl80211Manager.SignalPollResult pollResult = mWifiNative.signalPoll(mInterfaceName);
-        if (pollResult == null) {
+        WifiSignalPollResults pollResults = mWifiNative.signalPoll(mInterfaceName);
+        if (pollResults == null) {
             return stats;
         }
 
-        int newRssi = pollResult.currentRssiDbm;
-        int newTxLinkSpeed = pollResult.txBitrateMbps;
-        int newFrequency = pollResult.associationFrequencyMHz;
-        int newRxLinkSpeed = pollResult.rxBitrateMbps;
+        int newRssi = pollResults.getRssi();
+        int newTxLinkSpeed = pollResults.getTxLinkSpeed();
+        int newFrequency = pollResults.getFrequency();
+        int newRxLinkSpeed = pollResults.getRxLinkSpeed();
         boolean updateNetworkCapabilities = false;
 
         if (mVerboseLoggingEnabled) {
@@ -5794,7 +5793,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 }
                 case WifiMonitor.TOFU_ROOT_CA_CERTIFICATE:
                     if (null == mTargetWifiConfiguration) break;
-                    if (!mInsecureEapNetworkHandler.setPendingCertificate(
+                    if (!mInsecureEapNetworkHandler.addPendingCertificate(
                             mTargetWifiConfiguration.SSID, message.arg2,
                             (X509Certificate) message.obj)) {
                         Log.d(TAG, "Cannot set pending cert.");
@@ -7944,10 +7943,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         tmpConfigForCurrentSecurityParams.setSecurityParams(params);
         if (!WifiConfigurationUtil.isConfigLinkable(tmpConfigForCurrentSecurityParams)) return;
 
-        // check for FT/PSK
+        // Don't set SSID allowlist if we're connected to a network with Fast BSS Transition.
         ScanResult scanResult = mScanRequestProxy.getScanResult(mLastBssid);
         String caps = (scanResult != null) ? scanResult.capabilities : "";
-        if (params == null || caps.contains("FT/PSK")) {
+        if (params == null || caps.contains("FT/PSK") || caps.contains("FT/SAE")) {
             Log.i(TAG, "Linked network - return as current connection is FT-PSK");
             return;
         }

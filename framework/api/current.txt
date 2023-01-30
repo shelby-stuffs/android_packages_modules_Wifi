@@ -558,7 +558,7 @@ package android.net.wifi {
     field public static final int WIFI_INTERFACE_TYPE_DIRECT = 3; // 0x3
     field public static final int WIFI_INTERFACE_TYPE_STA = 0; // 0x0
     field @Deprecated public static final int WIFI_MODE_FULL = 1; // 0x1
-    field public static final int WIFI_MODE_FULL_HIGH_PERF = 3; // 0x3
+    field @Deprecated public static final int WIFI_MODE_FULL_HIGH_PERF = 3; // 0x3
     field public static final int WIFI_MODE_FULL_LOW_LATENCY = 4; // 0x4
     field @Deprecated public static final int WIFI_MODE_SCAN_ONLY = 2; // 0x2
     field public static final int WIFI_MULTI_INTERNET_MODE_DBS_AP = 1; // 0x1
@@ -1247,6 +1247,7 @@ package android.net.wifi.p2p {
     method public static int getP2pMaxAllowedVendorElementsLengthBytes();
     method public android.net.wifi.p2p.WifiP2pManager.Channel initialize(android.content.Context, android.os.Looper, android.net.wifi.p2p.WifiP2pManager.ChannelListener);
     method public boolean isChannelConstrainedDiscoverySupported();
+    method public boolean isGroupClientIpv6LinkLocalProvisioningSupported();
     method public boolean isGroupClientRemovalSupported();
     method public boolean isSetVendorElementsSupported();
     method public void removeClient(@NonNull android.net.wifi.p2p.WifiP2pManager.Channel, @NonNull android.net.MacAddress, @Nullable android.net.wifi.p2p.WifiP2pManager.ActionListener);
@@ -1526,6 +1527,8 @@ package android.net.wifi.rtt {
     method public int getDistanceMm();
     method public int getDistanceStdDevMm();
     method @Nullable public android.net.MacAddress getMacAddress();
+    method public int getMeasurementBandwidth();
+    method public int getMeasurementChannelFrequencyMHz();
     method public int getNumAttemptedMeasurements();
     method public int getNumSuccessfulMeasurements();
     method @Nullable public android.net.wifi.aware.PeerHandle getPeerHandle();
@@ -1539,6 +1542,7 @@ package android.net.wifi.rtt {
     field public static final int STATUS_FAIL = 1; // 0x1
     field public static final int STATUS_RESPONDER_DOES_NOT_SUPPORT_IEEE80211MC = 2; // 0x2
     field public static final int STATUS_SUCCESS = 0; // 0x0
+    field public static final int UNSPECIFIED = -1; // 0xffffffff
   }
 
   public abstract class RangingResultCallback {
