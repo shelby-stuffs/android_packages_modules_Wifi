@@ -3664,6 +3664,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     WifiUsabilityStats.LABEL_BAD,
                     WifiUsabilityStats.TYPE_IP_REACHABILITY_LOST, -1);
             if (mWifiGlobals.getIpReachabilityDisconnectEnabled()) {
+                if (mWifiGlobals.getDisconnectOnlyOnInitialIpReachability()
+                        && !mIpReachabilityMonitorActive) {
+                    logd("CMD_IP_REACHABILITY_LOST Connect session is over, skip ip reachability lost indication.");
+                    return;
+                }
                 handleIpReachabilityLost();
             } else {
                 logd("CMD_IP_REACHABILITY_LOST but disconnect disabled -- ignore");
