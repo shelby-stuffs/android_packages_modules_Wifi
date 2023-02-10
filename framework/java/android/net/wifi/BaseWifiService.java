@@ -250,6 +250,12 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public void getChannelData(@NonNull IListListener listener, String packageName,
+            Bundle extras) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean disconnect(String packageName) {
         throw new UnsupportedOperationException();
     }
@@ -495,6 +501,11 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public SoftApConfiguration getSoftApConfiguration() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void queryLastConfiguredTetheredApPassphraseSinceBoot(IStringListener listener) {
         throw new UnsupportedOperationException();
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 The Android Open Source Project
+ * Copyright (C) 2022 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,14 @@
  * limitations under the License.
  */
 
-package android.net.wifi.aware;
-
-import android.net.wifi.aware.ConfigRequest;
+package android.net.wifi;
 
 /**
- * Callback interface that WifiAwareManager implements
+ * Interface for IStringListener.
  *
- * {@hide}
+ * @hide
  */
-oneway interface IWifiAwareEventCallback
+oneway interface IStringListener
 {
-    void onConnectSuccess(int clientId);
-    void onConnectFail(int reason);
-    void onIdentityChanged(in byte[] mac);
-    void onAttachTerminate();
-    void onClusterIdChanged(int clusterEventType, in byte[] clusterId);
+    void onResult(String value);
 }

@@ -21,6 +21,8 @@ import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.net.wifi.ScanResult.WIFI_BAND_24_GHZ;
 import static android.net.wifi.ScanResult.WIFI_BAND_5_GHZ;
 import static android.net.wifi.ScanResult.WIFI_BAND_6_GHZ;
+import static android.net.wifi.WifiManager.CHANNEL_DATA_KEY_FREQUENCY_MHZ;
+import static android.net.wifi.WifiManager.CHANNEL_DATA_KEY_NUM_AP;
 import static android.net.wifi.WifiManager.LocalOnlyHotspotCallback.ERROR_GENERIC;
 import static android.net.wifi.WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL;
 import static android.net.wifi.WifiManager.NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE;
@@ -94,6 +96,7 @@ import android.net.wifi.ICoexCallback;
 import android.net.wifi.IDppCallback;
 import android.net.wifi.IInterfaceCreationInfoCallback;
 import android.net.wifi.ILastCallerListener;
+import android.net.wifi.IListListener;
 import android.net.wifi.ILocalOnlyHotspotCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
 import android.net.wifi.IOnWifiActivityEnergyInfoListener;
@@ -102,6 +105,7 @@ import android.net.wifi.IOnWifiUsabilityStatsListener;
 import android.net.wifi.IPnoScanResultsCallback;
 import android.net.wifi.IScanResultsCallback;
 import android.net.wifi.ISoftApCallback;
+import android.net.wifi.IStringListener;
 import android.net.wifi.ISubsystemRestartCallback;
 import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ISuggestionUserApprovalStatusListener;
@@ -229,6 +233,7 @@ public class WifiServiceImpl extends BaseWifiService {
     private static final int RUN_WITH_SCISSORS_TIMEOUT_MILLIS = 4000;
     @VisibleForTesting
     static final int AUTO_DISABLE_SHOW_KEY_COUNTDOWN_MILLIS = 24 * 60 * 60 * 1000;
+    private static final int CHANNEL_USAGE_WEAK_SCAN_RSSI_DBM = -80;
 
     private final ActiveModeWarden mActiveModeWarden;
     private final ScanRequestProxy mScanRequestProxy;
@@ -534,9 +539,6 @@ public class WifiServiceImpl extends BaseWifiService {
             if (!mWifiConfigManager.loadFromStore()) {
                 Log.e(TAG, "Failed to load from config store");
             }
-            if (!mWifiGlobals.isInsecureEnterpriseConfigurationAllowed()) {
-                mWifiConfigManager.updateTrustOnFirstUseFlag(isTrustOnFirstUseSupported());
-            }
             mWifiConfigManager.incrementNumRebootsSinceLastUse();
             // config store is read, check if verbose logging is enabled.
             enableVerboseLoggingInternal(
@@ -804,6 +806,10 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiInjector.getSsidTranslator().handleBootCompleted();
             mWifiInjector.getPasspointManager().handleBootCompleted();
             mWifiInjector.getInterfaceConflictManager().handleBootCompleted();
+            // HW capabilities is ready after boot completion.
+            if (!mWifiGlobals.isInsecureEnterpriseConfigurationAllowed()) {
+                mWifiConfigManager.updateTrustOnFirstUseFlag(isTrustOnFirstUseSupported());
+            }
             updateVerboseLoggingEnabled();
         });
     }
@@ -2728,6 +2734,29 @@ public class WifiServiceImpl extends BaseWifiService {
     }
 
     /**
+     * See {@code WifiManager#queryLastConfiguredTetheredApPassphraseSinceBoot(Executor, Consumer)}
+     */
+    @Override
+    public void queryLastConfiguredTetheredApPassphraseSinceBoot(IStringListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener should not be null");
+        }
+        int uid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)) {
+            throw new SecurityException("App not allowed to read last WiFi AP passphrase "
+                    + "(uid = " + uid + ")");
+        }
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(mWifiApConfigStore
+                        .getLastConfiguredTetheredApPassphraseSinceBoot());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
      * see {@link WifiManager#setWifiApConfiguration(WifiConfiguration)}
      * @param wifiConfig WifiConfiguration details for soft access point
      * @return boolean indicating success or failure of the operation
@@ -4247,6 +4276,53 @@ public class WifiServiceImpl extends BaseWifiService {
         } finally {
             Binder.restoreCallingIdentity(ident);
         }
+    }
+
+    /**
+     * See {@link WifiManager#getChannelData(Executor, Consumer)}
+     */
+    @Override
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    public void getChannelData(@NonNull IListListener listener, String packageName,
+            Bundle extras) {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException();
+        }
+        if (listener == null) {
+            throw new IllegalArgumentException("listener should not be null");
+        }
+        mWifiPermissionsUtil.enforceNearbyDevicesPermission(
+                extras.getParcelable(WifiManager.EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE), false,
+                TAG + " getChannelData");
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(getChannelDataInternal());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    private List<Bundle> getChannelDataInternal() {
+        SparseIntArray dataSparseIntArray = new SparseIntArray();
+        List<ScanResult> scanResults = mScanRequestProxy.getScanResults();
+        if (scanResults != null) {
+            for (ScanResult scanResultItem : scanResults) {
+                if (scanResultItem.level >= CHANNEL_USAGE_WEAK_SCAN_RSSI_DBM) {
+                    dataSparseIntArray.put(scanResultItem.frequency,
+                            dataSparseIntArray.get(scanResultItem.frequency, 0) + 1);
+                }
+            }
+        }
+
+        List<Bundle> dataArray = new ArrayList<>();
+        for (int i = 0; i < dataSparseIntArray.size(); i++) {
+            Bundle dataBundle = new Bundle();
+            dataBundle.putInt(CHANNEL_DATA_KEY_FREQUENCY_MHZ, dataSparseIntArray.keyAt(i));
+            dataBundle.putInt(CHANNEL_DATA_KEY_NUM_AP, dataSparseIntArray.valueAt(i));
+            dataArray.add(dataBundle);
+        }
+        return dataArray;
     }
 
     /**

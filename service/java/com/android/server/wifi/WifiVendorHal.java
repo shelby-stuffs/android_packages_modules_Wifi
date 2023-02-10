@@ -1840,6 +1840,17 @@ public class WifiVendorHal {
         }
     }
 
+    /**
+     * Set DTIM multiplier used when the system is in the suspended mode.
+     */
+    public boolean setDtimMultiplier(@NonNull String ifaceName, int multiplier) {
+        synchronized (sLock) {
+            WifiStaIface iface = getStaIface(ifaceName);
+            if (iface == null) return false;
+            return iface.setDtimMultiplier(multiplier);
+        }
+    }
+
     public boolean needToDeleteIfacesDueToBridgeMode(int ifaceType, WorkSource requestorWs) {
        return mHalDeviceManager.needToDeleteIfacesDueToBridgeMode(ifaceType, requestorWs);
     }

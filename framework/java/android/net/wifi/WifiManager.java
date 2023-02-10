@@ -1859,6 +1859,18 @@ public class WifiManager {
      */
     public static final int WIFI_MULTI_INTERNET_MODE_MULTI_AP = 2;
 
+    /**
+     * The bundle key string for the channel frequency in MHz.
+     * See {@link #getChannelData(Executor, Consumer)}
+     */
+    public static final String CHANNEL_DATA_KEY_FREQUENCY_MHZ = "CHANNEL_DATA_KEY_FREQUENCY_MHZ";
+    /**
+     * The bundle key for the number of APs found on the corresponding channel specified by
+     * {@link WifiManager#CHANNEL_DATA_KEY_FREQUENCY_MHZ}.
+     * See {@link #getChannelData(Executor, Consumer)}
+     */
+    public static final String CHANNEL_DATA_KEY_NUM_AP = "CHANNEL_DATA_KEY_NUM_AP";
+
     /* Number of currently active WifiLocks and MulticastLocks */
     @UnsupportedAppUsage
     private int mActiveLockCount;
@@ -4264,6 +4276,44 @@ public class WifiManager {
     }
 
     /**
+     * Get channel data such as the number of APs found on each channel from the most recent scan.
+     * App requires {@link android.Manifest.permission#NEARBY_WIFI_DEVICES}
+     *
+     * @param executor        The executor on which callback will be invoked.
+     * @param resultsCallback A callback that will return {@code List<Bundle>} containing channel
+     *                       data such as the number of APs found on each channel.
+     *                       {@link WifiManager#CHANNEL_DATA_KEY_FREQUENCY_MHZ} and
+     *                       {@link WifiManager#CHANNEL_DATA_KEY_NUM_AP} are used to get
+     *                       the frequency (Mhz) and number of APs.
+     * @throws UnsupportedOperationException if the API is not supported on this SDK version.
+     * @throws SecurityException             if the caller does not have permission.
+     * @throws NullPointerException          if the caller provided invalid inputs.
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(NEARBY_WIFI_DEVICES)
+    public void getChannelData(@NonNull Executor executor,
+            @NonNull Consumer<List<Bundle>> resultsCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultsCallback, "resultsCallback cannot be null");
+        try {
+            Bundle extras = new Bundle();
+            extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                    mContext.getAttributionSource());
+            mService.getChannelData(new IListListener.Stub() {
+                @Override
+                public void onResult(List value) {
+                    Binder.clearCallingIdentity();
+                    executor.execute(() -> {
+                        resultsCallback.accept(value);
+                    });
+                }
+            }, mContext.getOpPackageName(), extras);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Tell the device to persist the current list of configured networks.
      * <p>
      * Note: It is possible for this method to change the network IDs of
@@ -5578,6 +5628,44 @@ public class WifiManager {
     public SoftApConfiguration getSoftApConfiguration() {
         try {
             return mService.getSoftApConfiguration();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the last configured Wi-Fi tethered AP passphrase.
+     *
+     * Note: It may be null when there is no passphrase changed since
+     * device boot.
+     *
+     * @param executor The executor on which callback will be invoked.
+     * @param resultCallback An asynchronous callback that will return the last configured
+     *                       Wi-Fi tethered AP passphrase.
+     *
+     * @throws SecurityException if the caller does not have permission.
+     * @throws NullPointerException if the caller provided invalid inputs.
+     *
+     * @hide
+     */
+    @Nullable
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    public void queryLastConfiguredTetheredApPassphraseSinceBoot(@NonNull Executor executor,
+            @NonNull Consumer<String> resultCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultCallback, "resultsCallback cannot be null");
+        try {
+            mService.queryLastConfiguredTetheredApPassphraseSinceBoot(
+                    new IStringListener.Stub() {
+                        @Override
+                        public void onResult(String value) {
+                            Binder.clearCallingIdentity();
+                            executor.execute(() -> {
+                                resultCallback.accept(value);
+                            });
+                        }
+                    });
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
