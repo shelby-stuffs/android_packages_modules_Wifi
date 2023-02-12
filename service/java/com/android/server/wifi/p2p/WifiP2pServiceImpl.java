@@ -44,7 +44,9 @@ import android.net.LinkProperties;
 import android.net.MacAddress;
 import android.net.NetworkInfo;
 import android.net.NetworkStack;
+import android.net.TetheringInterface;
 import android.net.TetheringManager;
+import android.net.TetheringManager.TetheringEventCallback;
 import android.net.ip.IIpClient;
 import android.net.ip.IpClientCallbacks;
 import android.net.ip.IpClientUtil;
@@ -221,6 +223,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     private final WifiGlobals mWifiGlobals;
     private final UserManager mUserManager;
     private final InterfaceConflictManager mInterfaceConflictManager;
+    private TetheringManager mTetheringManager = null;
     private final WifiP2pNative mWifiNative;
     private final LastCallerInfoManager mLastCallerInfoManager;
 
@@ -313,8 +316,8 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     private static final int IPC_DHCP_RESULTS               =   BASE + 32;
     private static final int IPC_PROVISIONING_SUCCESS       =   BASE + 33;
     private static final int IPC_PROVISIONING_FAILURE       =   BASE + 34;
-
-    private static final int TETHER_INTERFACE_STATE_CHANGED =   BASE + 35;
+    @VisibleForTesting
+    static final int TETHER_INTERFACE_STATE_CHANGED         =   BASE + 35;
 
     private static final int UPDATE_P2P_DISALLOWED_CHANNELS =   BASE + 36;
 
@@ -655,6 +658,10 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
     public void handleBootCompleted() {
         updateVerboseLoggingEnabled();
         mIsBootComplete = true;
+        mTetheringManager = mContext.getSystemService(TetheringManager.class);
+        if (mTetheringManager == null) {
+            Log.wtf(TAG, "Tethering manager is null when WifiP2pServiceImp handles boot completed");
+        }
     }
 
     private void updateVerboseLoggingEnabled() {
@@ -748,6 +755,7 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                                 .withoutIPv4()
                                 .withIpv6LinkLocalOnly()
                                 .withRandomMacAddress()
+                                .withUniqueEui64AddressesOnly()
                                 .build();
                         break;
                     case GROUP_CLIENT_IP_PROVISIONING_MODE_IPV4_DHCP:
@@ -1051,6 +1059,21 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
         private final WifiP2pMonitor mWifiMonitor = mWifiInjector.getWifiP2pMonitor();
         private final WifiP2pDeviceList mPeers = new WifiP2pDeviceList();
         private String mInterfaceName;
+        private TetheringEventCallback mTetheringEventCallback =
+                new TetheringManager.TetheringEventCallback() {
+                    @Override
+                    public void onLocalOnlyInterfacesChanged(Set<TetheringInterface> interfaces) {
+                        ArrayList<String> ifaceList = interfaces.stream().map(
+                                p -> p.getInterface()).collect(
+                                Collectors.toCollection(ArrayList::new));
+                        if (interfaces.stream().anyMatch(
+                                p -> p.getType() == TetheringManager.TETHERING_WIFI_P2P)) {
+                            logd(getName() + " Tethering localOnlyInterfacesChanged"
+                                    + " callback for ifaceList: " + ifaceList);
+                            sendMessage(TETHER_INTERFACE_STATE_CHANGED, ifaceList);
+                        }
+                    }
+                };
 
         private final List<CoexUnsafeChannel> mCoexUnsafeChannels = new ArrayList<>();
         private int mUserListenChannel = 0;
@@ -1160,15 +1183,17 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     }
                 }, new IntentFilter(LocationManager.MODE_CHANGED_ACTION));
                 // Register for tethering state
-                mContext.registerReceiver(new BroadcastReceiver() {
-                    @Override
-                    public void onReceive(Context context, Intent intent) {
-                        final ArrayList<String> interfaces = intent.getStringArrayListExtra(
-                                TetheringManager.EXTRA_ACTIVE_LOCAL_ONLY);
+                if (!SdkLevel.isAtLeastS()) {
+                    mContext.registerReceiver(new BroadcastReceiver() {
+                        @Override
+                        public void onReceive(Context context, Intent intent) {
+                            final ArrayList<String> interfaces = intent.getStringArrayListExtra(
+                                    TetheringManager.EXTRA_ACTIVE_LOCAL_ONLY);
 
-                        sendMessage(TETHER_INTERFACE_STATE_CHANGED, interfaces);
-                    }
-                }, new IntentFilter(TetheringManager.ACTION_TETHER_STATE_CHANGED));
+                            sendMessage(TETHER_INTERFACE_STATE_CHANGED, interfaces);
+                        }
+                    }, new IntentFilter(TetheringManager.ACTION_TETHER_STATE_CHANGED));
+                }
                 mSettingsConfigStore.registerChangeListener(
                         WIFI_VERBOSE_LOGGING_ENABLED,
                         (key, newValue) -> enableVerboseLogging(newValue),
@@ -1873,8 +1898,15 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                     case UPDATE_P2P_DISALLOWED_CHANNELS:
                     case WifiP2pMonitor.P2P_PROV_DISC_FAILURE_EVENT:
                     case SET_MIRACAST_MODE:
+                        break;
                     case WifiP2pManager.START_LISTEN:
+                        replyToMessage(message, WifiP2pManager.START_LISTEN_FAILED,
+                                WifiP2pManager.BUSY);
+                        break;
                     case WifiP2pManager.SET_CHANNEL:
+                        replyToMessage(message, WifiP2pManager.SET_CHANNEL_FAILED,
+                                WifiP2pManager.BUSY);
+                        break;
                     case ENABLE_P2P:
                         // Enable is lazy and has no response
                         break;
@@ -2432,6 +2464,10 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
 
                 sendP2pConnectionChangedBroadcast();
                 initializeP2pSettings();
+                if (mTetheringManager != null) {
+                    mTetheringManager.registerTetheringEventCallback(getHandler()::post,
+                            mTetheringEventCallback);
+                }
             }
 
             @Override
@@ -2853,6 +2889,9 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
                 mUserListenChannel = 0;
                 mUserOperatingChannel = 0;
                 mCoexUnsafeChannels.clear();
+                if (mTetheringManager != null) {
+                    mTetheringManager.unregisterTetheringEventCallback(mTetheringEventCallback);
+                }
             }
         }
 
@@ -4594,6 +4633,11 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             if (mVerboseLoggingEnabled) logd("sending p2p connection changed broadcast");
             Intent intent = new Intent(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
             intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+            // P2pConnectionEvent.CONNECTION_FAST connection type is only triggered as a result
+            // of user interaction, so mark the broadcast as foreground.
+            if (mWifiP2pMetrics.isP2pFastConnectionType()) {
+                intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+            }
             intent.putExtra(WifiP2pManager.EXTRA_WIFI_P2P_INFO, new WifiP2pInfo(mWifiP2pInfo));
             intent.putExtra(WifiP2pManager.EXTRA_NETWORK_INFO, makeNetworkInfo());
             intent.putExtra(WifiP2pManager.EXTRA_WIFI_P2P_GROUP, eraseOwnDeviceAddress(mGroup));
@@ -4688,6 +4732,11 @@ public class WifiP2pServiceImpl extends IWifiP2pManager.Stub {
             };
             Intent intent = new Intent(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
             intent.setPackage(tetheringServicePackage);
+            // P2pConnectionEvent.CONNECTION_FAST connection type is only triggered as a result
+            // of user interaction, so mark the broadcast as foreground.
+            if (mWifiP2pMetrics.isP2pFastConnectionType()) {
+                intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+            }
             intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
             intent.putExtra(WifiP2pManager.EXTRA_WIFI_P2P_INFO, new WifiP2pInfo(mWifiP2pInfo));
             intent.putExtra(WifiP2pManager.EXTRA_NETWORK_INFO, makeNetworkInfo());

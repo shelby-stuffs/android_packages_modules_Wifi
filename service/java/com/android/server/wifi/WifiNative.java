@@ -469,7 +469,13 @@ public class WifiNative {
         @Override
         public void onScanFailed() {
             Log.d(TAG, "Scan failed event");
-            mWifiMonitor.broadcastScanFailedEvent(mIfaceName);
+            mWifiMonitor.broadcastScanFailedEvent(mIfaceName, WifiScanner.REASON_UNSPECIFIED);
+        }
+
+        @Override
+        public void onScanFailed(int errorCode) {
+            Log.d(TAG, "Scan failed event: errorCode: " + errorCode);
+            mWifiMonitor.broadcastScanFailedEvent(mIfaceName, errorCode);
         }
     }
 
@@ -1617,9 +1623,11 @@ public class WifiNative {
      * @param enable6GhzRnr whether Reduced Neighbor Report should be enabled for 6Ghz scanning.
      * @return Returns true on success.
      */
-    public boolean scan(
+    public int scan(
             @NonNull String ifaceName, @WifiAnnotations.ScanType int scanType, Set<Integer> freqs,
             List<String> hiddenNetworkSSIDs, boolean enable6GhzRnr) {
+        int scanRequestStatus = WifiScanner.REASON_SUCCEEDED;
+        boolean scanStatus = true;
         List<byte[]> hiddenNetworkSsidsArrays = new ArrayList<>();
         for (String hiddenNetworkSsid : hiddenNetworkSSIDs) {
             try {
@@ -1631,17 +1639,30 @@ public class WifiNative {
                 continue;
             }
         }
-        // enable6GhzRnr is a new parameter first introduced in Android S.
         if (SdkLevel.isAtLeastS()) {
+            // enable6GhzRnr is a new parameter first introduced in Android S.
             Bundle extraScanningParams = new Bundle();
             extraScanningParams.putBoolean(WifiNl80211Manager.SCANNING_PARAM_ENABLE_6GHZ_RNR,
                     enable6GhzRnr);
-            return mWifiCondManager.startScan(ifaceName, scanType, freqs, hiddenNetworkSsidsArrays,
-                    extraScanningParams);
+            if (SdkLevel.isAtLeastU()) {
+                scanRequestStatus = mWifiCondManager.startScan2(ifaceName, scanType, freqs,
+                        hiddenNetworkSsidsArrays, extraScanningParams);
+            } else {
+                scanStatus = mWifiCondManager.startScan(ifaceName, scanType, freqs,
+                        hiddenNetworkSsidsArrays,
+                        extraScanningParams);
+                scanRequestStatus = scanStatus
+                        ? WifiScanner.REASON_SUCCEEDED : WifiScanner.REASON_UNSPECIFIED;
+
+            }
         } else {
-            return mWifiCondManager.startScan(ifaceName, scanType, freqs,
-                            hiddenNetworkSsidsArrays);
+            scanStatus = mWifiCondManager.startScan(ifaceName, scanType, freqs,
+                        hiddenNetworkSsidsArrays);
+            scanRequestStatus = scanStatus
+                    ? WifiScanner.REASON_SUCCEEDED : WifiScanner.REASON_UNSPECIFIED;
         }
+
+        return scanRequestStatus;
     }
 
     /**
@@ -3231,6 +3252,11 @@ public class WifiNative {
          * Called with the current cached scan results when gscan is resumed.
          */
         void onScanRestarted();
+        /**
+         * Callback to notify when the scan request fails.
+         * See WifiScanner.REASON_* for possible values.
+         */
+        void onScanRequestFailed(int errorCode);
     }
 
     /**
@@ -3596,6 +3622,21 @@ public class WifiNative {
      */
     @Nullable
     public WifiSignalPollResults signalPoll(@NonNull String ifaceName) {
+        if (mMockWifiModem != null && mMockWifiModem.getWifiNl80211Manager() != null
+                && mMockWifiModem.getMockWifiNl80211Manager() != null
+                && mMockWifiModem.getMockWifiNl80211Manager().isMethodConfigured("signalPoll")) {
+            Log.i(TAG, "signalPoll was called from mock wificond");
+            WifiNl80211Manager.SignalPollResult result =
+                    mMockWifiModem.getWifiNl80211Manager().signalPoll(ifaceName);
+            if (result != null) {
+                // Convert WifiNl80211Manager#SignalPollResult to WifiSignalPollResults.
+                // Assume single link and linkId = 0.
+                WifiSignalPollResults results = new WifiSignalPollResults();
+                results.addEntry(0, result.currentRssiDbm, result.txBitrateMbps,
+                        result.rxBitrateMbps, result.associationFrequencyMHz);
+                return results;
+            }
+        }
         // Query supplicant.
         WifiSignalPollResults results = mSupplicantStaIfaceHal.getSignalPollResults(
                 ifaceName);
@@ -4816,7 +4857,7 @@ public class WifiNative {
             mMockWifiModem = null;
             return;
         }
-        mMockWifiModem = new MockWifiServiceUtil(mContext, serviceName);
+        mMockWifiModem = new MockWifiServiceUtil(mContext, serviceName, mWifiMonitor);
         if (mMockWifiModem == null) {
             Log.e(TAG, "MockWifiServiceUtil creation failed.");
             return;
@@ -4854,5 +4895,28 @@ public class WifiNative {
         String serviceName = mMockWifiModem != null ? mMockWifiModem.getServiceName() : null;
         Log.d(TAG, "getMockWifiServiceName - service name is " + serviceName);
         return serviceName;
+    }
+
+    /**
+     * Sets mocked methods which like to be called.
+     *
+     * @param methods the methods string with formats HAL name - method name, ...
+     */
+    public boolean setMockWifiMethods(String methods) {
+        if (mMockWifiModem == null || methods == null) {
+            return false;
+        }
+        return mMockWifiModem.setMockedMethods(methods);
+    }
+
+    /**
+     * Set DTIM multiplier used when the system is in the suspended mode.
+     *
+     * @param ifaceName Name of the interface.
+     * @param multiplier integer DTIM multiplier value to set.
+     * @return true for success
+     */
+    public boolean setDtimMultiplier(String ifaceName, int multiplier) {
+        return mWifiVendorHal.setDtimMultiplier(ifaceName, multiplier);
     }
 }
