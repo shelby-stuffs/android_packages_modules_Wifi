@@ -409,4 +409,6 @@ interface IWifiManager
     void removeCustomDhcpOptions(in WifiSsid ssid, in byte[] oui);
 
     void reportCreateInterfaceImpact(String packageName, int interfaceType, boolean requireNewInterface, in IInterfaceCreationInfoCallback callback);
+
+    int getMaxNumberOfChannelsPerRequest();
 }
