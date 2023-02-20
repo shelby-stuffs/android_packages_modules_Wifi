@@ -7399,11 +7399,23 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (!WifiConfigurationUtil.isConfigLinkable(tmpConfigForCurrentSecurityParams)) return;
 
         // Don't set SSID allowlist if we're connected to a network with Fast BSS Transition.
-        ScanResult scanResult = mScanRequestProxy.getScanResult(mLastBssid);
-        String caps = (scanResult != null) ? scanResult.capabilities : "";
-        if (params == null || caps.contains("FT/PSK") || caps.contains("FT/SAE")) {
-            Log.i(TAG, "Linked network - return as current connection is FT-PSK/FT-SAE");
+        ScanDetailCache scanDetailCache = mWifiConfigManager.getScanDetailCacheForNetwork(
+                config.networkId);
+        if (scanDetailCache == null) {
+            Log.i(TAG, "Linked network - return as scan detailed cache is not found");
             return;
+        } else {
+            ScanResult matchingScanResult = scanDetailCache.getScanResult(mLastBssid);
+            if (matchingScanResult == null) {
+                Log.i(TAG, "Linked network - return as matching scan result is not found");
+                return;
+            } else {
+                String caps = matchingScanResult.capabilities;
+                if (caps.contains("FT/PSK") || caps.contains("FT/SAE")) {
+                    Log.i(TAG, "Linked network - return as current connection is FT-PSK/FT-SAE");
+                    return;
+                }
+            }
         }
 
         mWifiConfigManager.updateLinkedNetworks(config.networkId);
