@@ -263,7 +263,7 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
     @Override
     public void connect(final IBinder binder, String callingPackage, String callingFeatureId,
             IWifiAwareEventCallback callback, ConfigRequest configRequest,
-            boolean notifyOnIdentityChanged, Bundle extras) {
+            boolean notifyOnIdentityChanged, Bundle extras, boolean forOffloading) {
         enforceAccessPermission();
         enforceChangePermission();
 
@@ -284,6 +284,10 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         if (notifyOnIdentityChanged) {
             enforceNearbyOrLocationPermission(callingPackage, callingFeatureId,
                     getMockableCallingUid(), extras, "Wifi Aware attach");
+        }
+        if (forOffloading && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
+            throw new SecurityException("Enable Wifi Aware for offloading require"
+                    + "OVERRIDE_WIFI_CONFIG permission");
         }
 
         if (configRequest != null) {
@@ -339,7 +343,7 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         }
 
         mStateManager.connect(clientId, uid, pid, callingPackage, callingFeatureId, callback,
-                configRequest, notifyOnIdentityChanged, extras);
+                configRequest, notifyOnIdentityChanged, extras, forOffloading);
     }
 
     @Override
@@ -560,6 +564,10 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
             throw new IllegalArgumentException(
                     "NAN pairing is not supported");
         }
+        if (pairingDeviceAlias == null) {
+            throw new IllegalArgumentException(
+                    "initiateNanPairingRequest: invalid pairingDeviceAlias - must be non-null");
+        }
         int uid = getMockableCallingUid();
         enforceClientValidity(uid, clientId);
         if (mVerboseLoggingEnabled) {
@@ -579,6 +587,13 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         if (!mStateManager.getCharacteristics().isAwarePairingSupported()) {
             throw new IllegalArgumentException(
                     "NAN pairing is not supported");
+        }
+        if (accept) {
+            if (pairingDeviceAlias == null) {
+                throw new IllegalArgumentException(
+                        "responseNanPairingSetupRequest: invalid pairingDeviceAlias - "
+                                + "must be non-null");
+            }
         }
         int uid = getMockableCallingUid();
         enforceClientValidity(uid, clientId);

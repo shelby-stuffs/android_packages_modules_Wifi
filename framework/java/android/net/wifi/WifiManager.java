@@ -8846,7 +8846,7 @@ public class WifiManager {
          * @param wifiNetworkSpecifier The {@link WifiNetworkSpecifier} which failed to connect.
          * @param failureReason the connection failure reason code.
          */
-        void onConnectionStatus(
+        void onConnectionFailed(
                 @NonNull WifiNetworkSpecifier wifiNetworkSpecifier,
                 @LocalOnlyConnectionStatusCode int failureReason);
     }
@@ -8867,7 +8867,7 @@ public class WifiManager {
                 int failureReason) {
             Binder.clearCallingIdentity();
             mExecutor.execute(() ->
-                    mListener.onConnectionStatus(networkSpecifier, failureReason));
+                    mListener.onConnectionFailed(networkSpecifier, failureReason));
         }
 
     }
