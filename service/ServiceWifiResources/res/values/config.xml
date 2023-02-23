@@ -683,8 +683,32 @@
          they are coming from the background apps (default = 30 mins). -->
     <integer translatable="false" name="config_wifiRttBackgroundExecGapMs">1800000</integer>
 
-    <!-- Integer indicating the RSSI and link layer stats polling interval in milliseconds when device is connected and screen is on -->
+    <!-- Integer indicating the RSSI and link layer stats polling interval (regular interval) in
+    milliseconds when device is connected and screen is on -->
     <integer translatable="false" name="config_wifiPollRssiIntervalMilliseconds">3000</integer>
+
+    <!-- Integer indicating the RSSI and link layer stats polling interval (long interval) in
+    milliseconds when device is connected and screen is on. The long interval is to reduce
+    power consumption of link layer stats polling. This value should be greater than the regular
+    interval -->
+    <integer translatable="false" name="config_wifiPollRssiLongIntervalMilliseconds">9000</integer>
+
+    <!-- RSSI threshold in dBm to decide the RSSI and link layer stats polling interval, and also
+    for the client mode RSSI monitor. When the polling is enabled, if the device is stationary
+    and current RSSI >= Threshold + Hysteresis value, set long interval and enable RSSI monitoring
+    using the RSSI threshold. If device is non-stationary or current RSSI <= Threshold, set regular
+    interval and disable RSSI monitoring. -->
+    <integer translatable="false" name="config_wifiClientRssiMonitorThresholdDbm">-73</integer>
+
+    <!-- Hysteresis value in dB for the client mode RSSI monitor threshold. After the monitor is
+    enabled with RSSI >= Threshold + Hysteresis value, the RSSI threshold breach only happens
+    when the current RSSI <= Threshold, in order to avoid frequent switch between regular and
+    long polling intervals -->
+    <integer translatable="false" name="config_wifiClientRssiMonitorHysteresisDb">5</integer>
+
+    <!-- Enable the feature of adjusting link layer stats polling interval based on
+    device mobility state and client mode RSSI monitoring. -->
+    <bool translatable="false" name="config_wifiAdjustPollRssiIntervalEnabled">false</bool>
 
     <!-- Override channel utilization estimation with fixed value -->
     <bool translatable="false" name="config_wifiChannelUtilizationOverrideEnabled">true</bool>
@@ -708,6 +732,13 @@
          cause the wifi stack to turn wifi off and wait for user input.
          Set to 0 to turn off recovery attempts and always turn off wifi on failures -->
     <integer translatable="false" name="config_wifiMaxNativeFailureSelfRecoveryPerHour">2</integer>
+
+    <!-- Enable self recovery when an interface is added. -->
+    <bool translatable="false" name="config_wifiInterfaceAddedSelfRecoveryEnabled">false</bool>
+
+    <!-- For which interface to enable self recovery. -->
+    <string translatable="false" name="config_wifiSelfRecoveryInterfaceName">wlan0</string>
+
     <!-- Ignore the open saved network if from carrier provisioning app, there is a same open suggestion and a secure suggestion from same carrier available -->
     <bool translatable="false" name="config_wifiIgnoreOpenSavedNetworkWhenSecureSuggestionAvailable">true</bool>
 
@@ -965,6 +996,25 @@
     <!-- The world mode country code value definition in the wifi driver -->
     <string translatable="false" name="config_wifiDriverWorldModeCountryCode">00</string>
 
+    <!-- The value indicates if the OOB Pseudonym is Enabled, not override,
+         see config_wifiOobPseudonymEnabled_carrier_overrides. -->
+    <bool translatable="false" name="config_wifiOobPseudonymEnabled">false</bool>
+    <!-- Carrier specific override for enabling the OOB pseudonym feature, only boolean
+         values - true and false are valid input, see examples -->
+    <string-array translatable="false" name="config_wifiOobPseudonymEnabled_carrier_overrides">
+        <!-- example -->
+        <!-- <item><xliff:g id="carrier_id_prefix">:::1234:::</xliff:g>true</item> -->
+        <!-- <item><xliff:g id="carrier_id_prefix">:::5678:::</xliff:g>false</item> -->
+    </string-array>
+    <!-- The URL of entitlement server which is used to get the OOB pseudonym, not
+         override, see config_wifiOobPseudonymEntitlementServerUrl_carrier_overrides -->
+    <string translatable="false" name="config_wifiOobPseudonymEntitlementServerUrl"/>
+    <!-- Carrier specific override for the URL of entitlement server retrieving OOB pseudonym. -->
+    <string-array translatable="false" name="config_wifiOobPseudonymEntitlementServerUrl_carrier_overrides">
+        <!-- example -->
+        <!-- <item><xliff:g id="carrier_id_prefix">:::1234:::</xliff:g>https://example.com/oob</item> -->
+    </string-array>
+
     <!-- Indicates whether or not the AP WAN Link Status ANQP element is used to filter candidate
          networks. Note that even if enabled (overlay = true) that invalid elements (all zeros
          are still ignored).
@@ -1040,4 +1090,12 @@
     <integer translatable="false" name="config_wifiDtimMultiplierIpv4Only">9</integer>
     <!-- Indicates the DTIM multiple value used when it has both IPv4 and IPv6 addresses -->
     <integer translatable="false" name="config_wifiDtimMultiplierIpv6Ipv4">2</integer>
+    <!-- Boolean indicating whether the firmware can handle the Wifi Aware request priority between
+    the offloading and framework-->
+    <bool translatable="false" name="config_wifiAwareOffloadingFirmwareHandlePriority">false</bool>
+    <!-- Boolean indicating whether the framework can disable Wi-Fi chip power save while acquiring
+         a low latency lock. If the flag is set to false, chipset should make changes to replace
+         disable of power save to avoid the high latency when chip is in power save mode as part of
+         handling the HAL API setLatencyMode(). -->
+    <bool translatable="false" name ="config_wifiLowLatencyLockDisableChipPowerSave">true</bool>
 </resources>

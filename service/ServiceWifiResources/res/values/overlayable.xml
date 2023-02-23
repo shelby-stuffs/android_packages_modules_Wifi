@@ -68,6 +68,8 @@
           <item type="integer" name="config_wifiFrameworkSoftApShutDownTimeoutMilliseconds" />
           <item type="integer" name="config_wifiFrameworkSoftApShutDownIdleInstanceInBridgedModeTimeoutMillisecond" />
           <item type="bool" name="config_wifiFrameworkSoftApDisableBridgedModeShutdownIdleInstanceWhenCharging" />
+          <item type="array" name="config_wifiOobPseudonymEnabled_carrier_overrides" />
+          <item type="array" name="config_wifiOobPseudonymEntitlementServerUrl_carrier_overrides" />
           <item type="bool" name="config_wifiSoftApDynamicCountryCodeUpdateSupported" />
           <item type="bool" name="config_wifiSoftapResetChannelConfig" />
           <item type="bool" name="config_wifiSoftapResetHiddenConfig" />
@@ -207,6 +209,10 @@
           <item type="integer" name="config_wifiEstimateRssiErrorMarginDb" />
           <item type="integer" name="config_wifiRttBackgroundExecGapMs" />
           <item type="integer" name="config_wifiPollRssiIntervalMilliseconds" />
+          <item type="integer" name="config_wifiPollRssiLongIntervalMilliseconds" />
+          <item type="integer" name="config_wifiClientRssiMonitorThresholdDbm" />
+          <item type="integer" name="config_wifiClientRssiMonitorHysteresisDb" />
+          <item type="bool" name="config_wifiAdjustPollRssiIntervalEnabled" />
           <item type="bool" name="config_wifiChannelUtilizationOverrideEnabled" />
           <item type="integer" name="config_wifiChannelUtilizationOverride2g" />
           <item type="integer" name="config_wifiChannelUtilizationOverride5g" />
@@ -215,6 +221,8 @@
           <item type="bool" name="config_wifiSaeUpgradeOffloadEnabled" />
           <item type="bool" name="config_wifiOweUpgradeEnabled" />
           <item type="integer" name="config_wifiMaxNativeFailureSelfRecoveryPerHour" />
+          <item type="bool" name="config_wifiInterfaceAddedSelfRecoveryEnabled" />
+          <item type="string" name="config_wifiSelfRecoveryInterfaceName" />
           <item type="bool" name="config_wifiIgnoreOpenSavedNetworkWhenSecureSuggestionAvailable" />
           <item type="bool" name="config_wifiSoftapAcsIncludeDfs" />
           <item type="integer" name="config_wifiMovingPnoScanIntervalMillis" />
@@ -296,6 +304,9 @@
           <item type="integer" name="config_wifiDtimMultiplierIpv6Only" />
           <item type="integer" name="config_wifiDtimMultiplierIpv6Ipv4" />
           <item type="integer" name="config_wifiDtimMultiplierMulticastLockEnabled" />
+          <item type="bool" name="config_wifiAwareOffloadingFirmwareHandlePriority" />
+          <item type="bool" name="config_wifiLowLatencyLockDisableChipPowerSave" />
+
           <!-- Params from config.xml that can be overlayed -->
 
           <!-- Params from strings.xml that can be overlayed -->

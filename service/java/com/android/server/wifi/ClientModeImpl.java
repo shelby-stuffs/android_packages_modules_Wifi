@@ -86,6 +86,7 @@ import android.net.wifi.WifiContext;
 import android.net.wifi.WifiEnterpriseConfig;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiManager.DeviceMobilityState;
 import android.net.wifi.WifiNetworkAgentSpecifier;
 import android.net.wifi.WifiNetworkSpecifier;
 import android.net.wifi.WifiSsid;
@@ -95,6 +96,7 @@ import android.net.wifi.nl80211.DeviceWiphyCapabilities;
 import android.net.wifi.util.ScanResultUtil;
 import android.os.BatteryStatsManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.ConditionVariable;
 import android.os.IBinder;
 import android.os.Looper;
@@ -234,6 +236,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private final WifiTrafficPoller mWifiTrafficPoller;
     private final PasspointManager mPasspointManager;
     private final WifiDataStall mWifiDataStall;
+    private final RssiMonitor mRssiMonitor;
     private final LinkProbeManager mLinkProbeManager;
     private final MboOceController mMboOceController;
     private final McastLockManagerFilterController mMcastLockManagerFilterController;
@@ -295,32 +298,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     private String getTag() {
         return TAG + "[" + mId + ":" + (mInterfaceName == null ? "unknown" : mInterfaceName) + "]";
-    }
-
-    private void processRssiThreshold(byte curRssi, int reason,
-            WifiNative.WifiRssiEventHandler rssiHandler) {
-        if (curRssi == Byte.MAX_VALUE || curRssi == Byte.MIN_VALUE) {
-            Log.wtf(getTag(), "processRssiThreshold: Invalid rssi " + curRssi);
-            return;
-        }
-        for (int i = 0; i < mRssiRanges.length; i++) {
-            if (curRssi < mRssiRanges[i]) {
-                // Assume sorted values(ascending order) for rssi,
-                // bounded by high(127) and low(-128) at extremeties
-                byte maxRssi = mRssiRanges[i];
-                byte minRssi = mRssiRanges[i - 1];
-                // This value of hw has to be believed as this value is averaged and has breached
-                // the rssi thresholds and raised event to host. This would be eggregious if this
-                // value is invalid
-                mWifiInfo.setRssi(curRssi);
-                updateCapabilities();
-                int ret = startRssiMonitoringOffload(maxRssi, minRssi, rssiHandler);
-                Log.d(getTag(), "Re-program RSSI thresholds for " + getWhatToString(reason)
-                        + ": [" + minRssi + ", " + maxRssi + "], curRssi=" + curRssi
-                        + " ret=" + ret);
-                break;
-            }
-        }
     }
 
     private boolean mEnableRssiPolling = false;
@@ -442,7 +419,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     @Nullable
     WifiNetworkAgent mNetworkAgent;
 
-    private byte[] mRssiRanges;
 
     // Used to filter out requests we couldn't possibly satisfy.
     private final NetworkCapabilities mNetworkCapabilitiesFilter;
@@ -534,15 +510,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     /* used to stop offload sending IP packet */
     static final int CMD_STOP_IP_PACKET_OFFLOAD                         = BASE + 161;
-
-    /* used to start rssi monitoring in hw */
-    static final int CMD_START_RSSI_MONITORING_OFFLOAD                  = BASE + 162;
-
-    /* used to stop rssi moniroting in hw */
-    static final int CMD_STOP_RSSI_MONITORING_OFFLOAD                   = BASE + 163;
-
-    /* used to indicated RSSI threshold breach in hw */
-    static final int CMD_RSSI_THRESHOLD_BREACHED                        = BASE + 164;
 
     /* Used to time out the creation of an IpClient instance. */
     static final int CMD_IPCLIENT_STARTUP_TIMEOUT                       = BASE + 165;
@@ -835,6 +802,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mWifiInjector.getWifiHandlerThread());
         mDtimMultiplierController = new DtimMultiplierController(mContext, mInterfaceName,
                 mWifiNative);
+
+        mRssiMonitor = new RssiMonitor(mWifiGlobals, mWifiThreadRunner, mWifiInfo, mWifiNative,
+                mInterfaceName,
+                () -> {
+                    updateCapabilities();
+                    updateCurrentConnectionInfo();
+                },
+                mDeviceConfigFacade);
+
         enableVerboseLogging(verboseLoggingEnabled);
 
         mNotificationManager = wifiNotificationManager;
@@ -1304,6 +1280,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mWifiNative.enableVerboseLogging(mVerboseLoggingEnabled, mVerboseLoggingEnabled);
         mQosPolicyRequestHandler.enableVerboseLogging(mVerboseLoggingEnabled);
         mDtimMultiplierController.enableVerboseLogging(mVerboseLoggingEnabled);
+        mRssiMonitor.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     /**
@@ -1668,15 +1645,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         } else {
             return SocketKeepalive.SUCCESS;
         }
-    }
-
-    private int startRssiMonitoringOffload(byte maxRssi, byte minRssi,
-            WifiNative.WifiRssiEventHandler rssiHandler) {
-        return mWifiNative.startRssiMonitoring(mInterfaceName, maxRssi, minRssi, rssiHandler);
-    }
-
-    private int stopRssiMonitoringOffload() {
-        return mWifiNative.stopRssiMonitoring(mInterfaceName);
     }
 
     @Override
@@ -2272,14 +2240,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 sb.append(Integer.toString(msg.arg2));
                 sb.append(" cur=").append(mConnectingWatchdogCount);
                 break;
-            case CMD_START_RSSI_MONITORING_OFFLOAD:
-            case CMD_STOP_RSSI_MONITORING_OFFLOAD:
-            case CMD_RSSI_THRESHOLD_BREACHED:
-                sb.append(" rssi=");
-                sb.append(Integer.toString(msg.arg1));
-                sb.append(" thresholds=");
-                sb.append(Arrays.toString(mRssiRanges));
-                break;
             case CMD_IPV4_PROVISIONING_SUCCESS:
                 sb.append(" ");
                 sb.append(/* DhcpResultsParcelable */ msg.obj);
@@ -2368,8 +2328,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 return "CMD_ROAM_WATCHDOG_TIMER";
             case CMD_RSSI_POLL:
                 return "CMD_RSSI_POLL";
-            case CMD_RSSI_THRESHOLD_BREACHED:
-                return "CMD_RSSI_THRESHOLD_BREACHED";
             case CMD_SAVE_NETWORK:
                 return "CMD_SAVE_NETWORK";
             case CMD_SCREEN_STATE_CHANGED:
@@ -2386,12 +2344,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 return "CMD_START_IP_PACKET_OFFLOAD";
             case CMD_START_ROAM:
                 return "CMD_START_ROAM";
-            case CMD_START_RSSI_MONITORING_OFFLOAD:
-                return "CMD_START_RSSI_MONITORING_OFFLOAD";
             case CMD_STOP_IP_PACKET_OFFLOAD:
                 return "CMD_STOP_IP_PACKET_OFFLOAD";
-            case CMD_STOP_RSSI_MONITORING_OFFLOAD:
-                return "CMD_STOP_RSSI_MONITORING_OFFLOAD";
             case CMD_UNWANTED_NETWORK:
                 return "CMD_UNWANTED_NETWORK";
             case CMD_UPDATE_LINKPROPERTIES:
@@ -2778,18 +2732,19 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         Intent intent = new Intent(WifiManager.RSSI_CHANGED_ACTION);
         intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
         intent.putExtra(WifiManager.EXTRA_NEW_RSSI, newRssi);
-        final BroadcastOptions opts;
+        final Bundle opts;
         if (SdkLevel.isAtLeastU()) {
-            opts = BroadcastOptions.makeBasic();
-            opts.setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT);
+            opts = BroadcastOptions.makeBasic()
+                    .setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT)
+                    .setDeferUntilActive(true)
+                    .toBundle();
         } else {
             opts = null;
         }
         mBroadcastQueue.queueOrSendBroadcast(
                 mClientModeManager,
                 () -> mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
-                        android.Manifest.permission.ACCESS_WIFI_STATE,
-                        opts == null ? null : opts.toBundle()));
+                        android.Manifest.permission.ACCESS_WIFI_STATE, opts));
     }
 
     private void sendLinkConfigurationChangedBroadcast() {
@@ -2906,7 +2861,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     private void setMultiLinkInfo(@Nullable String bssid) {
         if (bssid == null) return;
-        ScanResult matchingScanResult = mScanRequestProxy.getScanResult(bssid);
+        ScanDetailCache scanDetailCache = mWifiConfigManager.getScanDetailCacheForNetwork(
+                mWifiInfo.getNetworkId());
+        if (scanDetailCache == null) return;
+        ScanResult matchingScanResult = scanDetailCache.getScanResult(bssid);
         if (matchingScanResult == null) return;
         if (matchingScanResult.getApMldMacAddress() != null) {
             mWifiInfo.setApMldMacAddress(matchingScanResult.getApMldMacAddress());
@@ -3169,7 +3127,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 // WakeupController should only care about the primary, internet providing network
                 mWakeupController.setLastDisconnectInfo(matchInfo);
             }
-            stopRssiMonitoringOffload();
+            mRssiMonitor.reset();
         }
 
         clearTargetBssid("handleNetworkDisconnect");
@@ -4603,13 +4561,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 }
                 case CMD_ACCEPT_EAP_SERVER_CERTIFICATE:
                 case CMD_START_ROAM:
-                case CMD_START_RSSI_MONITORING_OFFLOAD:
-                case CMD_STOP_RSSI_MONITORING_OFFLOAD:
-                case CMD_IP_REACHABILITY_SESSION_END:
                 case CMD_IP_CONFIGURATION_SUCCESSFUL:
                 case CMD_IP_CONFIGURATION_LOST:
                 case CMD_IP_REACHABILITY_LOST:
-                case CMD_IP_REACHABILITY_FAILURE: {
+                case CMD_IP_REACHABILITY_FAILURE:
+                case CMD_IP_REACHABILITY_SESSION_END: {
                     mMessageHandlingStatus = MESSAGE_HANDLING_STATUS_DISCARD;
                     break;
                 }
@@ -4997,48 +4953,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         @Override
         public void onSignalStrengthThresholdsUpdated(@NonNull int[] thresholds) {
             if (!isThisCallbackActive()) return;
-            // 0. If there are no thresholds, or if the thresholds are invalid,
-            //    stop RSSI monitoring.
-            // 1. Tell the hardware to start RSSI monitoring here, possibly adding MIN_VALUE and
-            //    MAX_VALUE at the start/end of the thresholds array if necessary.
-            // 2. Ensure that when the hardware event fires, we fetch the RSSI from the hardware
-            //    event, call mWifiInfo.setRssi() with it, and call updateCapabilities(), and then
-            //    re-arm the hardware event. This needs to be done on the state machine thread to
-            //    avoid race conditions. The RSSI used to re-arm the event (and perhaps also the one
-            //    sent in the NetworkCapabilities) must be the one received from the hardware event
-            //    received, or we might skip callbacks.
-            // 3. Ensure that when we disconnect, RSSI monitoring is stopped.
-            logd("Received signal strength thresholds: " + Arrays.toString(thresholds));
             // Enable RSSI monitoring only on primary STA
             if (!isPrimary()) {
                 return;
             }
-            if (thresholds.length == 0) {
-                ClientModeImpl.this.sendMessage(CMD_STOP_RSSI_MONITORING_OFFLOAD,
-                        mWifiInfo.getRssi());
-                return;
-            }
-            int [] rssiVals = Arrays.copyOf(thresholds, thresholds.length + 2);
-            rssiVals[rssiVals.length - 2] = Byte.MIN_VALUE;
-            rssiVals[rssiVals.length - 1] = Byte.MAX_VALUE;
-            Arrays.sort(rssiVals);
-            byte[] rssiRange = new byte[rssiVals.length];
-            for (int i = 0; i < rssiVals.length; i++) {
-                int val = rssiVals[i];
-                if (val <= Byte.MAX_VALUE && val >= Byte.MIN_VALUE) {
-                    rssiRange[i] = (byte) val;
-                } else {
-                    Log.e(getTag(), "Illegal value " + val + " for RSSI thresholds: "
-                            + Arrays.toString(rssiVals));
-                    ClientModeImpl.this.sendMessage(CMD_STOP_RSSI_MONITORING_OFFLOAD,
-                            mWifiInfo.getRssi());
-                    return;
-                }
-            }
-            // TODO: Do we quash rssi values in this sorted array which are very close?
-            mRssiRanges = rssiRange;
-            ClientModeImpl.this.sendMessage(CMD_START_RSSI_MONITORING_OFFLOAD,
-                    mWifiInfo.getRssi());
+            mWifiThreadRunner.post(
+                    () -> mRssiMonitor.updateAppThresholdsAndStartMonitor(thresholds));
         }
 
         @Override
@@ -5050,6 +4970,16 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         @Override
         public void onDscpPolicyStatusUpdated(int policyId, int status) {
             mQosPolicyRequestHandler.setQosPolicyStatus(policyId, status);
+        }
+    }
+
+    @Override
+    public void onDeviceMobilityStateUpdated(@DeviceMobilityState int newState) {
+        if (!mScreenOn) {
+            return;
+        }
+        if (isPrimary()) {
+            mRssiMonitor.updatePollRssiInterval(newState);
         }
     }
 
@@ -5847,18 +5777,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             super(threshold, mWifiInjector.getWifiHandlerLocalLog());
         }
 
-        class RssiEventHandler implements WifiNative.WifiRssiEventHandler {
-            @Override
-            public void onRssiThresholdBreached(byte curRssi) {
-                if (mVerboseLoggingEnabled) {
-                    Log.e(getTag(), "onRssiThresholdBreach event. Cur Rssi = " + curRssi);
-                }
-                sendMessage(CMD_RSSI_THRESHOLD_BREACHED, curRssi);
-            }
-        }
-
-        RssiEventHandler mRssiEventHandler = new RssiEventHandler();
-
         @Override
         public void enterImpl() {
             mRssiPollToken++;
@@ -6080,6 +5998,13 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         if (isPrimary()) {
                             mLinkProbeManager.updateConnectionStats(mWifiInfo, mInterfaceName);
                         }
+                        // Update the polling interval as needed before sending the delayed message
+                        // so that the next polling can happen after the updated interval
+                        if (isPrimary()) {
+                            int curState = mWifiInjector.getActiveModeWarden()
+                                    .getDeviceMobilityState();
+                            mRssiMonitor.updatePollRssiInterval(curState);
+                        }
                         sendMessageDelayed(obtainMessage(CMD_RSSI_POLL, mRssiPollToken, 0),
                                 mWifiGlobals.getPollRssiIntervalMillis());
                         if (isPrimary()) {
@@ -6106,6 +6031,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         updateLinkLayerStatsRssiSpeedFrequencyCapabilities(txBytes, rxBytes);
                         sendMessageDelayed(obtainMessage(CMD_RSSI_POLL, mRssiPollToken, 0),
                                 mWifiGlobals.getPollRssiIntervalMillis());
+                    }
+                    else {
+                        mRssiMonitor.setShortPollRssiInterval();
                     }
                     break;
                 }
@@ -6145,17 +6073,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         mMultiInternetManager.notifyBssidAssociatedEvent(mClientModeManager);
                         updateCurrentConnectionInfo();
                     }
-                    break;
-                }
-                case CMD_START_RSSI_MONITORING_OFFLOAD:
-                case CMD_RSSI_THRESHOLD_BREACHED: {
-                    byte currRssi = (byte) message.arg1;
-                    processRssiThreshold(currRssi, message.what, mRssiEventHandler);
-                    updateCurrentConnectionInfo();
-                    break;
-                }
-                case CMD_STOP_RSSI_MONITORING_OFFLOAD: {
-                    stopRssiMonitoringOffload();
                     break;
                 }
                 case CMD_RECONNECT: {
