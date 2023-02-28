@@ -286,6 +286,8 @@ public class ClientModeImplTest extends WifiBaseTest {
     private static final int TEST_MLO_LINK_ID = 1;
     private static final int TEST_MLO_LINK_ID_1 = 2;
 
+    private static final String TEST_TDLS_PEER_ADDR_STR = "02:55:11:02:36:4C";
+
     private long mBinderToken;
     private MockitoSession mSession;
     private TestNetworkParams mTestNetworkParams = new TestNetworkParams();
@@ -2986,6 +2988,25 @@ public class ClientModeImplTest extends WifiBaseTest {
         assertEquals("DisconnectedState", getCurrentState().getName());
     }
 
+    @Test
+    public void testTriggerWifiNetworkStateChangedListener() throws Exception {
+        InOrder inOrder = inOrder(mActiveModeWarden);
+        connect();
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_CONNECTING);
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener
+                        .WIFI_NETWORK_STATUS_OBTAINING_IPADDR);
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_CONNECTED);
+        inOrder.verify(mActiveModeWarden, never()).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_DISCONNECTED);
+    }
+
     /**
      * Verifies that WifiInfo is updated upon CMD_ASSOCIATED_BSSID event.
      */
@@ -3116,6 +3137,9 @@ public class ClientModeImplTest extends WifiBaseTest {
     public void testReconnectCommandWhenDisconnected() throws Exception {
         // Connect to network with |TEST_BSSID_STR|, |sFreq|, and then disconnect.
         disconnect();
+        verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_DISCONNECTED);
 
         mCmi.reconnect(ClientModeImpl.WIFI_WORK_SOURCE);
         mLooper.dispatchAll();
@@ -9530,5 +9554,25 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         // WifiInfo is updated to the actual used type.
         assertEquals(WifiInfo.SECURITY_TYPE_SAE, mWifiInfo.getCurrentSecurityType());
+    }
+
+    @Test
+    public void testEnableTdls() throws Exception {
+        connect();
+        when(mWifiNative.getMaxSupportedConcurrentTdlsSessions(WIFI_IFACE_NAME)).thenReturn(5);
+        when(mWifiNative.getSupportedFeatureSet(WIFI_IFACE_NAME))
+                .thenReturn(WifiManager.WIFI_FEATURE_TDLS);
+        when(mWifiNative.startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR), anyBoolean()))
+                .thenReturn(true);
+        assertEquals(5, mCmi.getMaxSupportedConcurrentTdlsSessions());
+        assertTrue(mCmi.isTdlsOperationCurrentlyAvailable());
+        mCmi.enableTdls(TEST_TDLS_PEER_ADDR_STR, true);
+        assertEquals(1, mCmi.getNumberOfEnabledTdlsSessions());
+        verify(mWifiNative).startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR),
+                eq(true));
+        mCmi.enableTdls(TEST_TDLS_PEER_ADDR_STR, false);
+        verify(mWifiNative).startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR),
+                eq(false));
+        assertEquals(0, mCmi.getNumberOfEnabledTdlsSessions());
     }
 }
