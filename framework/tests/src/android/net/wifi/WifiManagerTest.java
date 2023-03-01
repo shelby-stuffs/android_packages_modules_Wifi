@@ -110,6 +110,7 @@ import android.net.wifi.WifiManager.SuggestionUserApprovalStatusListener;
 import android.net.wifi.WifiManager.TrafficStateCallback;
 import android.net.wifi.WifiManager.WifiConnectedNetworkScorer;
 import android.net.wifi.WifiUsabilityStatsEntry.ContentionTimeStats;
+import android.net.wifi.WifiUsabilityStatsEntry.LinkStats;
 import android.net.wifi.WifiUsabilityStatsEntry.RadioStats;
 import android.net.wifi.WifiUsabilityStatsEntry.RateStats;
 import android.os.Build;
@@ -144,6 +145,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * Unit tests for {@link android.net.wifi.WifiManager}.
@@ -184,6 +186,8 @@ public class WifiManagerTest {
     @Mock OnWifiUsabilityStatsListener mOnWifiUsabilityStatsListener;
     @Mock OnWifiActivityEnergyInfoListener mOnWifiActivityEnergyInfoListener;
     @Mock SuggestionConnectionStatusListener mSuggestionConnectionListener;
+    @Mock
+    WifiManager.LocalOnlyConnectionFailureListener mLocalOnlyConnectionFailureListener;
     @Mock Runnable mRunnable;
     @Mock Executor mExecutor;
     @Mock Executor mAnotherExecutor;
@@ -2463,11 +2467,16 @@ public class WifiManagerTest {
         RadioStats[] radioStats = new RadioStats[2];
         radioStats[0] = new RadioStats(0, 10, 11, 12, 13, 14, 15, 16, 17, 18);
         radioStats[1] = new RadioStats(1, 20, 21, 22, 23, 24, 25, 26, 27, 28);
+        SparseArray<LinkStats> linkStats = new SparseArray<>();
+        linkStats.put(0, new LinkStats(0, 0, -50, 300, 200, 188, 2, 2, 100, 300, 100,
+                contentionTimeStats, rateStats));
+        linkStats.put(1, new LinkStats(0, 0, -40, 860, 600, 388, 2, 2, 200, 400, 100,
+                contentionTimeStats, rateStats));
         callbackCaptor.getValue().onWifiUsabilityStats(1, true,
                 new WifiUsabilityStatsEntry(System.currentTimeMillis(), -50, 100, 10, 0, 5, 5,
                         100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 1, 100, 10,
                         100, 27, contentionTimeStats, rateStats, radioStats, 101, true, true, true,
-                        0, 10, 10, true));
+                        0, 10, 10, true, linkStats));
         verify(mOnWifiUsabilityStatsListener).onWifiUsabilityStats(anyInt(), anyBoolean(),
                 any(WifiUsabilityStatsEntry.class));
     }
@@ -3110,7 +3119,8 @@ public class WifiManagerTest {
         ArgumentCaptor<ISuggestionConnectionStatusListener.Stub> callbackCaptor =
                 ArgumentCaptor.forClass(ISuggestionConnectionStatusListener.Stub.class);
         Executor executor = new SynchronousExecutor();
-        mWifiManager.addSuggestionConnectionStatusListener(executor, mSuggestionConnectionListener);
+        mWifiManager.addSuggestionConnectionStatusListener(executor,
+                mSuggestionConnectionListener);
         verify(mWifiService).registerSuggestionConnectionStatusListener(callbackCaptor.capture(),
                 anyString(), nullable(String.class));
         callbackCaptor.getValue().onConnectionStatus(mWifiNetworkSuggestion, errorCode);
@@ -3929,4 +3939,70 @@ public class WifiManagerTest {
         verify(resultCallback).accept(eq(canCreate), resultCaptor.capture());
         assertEquals(interfacePairs, resultCaptor.getValue());
     }
+
+    /**
+     * Verify call to getChannelData goes to WifiServiceImpl
+     */
+    @Test
+    public void testChannelData() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        Consumer<List<Bundle>> resultsCallback = mock(Consumer.class);
+        SynchronousExecutor executor = mock(SynchronousExecutor.class);
+        mWifiManager.getChannelData(executor, resultsCallback);
+        verify(mWifiService).getChannelData(any(IListListener.Stub.class), eq(TEST_PACKAGE_NAME),
+                any(Bundle.class));
+    }
+
+    /**
+     * Verify call to {@link WifiManager#addQosPolicy(QosPolicyParams, Executor, Consumer)}.
+     */
+    @Test
+    public void testAddQosPolicy() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastU());
+
+        final int policyId = 2;
+        final int direction = QosPolicyParams.DIRECTION_DOWNLINK;
+        final int userPriority = QosPolicyParams.USER_PRIORITY_VIDEO_LOW;
+        QosPolicyParams policyParams = new QosPolicyParams.Builder(policyId, direction)
+                .setUserPriority(userPriority)
+                .build();
+        ArgumentCaptor<QosPolicyParams> paramsCaptor =
+                ArgumentCaptor.forClass(QosPolicyParams.class);
+
+        SynchronousExecutor executor = mock(SynchronousExecutor.class);
+        Consumer<Integer> resultsCallback = mock(Consumer.class);
+
+        mWifiManager.addQosPolicy(policyParams, executor, resultsCallback);
+        verify(mWifiService).addQosPolicy(paramsCaptor.capture(), any(), eq(TEST_PACKAGE_NAME),
+                any(IIntegerListener.Stub.class));
+        assertEquals(policyId, paramsCaptor.getValue().getPolicyId());
+        assertEquals(direction, paramsCaptor.getValue().getDirection());
+        assertEquals(userPriority, paramsCaptor.getValue().getUserPriority());
+    }
+
+    /**
+     * Verify call to {@link WifiManager#removeQosPolicy(int)}
+     */
+    @Test
+    public void testRemoveQosPolicy() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastU());
+        final int policyId = 127;
+        mWifiManager.removeQosPolicy(policyId);
+        verify(mWifiService).removeQosPolicy(eq(policyId), eq(TEST_PACKAGE_NAME));
+    }
+
+    @Test
+    public void testAddRemoveLocaOnlyConnectionListener() throws RemoteException {
+        assertThrows(IllegalArgumentException.class, () -> mWifiManager
+                .addLocalOnlyConnectionFailureListener(null, mLocalOnlyConnectionFailureListener));
+        assertThrows(IllegalArgumentException.class, () -> mWifiManager
+                .addLocalOnlyConnectionFailureListener(mExecutor, null));
+        mWifiManager.addLocalOnlyConnectionFailureListener(mExecutor,
+                mLocalOnlyConnectionFailureListener);
+        verify(mWifiService).addLocalOnlyConnectionStatusListener(any(), eq(TEST_PACKAGE_NAME),
+                nullable(String.class));
+        mWifiManager.removeLocalOnlyConnectionFailureListener(mLocalOnlyConnectionFailureListener);
+        verify(mWifiService).removeLocalOnlyConnectionStatusListener(any(), eq(TEST_PACKAGE_NAME));
+    }
+
 }

@@ -49,6 +49,7 @@ import android.net.wifi.WifiScanner.ScanSettings;
 import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.util.ScanResultUtil;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.Process;
@@ -59,6 +60,8 @@ import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.LocalLog;
 import android.util.Log;
+
+import androidx.annotation.RequiresApi;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.modules.utils.build.SdkLevel;
@@ -2153,6 +2156,7 @@ public class WifiConnectivityManager {
     /**
      * Configures network selection parameters..
      */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     public void setNetworkSelectionConfig(@NonNull WifiNetworkSelectionConfig nsConfig) {
         mNetworkSelector.setAssociatedNetworkSelectionOverride(
                 nsConfig.getAssociatedNetworkSelectionOverride());
@@ -2163,6 +2167,14 @@ public class WifiConnectivityManager {
                 nsConfig.isUserConnectChoiceOverrideEnabled());
         mNetworkSelector.setLastSelectionWeightEnabled(
                 nsConfig.isLastSelectionWeightEnabled());
+        mScoringParams.setRssi2Thresholds(
+                nsConfig.getRssiThresholds(ScanResult.WIFI_BAND_24_GHZ));
+        mScoringParams.setRssi5Thresholds(
+                nsConfig.getRssiThresholds(ScanResult.WIFI_BAND_5_GHZ));
+        mScoringParams.setRssi6Thresholds(
+                nsConfig.getRssiThresholds(ScanResult.WIFI_BAND_6_GHZ));
+        mScoringParams.setFrequencyWeights(
+                nsConfig.getFrequencyWeights());
     }
 
     /**
@@ -2890,8 +2902,11 @@ public class WifiConnectivityManager {
                         // filter out candidates that are disabled.
                         WifiConfiguration config =
                                 mConfigManager.getConfiguredNetwork(candidate.getNetworkConfigId());
-                        return config != null
-                                && config.getNetworkSelectionStatus().isNetworkEnabled()
+                        if (config == null || mConfigManager.isNetworkTemporarilyDisabledByUser(
+                                config.isPasspoint() ? config.FQDN : config.SSID)) {
+                            return false;
+                        }
+                        return config.getNetworkSelectionStatus().isNetworkEnabled()
                                 && config.allowAutojoin;
                     })
                     .collect(Collectors.toList());

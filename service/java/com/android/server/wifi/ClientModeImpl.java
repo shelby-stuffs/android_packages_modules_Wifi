@@ -36,7 +36,6 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
-import android.app.AlarmManager;
 import android.app.BroadcastOptions;
 import android.app.admin.SecurityLog;
 import android.content.BroadcastReceiver;
@@ -93,7 +92,6 @@ import android.net.wifi.WifiSsid;
 import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.nl80211.DeviceWiphyCapabilities;
-import android.net.wifi.nl80211.WifiNl80211Manager;
 import android.net.wifi.util.ScanResultUtil;
 import android.os.BatteryStatsManager;
 import android.os.Build;
@@ -268,6 +266,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private final ConcreteClientModeManager mClientModeManager;
 
     private final WifiNotificationManager mNotificationManager;
+    private final DtimMultiplierController mDtimMultiplierController;
     private final QosPolicyRequestHandler mQosPolicyRequestHandler;
 
     private boolean mFailedToResetMacAddress = false;
@@ -591,9 +590,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     @VisibleForTesting
     static final int CMD_ACCEPT_EAP_SERVER_CERTIFICATE                  = BASE + 301;
 
-    @VisibleForTesting
-    static final int CMD_REJECT_EAP_SERVER_CERTIFICATE                  = BASE + 302;
-
     /* Tracks if suspend optimizations need to be disabled by DHCP,
      * screen or due to high perf mode.
      * When any of them needs to disable it, we keep the suspend optimizations
@@ -837,11 +833,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mWifiInjector = wifiInjector;
         mQosPolicyRequestHandler = new QosPolicyRequestHandler(mInterfaceName, mWifiNative, this,
                 mWifiInjector.getWifiHandlerThread());
-
+        mDtimMultiplierController = new DtimMultiplierController(mContext, mInterfaceName,
+                mWifiNative);
         enableVerboseLogging(verboseLoggingEnabled);
 
         mNotificationManager = wifiNotificationManager;
-
         mInsecureEapNetworkHandlerCallbacksImpl =
                 new InsecureEapNetworkHandler.InsecureEapNetworkHandlerCallbacks() {
                 @Override
@@ -853,17 +849,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 @Override
                 public void onReject(String ssid) {
                     log("Reject Root CA cert for " + ssid);
-                    sendMessage(CMD_REJECT_EAP_SERVER_CERTIFICATE,
-                            WifiMetricsProto.ConnectionEvent.AUTH_FAILURE_REJECTED_BY_USER,
-                            0, ssid);
                 }
 
                 @Override
                 public void onError(String ssid) {
                     log("Insecure EAP network error for " + ssid);
-                    sendMessage(CMD_REJECT_EAP_SERVER_CERTIFICATE,
-                            WifiMetricsProto.ConnectionEvent.AUTH_FAILURE_EAP_FAILURE,
-                            0, ssid);
                 }};
         mInsecureEapNetworkHandler = new InsecureEapNetworkHandler(
                 mContext,
@@ -872,8 +862,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mFacade,
                 mNotificationManager,
                 mWifiInjector.getWifiDialogManager(),
-                mClock,
-                mContext.getSystemService(AlarmManager.class),
                 isTrustOnFirstUseSupported(),
                 mWifiGlobals.isInsecureEnterpriseConfigurationAllowed(),
                 mInsecureEapNetworkHandlerCallbacksImpl,
@@ -974,6 +962,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private void setMulticastFilter(boolean enabled) {
         if (mIpClient != null) {
             mIpClient.setMulticastFilter(enabled);
+            // Multicast filter enabled = multicast lock disabled
+            mDtimMultiplierController.setMulticastLock(!enabled);
         }
     }
 
@@ -1313,6 +1303,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mSupplicantStateTracker.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiNative.enableVerboseLogging(mVerboseLoggingEnabled, mVerboseLoggingEnabled);
         mQosPolicyRequestHandler.enableVerboseLogging(mVerboseLoggingEnabled);
+        mDtimMultiplierController.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     /**
@@ -2409,8 +2400,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 return "CMD_IPCLIENT_CREATED";
             case CMD_ACCEPT_EAP_SERVER_CERTIFICATE:
                 return "CMD_ACCEPT_EAP_SERVER_CERTIFICATE";
-            case CMD_REJECT_EAP_SERVER_CERTIFICATE:
-                return "CMD_REJECT_EAP_SERVER_CERTIFICATE";
             case WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT:
                 return "SUPPLICANT_STATE_CHANGE_EVENT";
             case WifiMonitor.AUTHENTICATION_FAILURE_EVENT:
@@ -2595,21 +2584,39 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     private WifiLinkLayerStats updateLinkLayerStatsRssiSpeedFrequencyCapabilities(long txBytes,
             long rxBytes) {
         WifiLinkLayerStats stats = getWifiLinkLayerStats();
-        WifiNl80211Manager.SignalPollResult pollResult = mWifiNative.signalPoll(mInterfaceName);
-        if (pollResult == null) {
+        WifiSignalPollResults pollResults = mWifiNative.signalPoll(mInterfaceName);
+        if (pollResults == null) {
             return stats;
         }
 
-        int newRssi = pollResult.currentRssiDbm;
-        int newTxLinkSpeed = pollResult.txBitrateMbps;
-        int newFrequency = pollResult.associationFrequencyMHz;
-        int newRxLinkSpeed = pollResult.rxBitrateMbps;
+        int newRssi = pollResults.getRssi();
+        int newTxLinkSpeed = pollResults.getTxLinkSpeed();
+        int newFrequency = pollResults.getFrequency();
+        int newRxLinkSpeed = pollResults.getRxLinkSpeed();
         boolean updateNetworkCapabilities = false;
 
         if (mVerboseLoggingEnabled) {
             logd("updateLinkLayerStatsRssiSpeedFrequencyCapabilities rssi=" + newRssi
                     + " TxLinkspeed=" + newTxLinkSpeed + " freq=" + newFrequency
                     + " RxLinkSpeed=" + newRxLinkSpeed);
+        }
+
+        /* Set link specific signal poll results */
+        for (MloLink link : mWifiInfo.getAffiliatedMloLinks()) {
+            int linkId = link.getLinkId();
+            link.setRssi(pollResults.getRssi(linkId));
+            link.setTxLinkSpeedMbps(pollResults.getTxLinkSpeed(linkId));
+            link.setRxLinkSpeedMbps(pollResults.getRxLinkSpeed(linkId));
+            link.setChannel(ScanResult.convertFrequencyMhzToChannelIfSupported(
+                    pollResults.getFrequency(linkId)));
+            link.setBand(ScanResult.toBand(pollResults.getFrequency(linkId)));
+            if (mVerboseLoggingEnabled) {
+                logd("linkId=" + linkId + " rssi=" + link.getRssi()
+                        + " channel=" + link.getChannel()
+                        + " band=" + link.getBand()
+                        + " TxLinkspeed=" + link.getTxLinkSpeedMbps()
+                        + " RxLinkSpeed=" + link.getRxLinkSpeedMbps());
+            }
         }
 
         /*
@@ -2734,7 +2741,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             // TODO: Update all callers to use NetworkCallbacks and delete this.
             sendLinkConfigurationChangedBroadcast();
         }
-
+        mDtimMultiplierController.updateLinkProperties(newLp);
         if (mVerboseLoggingEnabled) {
             StringBuilder sb = new StringBuilder();
             sb.append("updateLinkProperties nid: " + mLastNetworkId);
@@ -3218,6 +3225,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (!newConnectionInProgress) {
             mIsUserSelected = false;
         }
+        mDtimMultiplierController.reset();
         updateCurrentConnectionInfo();
     }
 
@@ -3665,6 +3673,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     WifiUsabilityStats.LABEL_BAD,
                     WifiUsabilityStats.TYPE_IP_REACHABILITY_LOST, -1);
             if (mWifiGlobals.getIpReachabilityDisconnectEnabled()) {
+                if (mWifiGlobals.getDisconnectOnlyOnInitialIpReachability()
+                        && !mIpReachabilityMonitorActive) {
+                    logd("CMD_IP_REACHABILITY_LOST Connect session is over, skip ip reachability lost indication.");
+                    return;
+                }
                 handleIpReachabilityLost();
             } else {
                 logd("CMD_IP_REACHABILITY_LOST but disconnect disabled -- ignore");
@@ -4336,8 +4349,21 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             break;
                         }
                     }
-                    mInsecureEapNetworkHandler.prepareConnection(mTargetWifiConfiguration);
                     setSelectedRcoiForPasspoint(config);
+                    if (mInsecureEapNetworkHandler.prepareConnection(mTargetWifiConfiguration)) {
+                        /* If TOFU is not supported and the user did not approve to connect to an
+                           insecure network before, do not connect now and instead, display a dialog
+                           or a notification, and keep network disconnected to avoid sending the
+                           credentials.
+                         */
+                        mInsecureEapNetworkHandler.startUserApprovalIfNecessary(mIsUserSelected);
+                        reportConnectionAttemptEnd(
+                                WifiMetrics.ConnectionEvent.FAILURE_CONNECT_NETWORK_FAILED,
+                                WifiMetricsProto.ConnectionEvent.HLF_NONE,
+                                WifiMetricsProto.ConnectionEvent.DISCONNECTED_USER_APPROVAL_NEEDED);
+                        transitionTo(mDisconnectedState);
+                        break;
+                    }
                     connectToNetwork(config);
                     break;
                 }
@@ -4576,7 +4602,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     break;
                 }
                 case CMD_ACCEPT_EAP_SERVER_CERTIFICATE:
-                case CMD_REJECT_EAP_SERVER_CERTIFICATE:
                 case CMD_START_ROAM:
                 case CMD_START_RSSI_MONITORING_OFFLOAD:
                 case CMD_STOP_RSSI_MONITORING_OFFLOAD:
@@ -5794,10 +5819,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 }
                 case WifiMonitor.TOFU_ROOT_CA_CERTIFICATE:
                     if (null == mTargetWifiConfiguration) break;
-                    if (!mInsecureEapNetworkHandler.setPendingCertificate(
+                    int certificateDepth = message.arg2;
+                    if (!mInsecureEapNetworkHandler.addPendingCertificate(
                             mTargetWifiConfiguration.SSID, message.arg2,
                             (X509Certificate) message.obj)) {
                         Log.d(TAG, "Cannot set pending cert.");
+                    }
+                    // Launch user approval upon receiving the server certificate
+                    if (certificateDepth == 0) {
+                        mInsecureEapNetworkHandler.startUserApprovalIfNecessary(mIsUserSelected);
                     }
                     break;
                 default: {
@@ -6026,6 +6056,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         clearTargetBssid("AllowlistRoamingCompleted");
                         sendNetworkChangeBroadcast(DetailedState.CONNECTED);
                     }
+                    checkIfNeedDisconnectSecondaryWifi();
                     mIpReachabilityMonitorActive = true;
                     sendMessageDelayed(obtainMessage(CMD_IP_REACHABILITY_SESSION_END, 0, 0), 10000);
                     break;
@@ -6395,10 +6426,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         @Override
         public void enterImpl() {
-            if (mInsecureEapNetworkHandler.startUserApprovalIfNecessary(mIsUserSelected)) {
-                return;
-            }
-
             startL3Provisioning();
         }
 
@@ -6426,31 +6453,6 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             WifiLastResortWatchdog.FAILURE_CODE_DHCP,
                             isConnected());
                     handleStatus = NOT_HANDLED;
-                    break;
-                }
-                case CMD_ACCEPT_EAP_SERVER_CERTIFICATE: {
-                    String ssid = (String) message.obj;
-                    if (mTargetWifiConfiguration == null
-                            || !mTargetWifiConfiguration.SSID.equals(ssid)) {
-                        break;
-                    }
-
-                    startL3Provisioning();
-                    break;
-                }
-                case CMD_REJECT_EAP_SERVER_CERTIFICATE: {
-                    String ssid = (String) message.obj;
-                    if (mTargetWifiConfiguration == null
-                            || !mTargetWifiConfiguration.SSID.equals(ssid)) {
-                        break;
-                    }
-
-                    int l2FailureReason = message.arg1;
-                    reportConnectionAttemptEnd(
-                            WifiMetrics.ConnectionEvent.FAILURE_NETWORK_DISCONNECTION,
-                            WifiMetricsProto.ConnectionEvent.HLF_NONE,
-                            l2FailureReason);
-                    mWifiNative.disconnect(mInterfaceName);
                     break;
                 }
                 default: {
@@ -7014,8 +7016,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     break;
                 }
                 case CMD_ACCEPT_EAP_SERVER_CERTIFICATE:
-                    // Got a delayed approval for TOFU network, trigger a scan to
-                    // accelerate the auto-connection.
+                    // Got an approval for a TOFU network, trigger a scan to accelerate the
+                    // auto-connection.
+                    logd("User accepted TOFU provided certificate");
                     mWifiConnectivityManager.forceConnectivityScan(ClientModeImpl.WIFI_WORK_SOURCE);
                     break;
                 default: {
@@ -7944,10 +7947,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         tmpConfigForCurrentSecurityParams.setSecurityParams(params);
         if (!WifiConfigurationUtil.isConfigLinkable(tmpConfigForCurrentSecurityParams)) return;
 
-        // check for FT/PSK
+        // Don't set SSID allowlist if we're connected to a network with Fast BSS Transition.
         ScanResult scanResult = mScanRequestProxy.getScanResult(mLastBssid);
         String caps = (scanResult != null) ? scanResult.capabilities : "";
-        if (params == null || caps.contains("FT/PSK")) {
+        if (params == null || caps.contains("FT/PSK") || caps.contains("FT/SAE")) {
             Log.i(TAG, "Linked network - return as current connection is FT-PSK");
             return;
         }
@@ -8062,6 +8065,30 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         mWifiConfigManager.setRecentFailureAssociationStatus(netId, reason);
 
+    }
+
+    private void checkIfNeedDisconnectSecondaryWifi() {
+        if (!isPrimary()) {
+            return;
+        }
+        if (isConnected()) {
+            ConcreteClientModeManager ccmm =
+                    mWifiInjector.getActiveModeWarden().getClientModeManagerInRole(
+                            ROLE_CLIENT_SECONDARY_LONG_LIVED);
+            if (ccmm != null && ccmm.isConnected() && ccmm.isSecondaryInternet()) {
+                WifiInfo secondaryWifiInfo = ccmm.getConnectionInfo();
+                if (secondaryWifiInfo == null) return;
+                if ((secondaryWifiInfo.is5GHz() && mWifiInfo.is5GHz())
+                        || (secondaryWifiInfo.is6GHz() && mWifiInfo.is6GHz())
+                        || (secondaryWifiInfo.is24GHz() && mWifiInfo.is24GHz())) {
+                    if (mVerboseLoggingEnabled) {
+                        Log.d(TAG, "The master wifi and secondary wifi are at the same band,"
+                                + " disconnect the secondary wifi");
+                    }
+                    ccmm.disconnect();
+                }
+            }
+        }
     }
 
     private void setSelectedRcoiForPasspoint(WifiConfiguration config) {

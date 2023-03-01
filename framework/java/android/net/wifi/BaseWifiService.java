@@ -90,6 +90,11 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public void getNetworkSelectionConfig(@NonNull IWifiNetworkSelectionConfigListener listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setThirdPartyAppEnablingWifiConfirmationDialogEnabled(boolean enable) {
         throw new UnsupportedOperationException();
     }
@@ -241,6 +246,12 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public List<ScanResult> getScanResults(String callingPackage, String callingFeatureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getChannelData(@NonNull IListListener listener, String packageName,
+            Bundle extras) {
         throw new UnsupportedOperationException();
     }
 
@@ -490,6 +501,11 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public SoftApConfiguration getSoftApConfiguration() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void queryLastConfiguredTetheredApPassphraseSinceBoot(IStringListener listener) {
         throw new UnsupportedOperationException();
     }
 
@@ -941,6 +957,34 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public int getMaxNumberOfChannelsPerRequest() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void addQosPolicy(@NonNull QosPolicyParams policyParams, @NonNull IBinder binder,
+            @NonNull String packageName, @NonNull IIntegerListener listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void removeQosPolicy(int policyId, @NonNull String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void removeAllQosPolicies(@NonNull String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void addLocalOnlyConnectionStatusListener(ILocalOnlyConnectionStatusListener listener,
+            String packageName, String featureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void removeLocalOnlyConnectionStatusListener(ILocalOnlyConnectionStatusListener listener,
+            String packageName) {
         throw new UnsupportedOperationException();
     }
 }

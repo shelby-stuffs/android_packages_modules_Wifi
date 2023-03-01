@@ -25,6 +25,8 @@ import static android.net.wifi.WifiAvailableChannel.OP_MODE_SAP;
 import static android.net.wifi.WifiAvailableChannel.OP_MODE_STA;
 import static android.net.wifi.WifiConfiguration.METERED_OVERRIDE_METERED;
 import static android.net.wifi.WifiManager.ACTION_REMOVE_SUGGESTION_DISCONNECT;
+import static android.net.wifi.WifiManager.CHANNEL_DATA_KEY_FREQUENCY_MHZ;
+import static android.net.wifi.WifiManager.CHANNEL_DATA_KEY_NUM_AP;
 import static android.net.wifi.WifiManager.COEX_RESTRICTION_SOFTAP;
 import static android.net.wifi.WifiManager.COEX_RESTRICTION_WIFI_AWARE;
 import static android.net.wifi.WifiManager.COEX_RESTRICTION_WIFI_DIRECT;
@@ -110,6 +112,7 @@ import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.admin.WifiSsidPolicy;
+import android.app.compat.CompatChanges;
 import android.app.test.MockAnswerUtil.AnswerWithArguments;
 import android.bluetooth.BluetoothAdapter;
 import android.compat.testing.PlatformCompatChangeRule;
@@ -137,6 +140,8 @@ import android.net.wifi.ICoexCallback;
 import android.net.wifi.IDppCallback;
 import android.net.wifi.IInterfaceCreationInfoCallback;
 import android.net.wifi.ILastCallerListener;
+import android.net.wifi.IListListener;
+import android.net.wifi.ILocalOnlyConnectionStatusListener;
 import android.net.wifi.ILocalOnlyHotspotCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
 import android.net.wifi.IOnWifiActivityEnergyInfoListener;
@@ -145,11 +150,13 @@ import android.net.wifi.IOnWifiUsabilityStatsListener;
 import android.net.wifi.IPnoScanResultsCallback;
 import android.net.wifi.IScanResultsCallback;
 import android.net.wifi.ISoftApCallback;
+import android.net.wifi.IStringListener;
 import android.net.wifi.ISubsystemRestartCallback;
 import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ISuggestionUserApprovalStatusListener;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
+import android.net.wifi.IWifiNetworkSelectionConfigListener;
 import android.net.wifi.IWifiVerboseLoggingStatusChangedListener;
 import android.net.wifi.ScanResult;
 import android.net.wifi.SecurityParams;
@@ -217,9 +224,6 @@ import com.android.server.wifi.util.WifiPermissionsWrapper;
 import com.android.wifi.resources.R;
 
 import com.google.common.base.Strings;
-
-import libcore.junit.util.compat.CoreCompatChangeRule.DisableCompatChanges;
-import libcore.junit.util.compat.CoreCompatChangeRule.EnableCompatChanges;
 
 import org.junit.After;
 import org.junit.Before;
@@ -391,6 +395,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
     @Mock ICoexCallback mCoexCallback;
     @Mock IScanResultsCallback mScanResultsCallback;
     @Mock ISuggestionConnectionStatusListener mSuggestionConnectionStatusListener;
+    @Mock ILocalOnlyConnectionStatusListener mLocalOnlyConnectionStatusListener;
     @Mock ISuggestionUserApprovalStatusListener mSuggestionUserApprovalStatusListener;
     @Mock IOnWifiActivityEnergyInfoListener mOnWifiActivityEnergyInfoListener;
     @Mock ISubsystemRestartCallback mSubsystemRestartCallback;
@@ -431,6 +436,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
     @Mock SsidTranslator mSsidTranslator;
     @Mock InterfaceConflictManager mInterfaceConflictManager;
     @Mock WifiKeyStore mWifiKeyStore;
+    @Mock ScoringParams mScoringParams;
 
     @Captor ArgumentCaptor<Intent> mIntentCaptor;
 
@@ -448,6 +454,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         MockitoAnnotations.initMocks(this);
         mSession = mockitoSession()
                 .mockStatic(SubscriptionManager.class)
+                .mockStatic(CompatChanges.class)
                 .startMocking();
 
         mLog = spy(new LogcatLog(TAG));
@@ -595,6 +602,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         when(mWifiInjector.getSsidTranslator()).thenReturn(mSsidTranslator);
         when(mWifiInjector.getInterfaceConflictManager()).thenReturn(mInterfaceConflictManager);
         when(mWifiInjector.getWifiKeyStore()).thenReturn(mWifiKeyStore);
+        when(mWifiInjector.getScoringParams()).thenReturn(mScoringParams);
 
         doAnswer(new AnswerWithArguments() {
             public void answer(Runnable onStoppedListener) throws Throwable {
@@ -4801,28 +4809,14 @@ public class WifiServiceImplTest extends WifiBaseTest {
      * trigeering the process of the network restoration in batches.
      */
     @Test
-    @EnableCompatChanges({NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE})
     public void testRestoreNetworksWithBatchOverrideDisallowed() {
+        lenient().when(CompatChanges.isChangeEnabled(eq(NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE),
+                anyInt())).thenReturn(true);
         testRestoreNetworkConfiguration(0 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(1 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(20 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(700 /* configNum */, 50 /* batchNum*/, false);
         testRestoreNetworkConfiguration(700 /* configNum */, 0 /* batchNum*/, false);
-    }
-
-    /**
-     * Verify that a call to
-     * {@link WifiServiceImpl#restoreNetworks(List)}
-     * trigeering the process of the network restoration in batches.
-     */
-    @Test
-    @DisableCompatChanges({NOT_OVERRIDE_EXISTING_NETWORKS_ON_RESTORE})
-    public void testRestoreNetworksWithBatchOverrideAllowed() {
-        testRestoreNetworkConfiguration(0 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(1 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(20 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(700 /* configNum */, 50 /* batchNum*/, true);
-        testRestoreNetworkConfiguration(700 /* configNum */, 0 /* batchNum*/, true);
     }
 
     /**
@@ -5678,7 +5672,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
 
         verify(mScanRequestProxy).clearScanRequestTimestampsForApp(packageName, uid);
         verify(mWifiNetworkSuggestionsManager).removeApp(packageName);
-        verify(mWifiNetworkFactory).removeUserApprovedAccessPointsForApp(packageName);
+        verify(mWifiNetworkFactory).removeApp(packageName);
         verify(mPasspointManager).removePasspointProviderWithPackage(packageName);
     }
 
@@ -5710,7 +5704,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
 
         verify(mScanRequestProxy).clearScanRequestTimestampsForApp(packageName, uid);
         verify(mWifiNetworkSuggestionsManager).removeApp(packageName);
-        verify(mWifiNetworkFactory).removeUserApprovedAccessPointsForApp(packageName);
+        verify(mWifiNetworkFactory).removeApp(packageName);
         verify(mPasspointManager).removePasspointProviderWithPackage(packageName);
     }
 
@@ -5744,7 +5738,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
 
         verify(mScanRequestProxy).clearScanRequestTimestampsForApp(packageName, uid);
         verify(mWifiNetworkSuggestionsManager).removeApp(packageName);
-        verify(mWifiNetworkFactory).removeUserApprovedAccessPointsForApp(packageName);
+        verify(mWifiNetworkFactory).removeApp(packageName);
         verify(mPasspointManager).removePasspointProviderWithPackage(packageName);
     }
 
@@ -5769,7 +5763,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         verify(mScanRequestProxy, never()).clearScanRequestTimestampsForApp(anyString(), anyInt());
         verify(mWifiNetworkSuggestionsManager, never()).removeApp(anyString());
-        verify(mWifiNetworkFactory, never()).removeUserApprovedAccessPointsForApp(anyString());
+        verify(mWifiNetworkFactory, never()).removeApp(anyString());
         verify(mPasspointManager, never()).removePasspointProviderWithPackage(anyString());
     }
 
@@ -5794,7 +5788,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         verify(mScanRequestProxy, never()).clearScanRequestTimestampsForApp(anyString(), anyInt());
         verify(mWifiNetworkSuggestionsManager, never()).removeApp(anyString());
-        verify(mWifiNetworkFactory, never()).removeUserApprovedAccessPointsForApp(anyString());
+        verify(mWifiNetworkFactory, never()).removeApp(anyString());
         verify(mPasspointManager, never()).removePasspointProviderWithPackage(anyString());
     }
 
@@ -7710,6 +7704,97 @@ public class WifiServiceImplTest extends WifiBaseTest {
     }
 
     @Test
+    public void testGetNetworkSelectionConfig_Exceptions() {
+        assumeTrue(SdkLevel.isAtLeastT());
+        IWifiNetworkSelectionConfigListener listener =
+                mock(IWifiNetworkSelectionConfigListener.class);
+        // null listener ==> IllegalArgumentException
+        assertThrows(IllegalArgumentException.class,
+                () -> mWifiServiceImpl.getNetworkSelectionConfig(null));
+
+        // No permission ==> SecurityException
+        assertThrows(SecurityException.class,
+                () -> mWifiServiceImpl.getNetworkSelectionConfig(listener));
+    }
+
+    @Test
+    public void testGetNetworkSelectionConfig_GoodCase() throws Exception {
+        assumeTrue(SdkLevel.isAtLeastT());
+        IWifiNetworkSelectionConfigListener listener =
+                mock(IWifiNetworkSelectionConfigListener.class);
+        InOrder inOrder = inOrder(listener);
+
+        int [] defaultRssi2 = {-83, -80, -73, -60};
+        int [] defaultRssi5 = {-80, -77, -70, -57};
+        int [] defaultRssi6 = {-80, -77, -70, -57};
+        int [] customRssi2 = {-80, -70, -60, -50};
+        int [] customRssi5 = {-80, -75, -70, -65};
+        int [] customRssi6 = {-75, -70, -65, -60};
+        int [] resetArray = {0, 0, 0, 0};
+
+        // has permission to call API
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
+
+        // configure the default values for RSSI thresholds from ScoringParams
+        when(mScoringParams.getRssiArray(ScanResult.BAND_24_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi2);
+        when(mScoringParams.getRssiArray(ScanResult.BAND_5_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi5);
+        when(mScoringParams.getRssiArray(ScanResult.BAND_6_GHZ_START_FREQ_MHZ))
+                .thenReturn(defaultRssi6);
+
+        // getting the WifiNetworkSelectionConfig when one hasn't been set returns the default one
+        // built from the builder with RSSI thresholds from ScoringParams
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+        WifiNetworkSelectionConfig defaultConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, defaultRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, defaultRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+        inOrder.verify(listener).onResult(defaultConfig);
+
+        // set the WifiNetworkSelectionConfig and verify that same config is retrieved
+        WifiNetworkSelectionConfig customConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, customRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, customRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, customRssi6)
+                .setUserConnectChoiceOverrideEnabled(false)
+                .setLastSelectionWeightEnabled(false)
+                .build();
+
+        mWifiServiceImpl.setNetworkSelectionConfig(customConfig);
+        mLooper.dispatchAll();
+        verify(mWifiConnectivityManager).setNetworkSelectionConfig(customConfig);
+
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+        inOrder.verify(listener).onResult(customConfig);
+
+        // resetting the RSSI thresholds returns the config with RSSI from ScoringParams
+        WifiNetworkSelectionConfig resetConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, resetArray)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, resetArray)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+
+        WifiNetworkSelectionConfig resetExpectedConfig = new WifiNetworkSelectionConfig.Builder()
+                .setRssiThresholds(ScanResult.WIFI_BAND_24_GHZ, defaultRssi2)
+                .setRssiThresholds(ScanResult.WIFI_BAND_5_GHZ, defaultRssi5)
+                .setRssiThresholds(ScanResult.WIFI_BAND_6_GHZ, defaultRssi6)
+                .build();
+
+        mWifiServiceImpl.setNetworkSelectionConfig(resetConfig);
+        mLooper.dispatchAll();
+        verify(mWifiConnectivityManager).setNetworkSelectionConfig(resetConfig);
+
+        mWifiServiceImpl.getNetworkSelectionConfig(listener);
+        mLooper.dispatchAll();
+
+        inOrder.verify(listener).onResult(resetExpectedConfig);
+    }
+
+    @Test
     public void testSetThirdPartyAppEnablingWifiConfirmationDialogEnabled() throws Exception {
         boolean enable = true;
 
@@ -8930,7 +9015,7 @@ public class WifiServiceImplTest extends WifiBaseTest {
 
         verify(mScanRequestProxy).clearScanRequestTimestampsForApp(TEST_PACKAGE_NAME, TEST_UID);
         verify(mWifiNetworkSuggestionsManager).removeApp(TEST_PACKAGE_NAME);
-        verify(mWifiNetworkFactory).removeUserApprovedAccessPointsForApp(TEST_PACKAGE_NAME);
+        verify(mWifiNetworkFactory).removeApp(TEST_PACKAGE_NAME);
         verify(mPasspointManager).removePasspointProviderWithPackage(TEST_PACKAGE_NAME);
     }
 
@@ -10784,5 +10869,137 @@ public class WifiServiceImplTest extends WifiBaseTest {
         Network mockNetwork = mock(Network.class);
         when(mActiveModeWarden.getCurrentNetwork()).thenReturn(mockNetwork);
         assertEquals(mockNetwork, mWifiServiceImpl.getCurrentNetwork());
+    }
+
+    @Test
+    public void testQueryLastConfiguredTetheredApPassphraseSinceBootExceptions() {
+        // good inputs should result in no exceptions.
+        IStringListener listener = mock(IStringListener.class);
+        // null listener ==> IllegalArgumentException
+        assertThrows(IllegalArgumentException.class,
+                () -> mWifiServiceImpl.queryLastConfiguredTetheredApPassphraseSinceBoot(null));
+
+        // No permission ==> SecurityException
+        assertThrows(SecurityException.class,
+                () -> mWifiServiceImpl.queryLastConfiguredTetheredApPassphraseSinceBoot(listener));
+    }
+
+    @Test
+    public void testQueryLastConfiguredTetheredApPassphraseSinceBoot() throws RemoteException {
+        when(mWifiPermissionsUtil.checkNetworkSettingsPermission(anyInt())).thenReturn(true);
+        IStringListener listener = mock(IStringListener.class);
+        String lastPassphrase = "testLastPassphrase";
+
+        InOrder inOrder = inOrder(listener);
+        when(mWifiApConfigStore.getLastConfiguredTetheredApPassphraseSinceBoot())
+                .thenReturn(lastPassphrase);
+        mWifiServiceImpl.queryLastConfiguredTetheredApPassphraseSinceBoot(listener);
+        mLooper.dispatchAll();
+        inOrder.verify(listener).onResult(lastPassphrase);
+
+        // Test on null return.
+        when(mWifiApConfigStore.getLastConfiguredTetheredApPassphraseSinceBoot())
+                .thenReturn(null);
+        mWifiServiceImpl.queryLastConfiguredTetheredApPassphraseSinceBoot(listener);
+        mLooper.dispatchAll();
+        inOrder.verify(listener).onResult(null);
+    }
+
+    @Test
+    public void testChannelDataThrowsExceptionsAndOnResult() throws RemoteException {
+        assumeTrue(SdkLevel.isAtLeastT());
+        List<Bundle> dataList = new ArrayList<>();
+        IListListener listener = new IListListener() {
+            @Override
+            public void onResult(List value) throws RemoteException {
+                dataList.addAll(value);
+            }
+            @Override
+            public IBinder asBinder() {
+                return null;
+            }
+        };
+
+        //verify listener null case
+        assertThrows(IllegalArgumentException.class,
+                () -> mWifiServiceImpl.getChannelData(null, TEST_PACKAGE_NAME, mExtras));
+
+        when(mScanRequestProxy.getScanResults()).thenReturn(createChannelDataScanResults());
+        mWifiServiceImpl.getChannelData(listener, TEST_PACKAGE_NAME, mExtras);
+        mLooper.dispatchAll();
+
+        //verify the result
+        assertEquals(2, dataList.size());
+        Bundle dataBundle1 = dataList.get(0);
+        assertEquals(2412, dataBundle1.getInt(CHANNEL_DATA_KEY_FREQUENCY_MHZ));
+        assertEquals(1, dataBundle1.getInt(CHANNEL_DATA_KEY_NUM_AP));
+        Bundle dataBundle2 = dataList.get(1);
+        assertEquals(5805, dataBundle2.getInt(CHANNEL_DATA_KEY_FREQUENCY_MHZ));
+        assertEquals(2, dataBundle2.getInt(CHANNEL_DATA_KEY_NUM_AP));
+
+        //verify it will fail without nearby permission
+        doThrow(new SecurityException()).when(mWifiPermissionsUtil).enforceNearbyDevicesPermission(
+                any(), anyBoolean(), any());
+        assertThrows(SecurityException.class,
+                () -> mWifiServiceImpl.getChannelData(listener, TEST_PACKAGE_NAME, mExtras));
+    }
+
+    /**
+     * Test register callback without ACCESS_WIFI_STATE permission.
+     */
+    @Test
+    public void testRegisterLocalOnlyNetworkCallbackWithMissingAccessWifiPermission() {
+        doThrow(new SecurityException()).when(mContext).enforceCallingOrSelfPermission(
+                eq(ACCESS_WIFI_STATE), eq("WifiService"));
+        assertThrows(SecurityException.class, () -> mWifiServiceImpl
+                .addLocalOnlyConnectionStatusListener(
+                mLocalOnlyConnectionStatusListener, TEST_PACKAGE_NAME, TEST_FEATURE_ID));
+    }
+
+    /**
+     * Test unregister callback without permission.
+     */
+    @Test
+    public void testUnregisterLocalOnlyNetworkCallbackWithMissingPermission() {
+        doThrow(new SecurityException()).when(mContext).enforceCallingOrSelfPermission(
+                eq(ACCESS_WIFI_STATE), eq("WifiService"));
+        assertThrows(SecurityException.class, () -> mWifiServiceImpl
+                .removeLocalOnlyConnectionStatusListener(
+                        mLocalOnlyConnectionStatusListener, TEST_PACKAGE_NAME));
+    }
+
+    /**
+     * Test register nad unregister callback will go to WifiNetworkSuggestionManager
+     */
+    @Test
+    public void testRegisterUnregisterLocalOnlyNetworkCallback() throws Exception {
+        mWifiServiceImpl.addLocalOnlyConnectionStatusListener(
+                mLocalOnlyConnectionStatusListener, TEST_PACKAGE_NAME, TEST_FEATURE_ID);
+        mLooper.dispatchAll();
+        verify(mWifiNetworkFactory).addLocalOnlyConnectionStatusListener(
+                eq(mLocalOnlyConnectionStatusListener), eq(TEST_PACKAGE_NAME), eq(TEST_FEATURE_ID)
+        );
+        mWifiServiceImpl.removeLocalOnlyConnectionStatusListener(
+                mLocalOnlyConnectionStatusListener, TEST_PACKAGE_NAME);
+        mLooper.dispatchAll();
+        verify(mWifiNetworkFactory).removeLocalOnlyConnectionStatusListener(
+                eq(mLocalOnlyConnectionStatusListener), eq(TEST_PACKAGE_NAME));
+    }
+
+    private List<ScanResult> createChannelDataScanResults() {
+        List<ScanResult> scanResults = new ArrayList<>();
+        scanResults.add(
+                new ScanResult(WifiSsid.fromUtf8Text(TEST_SSID), TEST_SSID, TEST_BSSID, 1234, 0,
+                        TEST_CAP, -78, 2412, 1024, 22, 33, 20, 0, 0, true));
+        scanResults.add(
+                new ScanResult(WifiSsid.fromUtf8Text(TEST_SSID), TEST_SSID, TEST_BSSID, 1234, 0,
+                        TEST_CAP, -85, 2417, 1024, 22, 33, 20, 0, 0, true));
+        scanResults.add(
+                new ScanResult(WifiSsid.fromUtf8Text(TEST_SSID), TEST_SSID, TEST_BSSID, 1234, 0,
+                        TEST_CAP, -60, 5805, 1024, 22, 33, 20, 0, 0, true));
+        scanResults.add(
+                new ScanResult(WifiSsid.fromUtf8Text(TEST_SSID), TEST_SSID, TEST_BSSID, 1234, 0,
+                        TEST_CAP, -70, 5805, 1024, 22, 33, 20, 0, 0, true));
+        return scanResults;
     }
 }

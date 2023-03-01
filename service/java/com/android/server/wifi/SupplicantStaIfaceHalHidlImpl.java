@@ -2036,6 +2036,7 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
                 return false;
             }
             ISupplicantStaIface iface = checkSupplicantStaIfaceAndLogFailure(ifaceName, methodStr);
+            if (iface == null) return false;
             // Get a v1.4 supplicant STA Interface
             android.hardware.wifi.supplicant.V1_4.ISupplicantStaIface staIfaceV14 =
                     getStaIfaceMockableV1_4(iface);
@@ -3295,6 +3296,18 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
                 return -1;
         }
     }
+
+    /**
+     * Returns signal poll results for all Wi-Fi links of the interface.
+     *
+     * @param ifaceName Name of the interface.
+     * @return Signal poll results.
+     */
+    public WifiSignalPollResults getSignalPollResults(@NonNull String ifaceName) {
+        /* Signal polling is not implemented for HIDL. */
+        return null;
+    }
+
 
     /**
      * Returns connection capabilities of the current network

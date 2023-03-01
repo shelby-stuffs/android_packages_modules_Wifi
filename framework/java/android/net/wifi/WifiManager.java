@@ -308,6 +308,43 @@ public class WifiManager {
     public @interface SuggestionConnectionStatusCode {}
 
     /**
+     * Reason code if local-only network connection attempt failed with an unknown failure.
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_UNKNOWN = 0;
+    /**
+     * Reason code if local-only network connection attempt failed with association failure.
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_ASSOCIATION = 1;
+    /**
+     * Reason code if local-only network connection attempt failed with an authentication failure.
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_AUTHENTICATION = 2;
+    /**
+     * Reason code if local-only network connection attempt failed with an IP provisioning failure.
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_IP_PROVISIONING = 3;
+    /**
+     * Reason code if local-only network connection attempt failed with AP not in range.
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NOT_FOUND = 4;
+    /**
+     * Reason code if local-only network connection attempt failed with AP not responding
+     */
+    public static final int STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NO_RESPONSE = 5;
+
+    /** @hide */
+    @IntDef(prefix = {"STATUS_LOCAL_ONLY_CONNECTION_FAILURE_"},
+            value = {STATUS_LOCAL_ONLY_CONNECTION_FAILURE_UNKNOWN,
+                    STATUS_LOCAL_ONLY_CONNECTION_FAILURE_ASSOCIATION,
+                    STATUS_LOCAL_ONLY_CONNECTION_FAILURE_AUTHENTICATION,
+                    STATUS_LOCAL_ONLY_CONNECTION_FAILURE_IP_PROVISIONING,
+                    STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NOT_FOUND,
+                    STATUS_LOCAL_ONLY_CONNECTION_FAILURE_NO_RESPONSE
+            })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface LocalOnlyConnectionStatusCode {}
+
+    /**
      * Status code if suggestion approval status is unknown, an App which hasn't made any
      * suggestions will get this code.
      */
@@ -1723,7 +1760,16 @@ public class WifiManager {
      * <p>
      * When there is no support from the hardware, the {@link #WIFI_MODE_FULL_HIGH_PERF}
      * lock will have no impact.
+     *
+     * @deprecated The {@code WIFI_MODE_FULL_HIGH_PERF} is deprecated and is automatically replaced
+     * with {@link #WIFI_MODE_FULL_LOW_LATENCY} with all the restrictions documented on that lock.
+     * I.e. any request to the {@code WIFI_MODE_FULL_HIGH_PERF} will now obtain a
+     * {@link #WIFI_MODE_FULL_LOW_LATENCY} lock instead.
+     * Deprecation is due to the impact of {@code WIFI_MODE_FULL_HIGH_PERF} on power dissipation.
+     * The {@link #WIFI_MODE_FULL_LOW_LATENCY} provides much of the same desired functionality with
+     * less impact on power dissipation.
      */
+    @Deprecated
     public static final int WIFI_MODE_FULL_HIGH_PERF = 3;
 
     /**
@@ -1850,6 +1896,64 @@ public class WifiManager {
      */
     public static final int WIFI_MULTI_INTERNET_MODE_MULTI_AP = 2;
 
+    /**
+     * The bundle key string for the channel frequency in MHz.
+     * See {@link #getChannelData(Executor, Consumer)}
+     */
+    public static final String CHANNEL_DATA_KEY_FREQUENCY_MHZ = "CHANNEL_DATA_KEY_FREQUENCY_MHZ";
+    /**
+     * The bundle key for the number of APs found on the corresponding channel specified by
+     * {@link WifiManager#CHANNEL_DATA_KEY_FREQUENCY_MHZ}.
+     * See {@link #getChannelData(Executor, Consumer)}
+     */
+    public static final String CHANNEL_DATA_KEY_NUM_AP = "CHANNEL_DATA_KEY_NUM_AP";
+
+    /**
+     * This policy is being tracked by the Wifi service.
+     * Indicates success for {@link #addQosPolicy(QosPolicyParams, Executor, Consumer)}.
+     * @hide
+     */
+    @SystemApi
+    public static final int QOS_REQUEST_STATUS_TRACKING = 0;
+
+    /**
+     * A policy with the same policy ID is already being tracked.
+     * @hide
+     */
+    @SystemApi
+    public static final int QOS_REQUEST_STATUS_ALREADY_ACTIVE = 1;
+
+    /**
+     * There are insufficient resources to handle this request at this time.
+     * @hide
+     */
+    @SystemApi
+    public static final int QOS_REQUEST_STATUS_INSUFFICIENT_RESOURCES = 2;
+
+    /**
+     * The parameters in the policy request are invalid.
+     * @hide
+     */
+    @SystemApi
+    public static final int QOS_REQUEST_STATUS_INVALID_PARAMETERS = 3;
+
+    /**
+     * An unspecified failure occurred while processing this request.
+     * @hide
+     */
+    @SystemApi
+    public static final int QOS_REQUEST_STATUS_FAILURE_UNKNOWN = 4;
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(prefix = {"QOS_REQUEST_STATUS_"}, value = {
+            QOS_REQUEST_STATUS_TRACKING,
+            QOS_REQUEST_STATUS_ALREADY_ACTIVE,
+            QOS_REQUEST_STATUS_INSUFFICIENT_RESOURCES,
+            QOS_REQUEST_STATUS_INVALID_PARAMETERS,
+            QOS_REQUEST_STATUS_FAILURE_UNKNOWN})
+    public @interface QosRequestStatus {}
+
     /* Number of currently active WifiLocks and MulticastLocks */
     @UnsupportedAppUsage
     private int mActiveLockCount;
@@ -1885,6 +1989,8 @@ public class WifiManager {
             sActiveCountryCodeChangedCallbackMap = new SparseArray();
     private static final SparseArray<ISoftApCallback>
             sLocalOnlyHotspotSoftApCallbackMap = new SparseArray();
+    private static final SparseArray<ILocalOnlyConnectionStatusListener>
+            sLocalOnlyConnectionStatusListenerMap = new SparseArray();
 
     /**
      * Create a new WifiManager instance.
@@ -2151,6 +2257,9 @@ public class WifiManager {
      * This API allows a privileged app to customize the wifi framework's network selection logic.
      * To revert to default behavior, call this API with a {@link WifiNetworkSelectionConfig}
      * created from a default {@link WifiNetworkSelectionConfig.Builder}.
+     *
+     * Use {@link WifiManager#getNetworkSelectionConfig(Executor, Consumer)} to get the current
+     * network selection configuration.
      * <P>
      * @param nsConfig an Object representing the network selection configuration being programmed.
      *                 This should be created with a {@link WifiNetworkSelectionConfig.Builder}.
@@ -2172,6 +2281,48 @@ public class WifiManager {
                 throw new IllegalArgumentException("nsConfig can not be null");
             }
             mService.setNetworkSelectionConfig(nsConfig);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * This API allows a privileged app to retrieve the {@link WifiNetworkSelectionConfig}
+     * currently being used by the network selector.
+     *
+     * Use {@link WifiManager#setNetworkSelectionConfig(WifiNetworkSelectionConfig)} to set a
+     * new network selection configuration.
+     * <P>
+     * @param executor The executor on which callback will be invoked.
+     * @param resultsCallback An asynchronous callback that will return
+     *                        {@link WifiNetworkSelectionConfig}
+     *
+     * @throws UnsupportedOperationException if the API is not supported on this SDK version.
+     * @throws SecurityException if the caller does not have permission.
+     * @throws NullPointerException if the caller provided invalid inputs.
+     * @hide
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            MANAGE_WIFI_NETWORK_SELECTION
+    })
+    @SystemApi
+    public void getNetworkSelectionConfig(@NonNull Executor executor,
+            @NonNull Consumer<WifiNetworkSelectionConfig> resultsCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultsCallback, "resultsCallback cannot be null");
+        try {
+            mService.getNetworkSelectionConfig(
+                    new IWifiNetworkSelectionConfigListener.Stub() {
+                        @Override
+                        public void onResult(WifiNetworkSelectionConfig value) {
+                            Binder.clearCallingIdentity();
+                            executor.execute(() -> {
+                                resultsCallback.accept(value);
+                            });
+                        }
+                    });
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -4210,6 +4361,44 @@ public class WifiManager {
     }
 
     /**
+     * Get channel data such as the number of APs found on each channel from the most recent scan.
+     * App requires {@link android.Manifest.permission#NEARBY_WIFI_DEVICES}
+     *
+     * @param executor        The executor on which callback will be invoked.
+     * @param resultsCallback A callback that will return {@code List<Bundle>} containing channel
+     *                       data such as the number of APs found on each channel.
+     *                       {@link WifiManager#CHANNEL_DATA_KEY_FREQUENCY_MHZ} and
+     *                       {@link WifiManager#CHANNEL_DATA_KEY_NUM_AP} are used to get
+     *                       the frequency (Mhz) and number of APs.
+     * @throws UnsupportedOperationException if the API is not supported on this SDK version.
+     * @throws SecurityException             if the caller does not have permission.
+     * @throws NullPointerException          if the caller provided invalid inputs.
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @RequiresPermission(NEARBY_WIFI_DEVICES)
+    public void getChannelData(@NonNull Executor executor,
+            @NonNull Consumer<List<Bundle>> resultsCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultsCallback, "resultsCallback cannot be null");
+        try {
+            Bundle extras = new Bundle();
+            extras.putParcelable(EXTRA_PARAM_KEY_ATTRIBUTION_SOURCE,
+                    mContext.getAttributionSource());
+            mService.getChannelData(new IListListener.Stub() {
+                @Override
+                public void onResult(List value) {
+                    Binder.clearCallingIdentity();
+                    executor.execute(() -> {
+                        resultsCallback.accept(value);
+                    });
+                }
+            }, mContext.getOpPackageName(), extras);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Tell the device to persist the current list of configured networks.
      * <p>
      * Note: It is possible for this method to change the network IDs of
@@ -5524,6 +5713,44 @@ public class WifiManager {
     public SoftApConfiguration getSoftApConfiguration() {
         try {
             return mService.getSoftApConfiguration();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the last configured Wi-Fi tethered AP passphrase.
+     *
+     * Note: It may be null when there is no passphrase changed since
+     * device boot.
+     *
+     * @param executor The executor on which callback will be invoked.
+     * @param resultCallback An asynchronous callback that will return the last configured
+     *                       Wi-Fi tethered AP passphrase.
+     *
+     * @throws SecurityException if the caller does not have permission.
+     * @throws NullPointerException if the caller provided invalid inputs.
+     *
+     * @hide
+     */
+    @Nullable
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.NETWORK_SETTINGS)
+    public void queryLastConfiguredTetheredApPassphraseSinceBoot(@NonNull Executor executor,
+            @NonNull Consumer<String> resultCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultCallback, "resultsCallback cannot be null");
+        try {
+            mService.queryLastConfiguredTetheredApPassphraseSinceBoot(
+                    new IStringListener.Stub() {
+                        @Override
+                        public void onResult(String value) {
+                            Binder.clearCallingIdentity();
+                            executor.execute(() -> {
+                                resultCallback.accept(value);
+                            });
+                        }
+                    });
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -8578,11 +8805,7 @@ public class WifiManager {
          * Called when the framework attempted to connect to a suggestion provided by the
          * registering app, but the connection to the suggestion failed.
          * @param wifiNetworkSuggestion The suggestion which failed to connect.
-         * @param failureReason the connection failure reason code. One of
-         * {@link #STATUS_SUGGESTION_CONNECTION_FAILURE_ASSOCIATION},
-         * {@link #STATUS_SUGGESTION_CONNECTION_FAILURE_AUTHENTICATION},
-         * {@link #STATUS_SUGGESTION_CONNECTION_FAILURE_IP_PROVISIONING}
-         * {@link #STATUS_SUGGESTION_CONNECTION_FAILURE_UNKNOWN}
+         * @param failureReason the connection failure reason code.
          */
         void onConnectionStatus(
                 @NonNull WifiNetworkSuggestion wifiNetworkSuggestion,
@@ -8603,8 +8826,48 @@ public class WifiManager {
         @Override
         public void onConnectionStatus(@NonNull WifiNetworkSuggestion wifiNetworkSuggestion,
                 int failureReason) {
+            Binder.clearCallingIdentity();
             mExecutor.execute(() ->
                     mListener.onConnectionStatus(wifiNetworkSuggestion, failureReason));
+        }
+
+    }
+
+    /**
+     * Interface for local-only connection failure listener.
+     * Should be implemented by applications and set when calling
+     * {@link WifiManager#addLocalOnlyConnectionFailureListener(Executor, LocalOnlyConnectionFailureListener)}
+     */
+    public interface LocalOnlyConnectionFailureListener {
+
+        /**
+         * Called when the framework attempted to connect to a local-only network requested by the
+         * registering app, but the connection to the network failed.
+         * @param wifiNetworkSpecifier The {@link WifiNetworkSpecifier} which failed to connect.
+         * @param failureReason the connection failure reason code.
+         */
+        void onConnectionStatus(
+                @NonNull WifiNetworkSpecifier wifiNetworkSpecifier,
+                @LocalOnlyConnectionStatusCode int failureReason);
+    }
+
+    private static class LocalOnlyConnectionStatusListenerProxy extends
+            ILocalOnlyConnectionStatusListener.Stub {
+        private final Executor mExecutor;
+        private final LocalOnlyConnectionFailureListener mListener;
+
+        LocalOnlyConnectionStatusListenerProxy(@NonNull Executor executor,
+                @NonNull LocalOnlyConnectionFailureListener listener) {
+            mExecutor = executor;
+            mListener = listener;
+        }
+
+        @Override
+        public void onConnectionStatus(@NonNull WifiNetworkSpecifier networkSpecifier,
+                int failureReason) {
+            Binder.clearCallingIdentity();
+            mExecutor.execute(() ->
+                    mListener.onConnectionStatus(networkSpecifier, failureReason));
         }
 
     }
@@ -8755,6 +9018,72 @@ public class WifiManager {
                         sSuggestionConnectionStatusListenerMap.get(listenerIdentifier),
                         mContext.getOpPackageName());
                 sSuggestionConnectionStatusListenerMap.remove(listenerIdentifier);
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Add a listener for local-only networks. See {@link WifiNetworkSpecifier}.
+     * Specify the caller will only get connection failures for networks they requested.
+     * Caller can remove a previously registered listener using
+     * {@link WifiManager#removeLocalOnlyConnectionFailureListener(LocalOnlyConnectionFailureListener)}
+     * Same caller can add multiple listeners to monitor the event.
+     * <p>
+     * Applications should have the {@link android.Manifest.permission#ACCESS_WIFI_STATE}
+     * permissions.
+     * Callers without the permission will trigger a {@link java.lang.SecurityException}.
+     * <p>
+     *
+     * @param executor The executor to execute the listener of the {@code listener} object.
+     * @param listener listener for local-only network connection failure.
+     */
+    @RequiresPermission(ACCESS_WIFI_STATE)
+    public void addLocalOnlyConnectionFailureListener(@NonNull @CallbackExecutor Executor executor,
+            @NonNull LocalOnlyConnectionFailureListener listener) {
+        if (listener == null) throw new IllegalArgumentException("Listener cannot be null");
+        if (executor == null) throw new IllegalArgumentException("Executor cannot be null");
+        try {
+            synchronized (sLocalOnlyConnectionStatusListenerMap) {
+                if (sLocalOnlyConnectionStatusListenerMap
+                        .contains(System.identityHashCode(listener))) {
+                    Log.w(TAG, "Same listener already registered");
+                    return;
+                }
+                ILocalOnlyConnectionStatusListener.Stub binderCallback =
+                        new LocalOnlyConnectionStatusListenerProxy(executor, listener);
+                sLocalOnlyConnectionStatusListenerMap.put(System.identityHashCode(listener),
+                        binderCallback);
+                mService.addLocalOnlyConnectionStatusListener(binderCallback,
+                        mContext.getOpPackageName(), mContext.getAttributionTag());
+            }
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Allow callers to remove a previously registered listener. After calling this method,
+     * applications will no longer receive local-only connection events through that listener.
+     *
+     * @param listener listener to remove.
+     */
+    @RequiresPermission(ACCESS_WIFI_STATE)
+    public void removeLocalOnlyConnectionFailureListener(
+            @NonNull LocalOnlyConnectionFailureListener listener) {
+        if (listener == null) throw new IllegalArgumentException("Listener cannot be null");
+        try {
+            synchronized (sLocalOnlyConnectionStatusListenerMap) {
+                int listenerIdentifier = System.identityHashCode(listener);
+                if (!sLocalOnlyConnectionStatusListenerMap.contains(listenerIdentifier)) {
+                    Log.w(TAG, "Unknown external callback " + listenerIdentifier);
+                    return;
+                }
+                mService.removeLocalOnlyConnectionStatusListener(
+                        sLocalOnlyConnectionStatusListenerMap.get(listenerIdentifier),
+                        mContext.getOpPackageName());
+                sLocalOnlyConnectionStatusListenerMap.remove(listenerIdentifier);
             }
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
@@ -10407,6 +10736,100 @@ public class WifiManager {
     public int getMaxNumberOfChannelsPerNetworkSpecifierRequest() {
         try {
             return mService.getMaxNumberOfChannelsPerRequest();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Add a new application-initiated QoS policy.
+     *
+     * Note: Policies are managed using a policy ID, which can be retrieved using
+     *       {@link QosPolicyParams#getPolicyId()}. This ID can be used when removing a policy via
+     *       {@link #removeQosPolicy(int)}. The caller is in charge of assigning and managing the
+     *       policy IDs for any requested policies.
+     *
+     * Note: Policies with duplicate IDs are not allowed. To update an existing policy, first
+     *       remove it using {@link #removeQosPolicy(int)}, and then re-add it using this API.
+     *
+     * @param policyParams {@link QosPolicyParams} object describing the requested policy.
+     * @param executor The executor on which callback will be invoked.
+     * @param resultsCallback An asynchronous callback that will return an integer status code
+     *                        from {@link QosRequestStatus}.
+     *
+     * @throws SecurityException if caller does not have the required permissions.
+     * @throws NullPointerException if the caller provided invalid inputs.
+     * @throws UnsupportedOperationException if the feature is not enabled.
+     * @hide
+     */
+    @SystemApi
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            MANAGE_WIFI_NETWORK_SELECTION
+    })
+    public void addQosPolicy(@NonNull QosPolicyParams policyParams,
+            @NonNull @CallbackExecutor Executor executor,
+            @NonNull Consumer<Integer> resultsCallback) {
+        Objects.requireNonNull(executor, "executor cannot be null");
+        Objects.requireNonNull(resultsCallback, "resultsCallback cannot be null");
+        try {
+            mService.addQosPolicy(policyParams, new Binder(), mContext.getOpPackageName(),
+                    new IIntegerListener.Stub() {
+                        @Override
+                        public void onResult(@QosRequestStatus int value) {
+                            Binder.clearCallingIdentity();
+                            executor.execute(() -> {
+                                resultsCallback.accept(value);
+                            });
+                        }
+                    });
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Remove an existing application-initiated QoS policy, previously added via
+     * {@link #addQosPolicy(QosPolicyParams, Executor, Consumer)}.
+     *
+     * Note: The policy is identified by its policy ID, which is assigned by the caller. The ID
+     *       for a given policy can be retrieved using {@link QosPolicyParams#getPolicyId()}.
+     *
+     * @param policyId ID of the policy to remove.
+     * @throws SecurityException if caller does not have the required permissions.
+     * @hide
+     */
+    @SystemApi
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            MANAGE_WIFI_NETWORK_SELECTION
+    })
+    public void removeQosPolicy(int policyId) {
+        try {
+            mService.removeQosPolicy(policyId, mContext.getOpPackageName());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Remove all application-initiated QoS policies requested by this caller,
+     * previously added via {@link #addQosPolicy(QosPolicyParams, Executor, Consumer)}.
+     *
+     * @throws SecurityException if caller does not have the required permissions.
+     * @hide
+     */
+    @SystemApi
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @RequiresPermission(anyOf = {
+            android.Manifest.permission.NETWORK_SETTINGS,
+            MANAGE_WIFI_NETWORK_SELECTION
+    })
+    public void removeAllQosPolicies() {
+        try {
+            mService.removeAllQosPolicies(mContext.getOpPackageName());
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }

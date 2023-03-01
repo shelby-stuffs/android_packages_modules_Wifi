@@ -887,10 +887,12 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         case WifiNative.WIFI_SCAN_RESULTS_AVAILABLE:
                         case WifiNative.WIFI_SCAN_THRESHOLD_NUM_SCANS:
                         case WifiNative.WIFI_SCAN_THRESHOLD_PERCENT:
-                            reportScanStatusForImpl(mImplIfaceName, STATUS_SUCCEEDED);
+                            reportScanStatusForImpl(mImplIfaceName, STATUS_SUCCEEDED,
+                                    WifiScanner.REASON_SUCCEEDED);
                             break;
                         case WifiNative.WIFI_SCAN_FAILED:
-                            reportScanStatusForImpl(mImplIfaceName, STATUS_FAILED);
+                            reportScanStatusForImpl(mImplIfaceName, STATUS_FAILED,
+                                    WifiScanner.REASON_UNSPECIFIED);
                             break;
                         default:
                             Log.e(TAG, "Unknown scan status event: " + event);
@@ -917,6 +919,14 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 public void onScanRestarted() {
                     // should not happen for single scan
                     Log.e(TAG, "Got scan restarted for single scan");
+                }
+
+                /**
+                 * Called to indicate a scan failure
+                 */
+                @Override
+                public void onScanRequestFailed(int errorCode) {
+                    reportScanStatusForImpl(mImplIfaceName, STATUS_FAILED, errorCode);
                 }
             }
 
@@ -996,7 +1006,8 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 }
             }
 
-            private void reportScanStatusForImpl(@NonNull String implIfaceName, int newStatus) {
+            private void reportScanStatusForImpl(@NonNull String implIfaceName, int newStatus,
+                    int statusCode) {
                 Integer currentStatus = mStatusPerImpl.get(implIfaceName);
                 if (currentStatus != null && currentStatus == STATUS_PENDING) {
                     mStatusPerImpl.put(implIfaceName, newStatus);
@@ -1006,7 +1017,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 if (consolidatedStatus == STATUS_SUCCEEDED) {
                     sendMessage(CMD_SCAN_RESULTS_AVAILABLE);
                 } else if (consolidatedStatus == STATUS_FAILED) {
-                    sendMessage(CMD_SCAN_FAILED);
+                    sendMessage(CMD_SCAN_FAILED, statusCode);
                 }
             }
         }
@@ -1218,8 +1229,8 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                                 WifiMetricsProto.WifiLog.SCAN_UNKNOWN, mActiveScans.size());
                         mWifiMetrics.getScanMetrics().logScanFailed(
                                 WifiMetrics.ScanMetrics.SCAN_TYPE_SINGLE);
-                        sendOpFailedToAllAndClear(mActiveScans, WifiScanner.REASON_UNSPECIFIED,
-                                "Scan failed");
+                        sendOpFailedToAllAndClear(mActiveScans, msg.arg1,
+                                scanErrorCodeToDescriptionString(msg.arg1));
                         transitionTo(mIdleState);
                         return HANDLED;
                     default:
@@ -1631,7 +1642,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         sendMessage(CMD_SCAN_RESULTS_AVAILABLE);
                         break;
                     case WifiNative.WIFI_SCAN_FAILED:
-                        sendMessage(CMD_SCAN_FAILED);
+                        sendMessage(CMD_SCAN_FAILED, WifiScanner.REASON_UNSPECIFIED);
                         break;
                     default:
                         Log.e(TAG, "Unknown scan status event: " + event);
@@ -1656,6 +1667,14 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 if (DBG) localLog("onScanRestarted received");
                 sendMessage(CMD_SCAN_RESTARTED);
             }
+
+            /**
+             * Called to indicate a scan failure
+             */
+            @Override
+            public void onScanRequestFailed(int errorCode) {
+                sendMessage(CMD_SCAN_FAILED, errorCode);
+            }
         }
 
         class DefaultState extends State {
@@ -1667,7 +1686,6 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
 
             @Override
             public boolean processMessage(Message msg) {
-                ScanParams scanParams = (ScanParams) msg.obj;
                 switch (msg.what) {
                     case WifiScanner.CMD_ENABLE:
                         if (mScannerImpls.isEmpty()) {
@@ -1709,6 +1727,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                     case WifiScanner.CMD_START_SINGLE_SCAN:
                     case WifiScanner.CMD_STOP_SINGLE_SCAN:
                     case WifiScanner.CMD_GET_SCAN_RESULTS:
+                        ScanParams scanParams = (ScanParams) msg.obj;
                         ClientInfo ci = mClients.get(scanParams.listener);
                         ci.replyFailed(WifiScanner.REASON_UNSPECIFIED, "not available");
                         break;
@@ -1750,7 +1769,6 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
 
             @Override
             public boolean processMessage(Message msg) {
-                ScanParams scanParams = (ScanParams) msg.obj;
                 switch (msg.what) {
                     case WifiScanner.CMD_ENABLE:
                         Log.e(TAG, "wifi driver loaded received while already loaded");
@@ -1759,6 +1777,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                     case WifiScanner.CMD_DISABLE:
                         return NOT_HANDLED;
                     case WifiScanner.CMD_START_BACKGROUND_SCAN: {
+                        ScanParams scanParams = (ScanParams) msg.obj;
                         mWifiMetrics.incrementBackgroundScanCount();
                         ClientInfo ci = mClients.get(scanParams.listener);
                         if (scanParams.settings == null) {
@@ -1774,6 +1793,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         break;
                     }
                     case WifiScanner.CMD_STOP_BACKGROUND_SCAN:
+                        ScanParams scanParams = (ScanParams) msg.obj;
                         ClientInfo ci = mClients.get(scanParams.listener);
                         removeBackgroundScanRequest(ci);
                         break;
@@ -2224,7 +2244,6 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
 
             @Override
             public boolean processMessage(Message msg) {
-                ScanParams scanParams = (ScanParams) msg.obj;
                 switch (msg.what) {
                     case WifiScanner.CMD_ENABLE:
                         if (mScannerImpls.isEmpty()) {
@@ -2239,6 +2258,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         break;
                     case WifiScanner.CMD_START_PNO_SCAN:
                     case WifiScanner.CMD_STOP_PNO_SCAN:
+                        ScanParams scanParams = (ScanParams) msg.obj;
                         ClientInfo ci = mClients.get(scanParams.listener);
                         ci.replyFailed(WifiScanner.REASON_UNSPECIFIED, "not available");
                         break;
@@ -2269,12 +2289,12 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
 
             @Override
             public boolean processMessage(Message msg) {
-                ScanParams scanParams = (ScanParams) msg.obj;
                 switch (msg.what) {
                     case WifiScanner.CMD_ENABLE:
                         // Ignore if we're already in driver loaded state.
                         return HANDLED;
                     case WifiScanner.CMD_START_PNO_SCAN:
+                        ScanParams scanParams = (ScanParams) msg.obj;
                         if (scanParams == null) {
                             loge("scan params null");
                             return HANDLED;
@@ -2295,6 +2315,7 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                         }
                         break;
                     case WifiScanner.CMD_STOP_PNO_SCAN:
+                        scanParams = (ScanParams) msg.obj;
                         ClientInfo ci = mClients.get(scanParams.listener);
                         ci.replyFailed(WifiScanner.REASON_UNSPECIFIED, "no scan running");
                         break;
@@ -2972,6 +2993,27 @@ public class WifiScanningServiceImpl extends IWifiScanner.Stub {
                 // This should never happen because we've validated the incoming type in
                 // |validateScanType|.
                 throw new IllegalArgumentException("Invalid scan type " + type);
+        }
+    }
+
+    /**
+     * Convert Wi-Fi standard error to string
+     */
+    private static String scanErrorCodeToDescriptionString(int errorCode) {
+        switch(errorCode) {
+            case WifiScanner.REASON_BUSY:
+                return "Scan failed - Device or resource busy";
+            case WifiScanner.REASON_ABORT:
+                return "Scan aborted";
+            case WifiScanner.REASON_NO_DEV:
+                return "Scan failed - No such device";
+            case WifiScanner.REASON_INVALID_ARGS:
+                return "Scan failed - invalid argument";
+            case WifiScanner.REASON_TIMEOUT:
+                return "Scan failed - Timeout";
+            case WifiScanner.REASON_UNSPECIFIED:
+            default:
+                return "Scan failed - unspecified reason";
         }
     }
 

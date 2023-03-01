@@ -701,8 +701,13 @@ public class WifiNativeTest extends WifiBaseTest {
         verify(mWificondControl).setupInterfaceForClientMode(eq(WIFI_IFACE_NAME), any(),
                 mScanCallbackCaptor.capture(), any());
 
-        mScanCallbackCaptor.getValue().onScanFailed();
-        verify(mWifiMonitor).broadcastScanFailedEvent(WIFI_IFACE_NAME);
+        if (SdkLevel.isAtLeastU()) {
+            mScanCallbackCaptor.getValue().onScanFailed(WifiScanner.REASON_UNSPECIFIED);
+        } else {
+            mScanCallbackCaptor.getValue().onScanFailed();
+        }
+        verify(mWifiMonitor).broadcastScanFailedEvent(WIFI_IFACE_NAME,
+                WifiScanner.REASON_UNSPECIFIED);
     }
 
     /**
@@ -780,8 +785,13 @@ public class WifiNativeTest extends WifiBaseTest {
         verify(mWificondControl).setupInterfaceForClientMode(eq(WIFI_IFACE_NAME), any(),
                 mScanCallbackCaptor.capture(), any());
 
-        mScanCallbackCaptor.getValue().onScanFailed();
-        verify(mWifiMonitor).broadcastScanFailedEvent(WIFI_IFACE_NAME);
+        if (SdkLevel.isAtLeastU()) {
+            mScanCallbackCaptor.getValue().onScanFailed(WifiScanner.REASON_UNSPECIFIED);
+        } else {
+            mScanCallbackCaptor.getValue().onScanFailed();
+        }
+        verify(mWifiMonitor).broadcastScanFailedEvent(eq(WIFI_IFACE_NAME),
+                eq(WifiScanner.REASON_UNSPECIFIED));
     }
 
     /**
@@ -845,13 +855,14 @@ public class WifiNativeTest extends WifiBaseTest {
     public void testSignalPoll() throws Exception {
         when(mWificondControl.signalPoll(WIFI_IFACE_NAME))
                 .thenReturn(SIGNAL_POLL_RESULT);
+        when(mStaIfaceHal.getSignalPollResults(WIFI_IFACE_NAME)).thenReturn(null);
 
-        WifiNl80211Manager.SignalPollResult pollResult = mWifiNative.signalPoll(WIFI_IFACE_NAME);
-        assertEquals(SIGNAL_POLL_RESULT.currentRssiDbm, pollResult.currentRssiDbm);
-        assertEquals(SIGNAL_POLL_RESULT.txBitrateMbps, pollResult.txBitrateMbps);
+        WifiSignalPollResults pollResults = mWifiNative.signalPoll(WIFI_IFACE_NAME);
+        assertEquals(SIGNAL_POLL_RESULT.currentRssiDbm, pollResults.getRssi());
+        assertEquals(SIGNAL_POLL_RESULT.txBitrateMbps, pollResults.getTxLinkSpeed());
         assertEquals(SIGNAL_POLL_RESULT.associationFrequencyMHz,
-                pollResult.associationFrequencyMHz);
-        assertEquals(SIGNAL_POLL_RESULT.rxBitrateMbps, pollResult.rxBitrateMbps);
+                pollResults.getFrequency());
+        assertEquals(SIGNAL_POLL_RESULT.rxBitrateMbps, pollResults.getRxLinkSpeed());
 
         verify(mWificondControl).signalPoll(WIFI_IFACE_NAME);
     }
@@ -885,9 +896,15 @@ public class WifiNativeTest extends WifiBaseTest {
                 SCAN_HIDDEN_NETWORK_SSID_SET, true);
         ArgumentCaptor<List<byte[]>> ssidSetCaptor = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
-        verify(mWificondControl).startScan(
-                eq(WIFI_IFACE_NAME), eq(WifiScanner.SCAN_TYPE_HIGH_ACCURACY),
-                eq(SCAN_FREQ_SET), ssidSetCaptor.capture(), bundleCaptor.capture());
+        if (SdkLevel.isAtLeastU()) {
+            verify(mWificondControl).startScan2(
+                    eq(WIFI_IFACE_NAME), eq(WifiScanner.SCAN_TYPE_HIGH_ACCURACY),
+                    eq(SCAN_FREQ_SET), ssidSetCaptor.capture(), bundleCaptor.capture());
+        } else {
+            verify(mWificondControl).startScan(
+                    eq(WIFI_IFACE_NAME), eq(WifiScanner.SCAN_TYPE_HIGH_ACCURACY),
+                    eq(SCAN_FREQ_SET), ssidSetCaptor.capture(), bundleCaptor.capture());
+        }
         List<byte[]> ssidSet = ssidSetCaptor.getValue();
         assertArrayEquals(ssidSet.toArray(), SCAN_HIDDEN_NETWORK_BYTE_SSID_SET.toArray());
         Bundle bundle = bundleCaptor.getValue();

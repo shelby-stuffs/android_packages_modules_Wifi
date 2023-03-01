@@ -433,7 +433,8 @@ public class WifiInjector {
                 mWifiCarrierInfoManager, mMacAddressUtil, mWifiPermissionsUtil);
         PasspointNetworkNominateHelper nominateHelper =
                 new PasspointNetworkNominateHelper(mPasspointManager, mWifiConfigManager,
-                        mConnectivityLocalLog, mWifiCarrierInfoManager, mContext.getResources());
+                        mConnectivityLocalLog, mWifiCarrierInfoManager, mContext.getResources(),
+                        mClock);
         mPasspointManager.setPasspointNetworkNominateHelper(nominateHelper);
         mSavedNetworkNominator = new SavedNetworkNominator(
                 mWifiConfigManager, nominateHelper, mConnectivityLocalLog, mWifiCarrierInfoManager,
@@ -540,7 +541,8 @@ public class WifiInjector {
                 mWifiConfigStore, mWifiNetworkSuggestionsManager, mWifiMetrics.getWakeupMetrics(),
                 this, mFrameworkFacade, mClock, mActiveModeWarden);
         mLockManager = new WifiLockManager(mContext, mBatteryStats, mActiveModeWarden,
-                mFrameworkFacade, wifiHandler, mClock, mWifiMetrics);
+                mFrameworkFacade, wifiHandler, mClock, mWifiMetrics, mDeviceConfigFacade,
+                mWifiPermissionsUtil);
         mSelfRecovery = new SelfRecovery(mContext, mActiveModeWarden, mClock, mWifiNative);
         mWifiMulticastLockManager = new WifiMulticastLockManager(mActiveModeWarden, mBatteryStats,
                 wifiLooper);
