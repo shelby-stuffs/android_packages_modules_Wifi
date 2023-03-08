@@ -23,8 +23,6 @@ import android.net.MacAddress;
 import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.SoftApConfiguration.BandType;
 import android.net.wifi.WifiManager;
-import android.net.wifi.util.Environment;
-import android.os.Build;
 import android.os.Handler;
 import android.os.IHwBinder.DeathRecipient;
 import android.os.RemoteException;
@@ -322,10 +320,10 @@ public class HostapdHal {
     }
 
     /**
-     * Returns whether or not the hostapd HAL supports reporting single instance died event.
+     * Returns whether the hostapd HAL supports reporting the single instance died event.
      */
     public boolean isSoftApInstanceDiedHandlerSupported() {
-        return Environment.isVndkApiLevelNewerThan(Build.VERSION_CODES.S);
+        return (mIHostapd != null) && (mIHostapd instanceof HostapdHalAidlImp);
     }
 
     /* ######################### Hostapd Vendor change ###################### */

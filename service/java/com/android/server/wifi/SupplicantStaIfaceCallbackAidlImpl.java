@@ -48,6 +48,7 @@ import android.hardware.wifi.supplicant.ISupplicantStaIfaceCallback;
 import android.hardware.wifi.supplicant.MboAssocDisallowedReasonCode;
 import android.hardware.wifi.supplicant.MboCellularDataConnectionPrefValue;
 import android.hardware.wifi.supplicant.MboTransitionReasonCode;
+import android.hardware.wifi.supplicant.PmkSaCacheData;
 import android.hardware.wifi.supplicant.QosPolicyData;
 import android.hardware.wifi.supplicant.QosPolicyScsResponseStatus;
 import android.hardware.wifi.supplicant.QosPolicyScsResponseStatusCode;
@@ -217,7 +218,7 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
             }
             mWifiMonitor.broadcastSupplicantStateChangeEvent(
                     mIfaceName, mStaIfaceHal.getCurrentNetworkId(mIfaceName), wifiSsid,
-                    bssidStr, newSupplicantState);
+                    bssidStr, frequencyMhz, newSupplicantState);
         }
     }
 
@@ -357,13 +358,20 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
                         + curConfiguration.networkId + ".");
                 mStaIfaceHal.removePmkCacheEntry(curConfiguration.networkId);
             }
-            // Special handling for WPA3-Personal networks. If the password is
-            // incorrect, the AP will send association rejection, with status code 1
-            // (unspecified failure). In SAE networks, the password authentication
-            // is not related to the 4-way handshake. In this case, we will send an
-            // authentication failure event up.
             if (assocRejectInfo.statusCode
-                    == SupplicantStaIfaceHal.StaIfaceStatusCode.UNSPECIFIED_FAILURE) {
+                    == SupplicantStaIfaceHal.StaIfaceStatusCode.CHALLENGE_FAIL
+                    && WifiConfigurationUtil.isConfigForWepNetwork(curConfiguration)) {
+                mStaIfaceHal.logCallback("WEP incorrect password");
+                isWrongPwd = true;
+            } else if (assocRejectInfo.statusCode
+                    == SupplicantStaIfaceHal.StaIfaceStatusCode.UNSPECIFIED_FAILURE
+                    || assocRejectInfo.statusCode
+                    == SupplicantStaIfaceHal.StaIfaceStatusCode.CHALLENGE_FAIL) {
+                // Special handling for WPA3-Personal networks. If the password is
+                // incorrect, the AP will send association rejection, with status code 1
+                // (unspecified failure) or 15 (challenge fail). In SAE networks, the password
+                // authentication is not related to the 4-way handshake. In this case, we will
+                // send an authentication failure event up.
                 // Network Selection status is guaranteed to be initialized
                 SecurityParams params = curConfiguration.getNetworkSelectionStatus()
                         .getCandidateSecurityParams();
@@ -377,11 +385,6 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
                         mStaIfaceHal.logCallback("SAE association rejection");
                     }
                 }
-            } else if (assocRejectInfo.statusCode
-                    == SupplicantStaIfaceHal.StaIfaceStatusCode.CHALLENGE_FAIL
-                    && WifiConfigurationUtil.isConfigForWepNetwork(curConfiguration)) {
-                mStaIfaceHal.logCallback("WEP incorrect password");
-                isWrongPwd = true;
             }
         }
 
@@ -419,9 +422,25 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
     public void onAuthenticationTimeout(byte[/* 6 */] bssid) {
         synchronized (mLock) {
             mStaIfaceHal.logCallback("onAuthenticationTimeout");
-            mWifiMonitor.broadcastAuthenticationFailureEvent(
-                    mIfaceName, WifiManager.ERROR_AUTH_FAILURE_TIMEOUT, -1,
-                    mCurrentSsid, MacAddress.fromBytes(bssid));
+            WifiConfiguration curConfiguration =
+                    mStaIfaceHal.getCurrentNetworkLocalConfig(mIfaceName);
+            if (curConfiguration != null
+                    && (WifiConfigurationUtil.isConfigForPskNetwork(curConfiguration)
+                    || WifiConfigurationUtil.isConfigForWapiPskNetwork(curConfiguration))
+                    && !curConfiguration.getNetworkSelectionStatus().hasEverConnected()) {
+                // Some AP implementations doesn't send de-authentication or dis-association
+                // frame after EAPOL failure. They keep retry EAPOL M1 frames. This leads to
+                // authentication timeout in supplicant. If this network was not connected before,
+                // the authentication timeout may be due to wrong password.
+                Log.d(TAG, "EAPOL H/S failed in first connect attempt. Possibly a wrong password");
+                mWifiMonitor.broadcastAuthenticationFailureEvent(
+                            mIfaceName, WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD, -1,
+                            mCurrentSsid, MacAddress.fromBytes(bssid));
+            } else {
+                mWifiMonitor.broadcastAuthenticationFailureEvent(
+                        mIfaceName, WifiManager.ERROR_AUTH_FAILURE_TIMEOUT, -1,
+                        mCurrentSsid, MacAddress.fromBytes(bssid));
+            }
         }
     }
 
@@ -609,6 +628,18 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
 
     @Override
     public void onPmkCacheAdded(long expirationTimeInSec, byte[] serializedEntry) {
+        handlePmkSaCacheAddedEvent(null, expirationTimeInSec, serializedEntry);
+    }
+
+    @Override
+    public void onPmkSaCacheAdded(PmkSaCacheData pmkSaData) {
+        // TODO(b/260042356) : Add PMKSA entry with BSSID as a key
+        handlePmkSaCacheAddedEvent(pmkSaData.bssid, pmkSaData.expirationTimeInSec,
+                pmkSaData.serializedEntry);
+    }
+
+    private void handlePmkSaCacheAddedEvent(byte[/* 6 */] bssid, long expirationTimeInSec,
+            byte[] serializedEntry) {
         WifiConfiguration curConfig = mStaIfaceHal.getCurrentNetworkLocalConfig(mIfaceName);
         if (curConfig == null) {
             return;
@@ -1291,11 +1322,19 @@ class SupplicantStaIfaceCallbackAidlImpl extends ISupplicantStaIfaceCallback.Stu
         }
     }
 
+    /**
+     * Used to indicate that the operating frequency has changed for this BSS.
+     * This event is triggered when STA switches the channel due to channel
+     * switch announcement from the connected access point.
+     *
+     * @param frequencyMhz New frequency in MHz.
+     */
     @Override
     public void onBssFrequencyChanged(int frequencyMhz)
             throws android.os.RemoteException {
         synchronized (mLock) {
             mStaIfaceHal.logCallback("onBssFrequencyChanged: frequency " + frequencyMhz);
+            mWifiMonitor.broadcastBssFrequencyChanged(mIfaceName, frequencyMhz);
         }
     }
 

@@ -372,8 +372,8 @@ public class WifiAwareDataPathStateManager {
                     + nnri.state);
         }
 
-        mAwareMetrics.recordNdpStatus(reason, networkSpecifier.isOutOfBand(),
-                mClock.getElapsedSinceBootMillis());
+        mAwareMetrics.recordNdpStatus(reason, networkSpecifier.isOutOfBand(), networkSpecifier.role,
+                mClock.getElapsedSinceBootMillis(), networkSpecifier.sessionId);
     }
 
 
@@ -539,7 +539,7 @@ public class WifiAwareDataPathStateManager {
                 mNetworkFactory.letAppKnowThatRequestsAreUnavailable(nnri);
             }
             mAwareMetrics.recordNdpStatus(reasonOnFailure, networkSpecifier.isOutOfBand(),
-                    ndpInfo.startTimestamp);
+                    nnri.networkSpecifier.role, ndpInfo.startTimestamp, networkSpecifier.sessionId);
             return false;
         }
 
@@ -674,7 +674,7 @@ public class WifiAwareDataPathStateManager {
                 mNetworkFactory.letAppKnowThatRequestsAreUnavailable(nnri);
             }
             mAwareMetrics.recordNdpStatus(reason, networkSpecifier.isOutOfBand(),
-                    ndpInfo.startTimestamp);
+                    networkSpecifier.role, ndpInfo.startTimestamp, networkSpecifier.sessionId);
         }
         return true;
     }
@@ -750,7 +750,11 @@ public class WifiAwareDataPathStateManager {
                     NETWORK_FACTORY_SCORE_AVAIL, naConfig, mNetworkFactory.getProvider(), nnri);
             mNiWrapper.setConnected(nnri.networkAgent);
         }
-        mAwareMetrics.recordNdpStatus(NanStatusCode.SUCCESS, isOutOfBand, ndpInfo.startTimestamp);
+        int channelFreqMHz = (ndpInfo.channelInfos != null && !ndpInfo.channelInfos.isEmpty())
+                    ? ndpInfo.channelInfos.get(0).getChannelFrequencyMhz() : 0;
+        mAwareMetrics.recordNdpStatus(NanStatusCode.SUCCESS, isOutOfBand,
+                nnri.networkSpecifier.role, ndpInfo.startTimestamp, nnri.networkSpecifier.sessionId,
+                channelFreqMHz);
         mAwareMetrics.recordNdpCreation(nnri.uid, nnri.packageName, mNetworkRequestsCache);
     }
 
@@ -879,7 +883,8 @@ public class WifiAwareDataPathStateManager {
         AwareNetworkRequestInformation nnri = nnriE.getValue();
         NdpInfo ndpInfo = nnri.ndpInfos.get(ndpId);
         mAwareMetrics.recordNdpStatus(NanStatusCode.INTERNAL_FAILURE,
-                nnri.networkSpecifier.isOutOfBand(), ndpInfo.startTimestamp);
+                nnri.networkSpecifier.isOutOfBand(), nnri.networkSpecifier.role,
+                ndpInfo.startTimestamp, nnri.networkSpecifier.sessionId);
         mMgr.endDataPath(ndpId);
         nnri.ndpInfos.remove(ndpId);
         if (nnri.specifiedPeerDiscoveryMac != null) {
@@ -1542,7 +1547,7 @@ public class WifiAwareDataPathStateManager {
             // validate passphrase & PMK (if provided)
             if (ns.getWifiAwareDataPathSecurityConfig() != null
                     && (!ns.getWifiAwareDataPathSecurityConfig().isValid()
-                    || (mgr.getCapabilities().supportedCipherSuites
+                    || (mgr.getCapabilities().supportedDataPathCipherSuites
                     & ns.getWifiAwareDataPathSecurityConfig().getCipherSuite()) == 0)) {
                     Log.e(TAG, "processNetworkSpecifier: networkSpecifier=" + ns.toString()
                             + " -- invalid security config: ");
