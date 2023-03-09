@@ -180,7 +180,9 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
     private @Mock WifiMetrics mWifiMetrics;
     private @Mock WifiGlobals mWifiGlobals;
     private @Mock SsidTranslator mSsidTranslator;
+    private @Mock WifiInjector mWifiInjector;
     private @Mock PmkCacheManager mPmkCacheManager;
+    private @Mock WifiSettingsConfigStore mWifiSettingsConfigStore;
 
     private @Captor ArgumentCaptor<List<SupplicantStaIfaceHal.QosPolicyRequest>>
             mQosPolicyRequestListCaptor;
@@ -199,7 +201,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
 
         SupplicantStaIfaceHalSpy() {
             super(mContext, mWifiMonitor, mHandler, mClock, mWifiMetrics, mWifiGlobals,
-                    mSsidTranslator);
+                    mSsidTranslator, mWifiInjector);
             mStaNetwork = mSupplicantStaNetworkMock;
         }
 
@@ -249,6 +251,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
                     ssids.add(TRANSLATED_SUPPLICANT_SSID);
                     return ssids;
                 });
+        when(mWifiInjector.getSettingsConfigStore()).thenReturn(mWifiSettingsConfigStore);
         mDut = new SupplicantStaIfaceHalSpy();
     }
 
@@ -957,7 +960,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         // Can't compare WifiSsid instances because they lack an equals.
         verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(WifiConfiguration.INVALID_NETWORK_ID),
-                any(WifiSsid.class), eq(BSSID), eq(SupplicantState.INACTIVE));
+                any(WifiSsid.class), eq(BSSID), eq(0), eq(SupplicantState.INACTIVE));
     }
 
     /**
@@ -978,7 +981,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
 
         verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
-                any(WifiSsid.class), eq(BSSID), eq(SupplicantState.ASSOCIATED));
+                any(WifiSsid.class), eq(BSSID), eq(0), eq(SupplicantState.ASSOCIATED));
     }
 
     /**
@@ -1003,7 +1006,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
                 eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(null));
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
-                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(0), eq(SupplicantState.COMPLETED));
     }
 
     /**
@@ -1029,6 +1032,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         stateChangeData.bssid = NativeUtil.macAddressToByteArray(BSSID);
         stateChangeData.keyMgmtMask = android.hardware.wifi.supplicant.KeyMgmtMask.WPA_PSK;
         stateChangeData.filsHlpSent = false;
+        stateChangeData.frequencyMhz = 2412;
         mISupplicantStaIfaceCallback.onSupplicantStateChanged(stateChangeData);
 
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastNetworkConnectionEvent(
@@ -1036,7 +1040,8 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
                 eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(expectedAkmMask));
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
-                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(2412),
+                eq(SupplicantState.COMPLETED));
     }
 
     /**
@@ -2093,7 +2098,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         // Can't compare WifiSsid instances because they lack an equality operator.
         verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(WifiConfiguration.INVALID_NETWORK_ID),
-                any(WifiSsid.class), eq(BSSID), eq(SupplicantState.INACTIVE));
+                any(WifiSsid.class), eq(BSSID), eq(0), eq(SupplicantState.INACTIVE));
     }
 
     /**
@@ -2168,7 +2173,7 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
                 eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(null));
         wifiMonitorInOrder.verify(mWifiMonitor).broadcastSupplicantStateChangeEvent(
                 eq(WLAN0_IFACE_NAME), eq(frameworkNetworkId),
-                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(SupplicantState.COMPLETED));
+                eq(TRANSLATED_SUPPLICANT_SSID), eq(BSSID), eq(0), eq(SupplicantState.COMPLETED));
     }
 
     /**
@@ -2918,21 +2923,30 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         // initialize MLO Links
         MloLinksInfo info = new MloLinksInfo();
         MloLink[] links = new MloLink[3];
+        // link 0
         links[0] = new android.hardware.wifi.supplicant.MloLink();
         links[0].linkId = 1;
         links[0].staLinkMacAddress = new byte[]{0x00, 0x01, 0x02, 0x03, 0x04, 0x01};
         links[0].tidsDownlinkMap = Byte.MAX_VALUE;
         links[0].tidsDownlinkMap = Byte.MIN_VALUE;
+        links[0].apLinkMacAddress = new byte[]{0x00, 0x0a, 0x0b, 0x0c, 0x0d, 0x01};
+        links[0].frequencyMHz = 5160;
+        // link 1
         links[1] = new android.hardware.wifi.supplicant.MloLink();
         links[1].linkId = 2;
         links[1].staLinkMacAddress = new byte[]{0x00, 0x01, 0x02, 0x03, 0x04, 0x02};
         links[1].tidsDownlinkMap =  1 << mDownlinkTid;
         links[1].tidsUplinkMap = 1 << mUplinkTid;
+        links[1].apLinkMacAddress = new byte[]{0x00, 0x0a, 0x0b, 0x0c, 0x0d, 0x02};
+        links[1].frequencyMHz = 2437;
+        // link 2
         links[2] = new android.hardware.wifi.supplicant.MloLink();
         links[2].linkId = 3;
         links[2].staLinkMacAddress = new byte[]{0x00, 0x01, 0x02, 0x03, 0x04, 0x03};
         links[2].tidsDownlinkMap = 0;
         links[2].tidsUplinkMap = 0;
+        links[2].apLinkMacAddress = new byte[]{0x00, 0x0a, 0x0b, 0x0c, 0x0d, 0x03};
+        links[2].frequencyMHz = 6835;
         info.links = links;
         executeAndValidateInitializationSequence();
         // Mock MloLinksInfo as null.
@@ -2951,19 +2965,97 @@ public class SupplicantStaIfaceHalAidlImplTest extends WifiBaseTest {
         // Check all return values.
         assertNotNull(nativeInfo);
         assertEquals(nativeInfo.links.length, info.links.length);
+        // link 0
         assertEquals(nativeInfo.links[0].getLinkId(), info.links[0].linkId);
-        assertEquals(nativeInfo.links[0].getMacAddress(),
+        assertEquals(nativeInfo.links[0].getStaMacAddress(),
                 MacAddress.fromBytes(info.links[0].staLinkMacAddress));
         assertTrue(nativeInfo.links[0].isAnyTidMapped());
+        assertEquals(nativeInfo.links[0].getApMacAddress(),
+                MacAddress.fromBytes(info.links[0].apLinkMacAddress));
+        assertEquals(nativeInfo.links[0].getFrequencyMHz(), info.links[0].frequencyMHz);
+        // link 1
         assertEquals(nativeInfo.links[1].getLinkId(), info.links[1].linkId);
-        assertEquals(nativeInfo.links[1].getMacAddress(),
+        assertEquals(nativeInfo.links[1].getStaMacAddress(),
                 MacAddress.fromBytes(info.links[1].staLinkMacAddress));
         assertTrue(nativeInfo.links[1].isAnyTidMapped());
         assertTrue(nativeInfo.links[1].isTidMappedtoDownlink((byte) mDownlinkTid));
         assertTrue(nativeInfo.links[1].isTidMappedToUplink((byte) mUplinkTid));
+        assertEquals(nativeInfo.links[1].getApMacAddress(),
+                MacAddress.fromBytes(info.links[1].apLinkMacAddress));
+        assertEquals(nativeInfo.links[1].getFrequencyMHz(), info.links[1].frequencyMHz);
+        // link 2
         assertEquals(nativeInfo.links[2].getLinkId(), info.links[2].linkId);
-        assertEquals(nativeInfo.links[2].getMacAddress(),
+        assertEquals(nativeInfo.links[2].getStaMacAddress(),
                 MacAddress.fromBytes(info.links[2].staLinkMacAddress));
         assertFalse(nativeInfo.links[2].isAnyTidMapped());
+        assertEquals(nativeInfo.links[2].getApMacAddress(),
+                MacAddress.fromBytes(info.links[2].apLinkMacAddress));
+        assertEquals(nativeInfo.links[2].getFrequencyMHz(), info.links[2].frequencyMHz);
+    }
+
+    /*
+     * Tests that the very first connection attempt failure due to Authentication timeout in PSK
+     * network is notified as wrong password error.
+     */
+    @Test
+    public void testPskNetworkAuthenticationTimeOutDueToWrongPasswordInFirstConnectAttempt()
+            throws Exception {
+        executeAndValidateInitializationSequence();
+        assertNotNull(mISupplicantStaIfaceCallback);
+        executeAndValidateConnectSequenceWithKeyMgmt(
+                SUPPLICANT_NETWORK_ID, false, TRANSLATED_SUPPLICANT_SSID.toString(),
+                WifiConfiguration.SECURITY_TYPE_PSK, null, false);
+        mISupplicantStaIfaceCallback.onStateChanged(
+                StaIfaceCallbackState.ASSOCIATING,
+                NativeUtil.macAddressToByteArray(BSSID),
+                SUPPLICANT_NETWORK_ID,
+                NativeUtil.byteArrayFromArrayList(NativeUtil.decodeSsid(SUPPLICANT_SSID)), false);
+        mISupplicantStaIfaceCallback.onAuthenticationTimeout(
+                NativeUtil.macAddressToByteArray(BSSID));
+        verify(mWifiMonitor).broadcastAuthenticationFailureEvent(
+                eq(WLAN0_IFACE_NAME), eq(WifiManager.ERROR_AUTH_FAILURE_WRONG_PSWD), eq(-1),
+                eq(TRANSLATED_SUPPLICANT_SSID.toString()), eq(MacAddress.fromString(BSSID)));
+    }
+
+    /**
+     * Tests the handling of BSS frequency changed event.
+     */
+    @Test
+    public void testBssFrequencyChangedCallback() throws Exception {
+        executeAndValidateInitializationSequence();
+        assertNotNull(mISupplicantStaIfaceCallback);
+
+        mISupplicantStaIfaceCallback.onBssFrequencyChanged(2412);
+        verify(mWifiMonitor).broadcastBssFrequencyChanged(
+                eq(WLAN0_IFACE_NAME), eq(2412));
+    }
+
+    /*
+     * Test that the service version is cached on the first successful call to startDaemon.
+     */
+    @Test
+    public void testServiceVersionCaching() throws RemoteException {
+        mDut.initialize();
+        int serviceVersion = ISupplicant.VERSION;
+        assertFalse(mDut.isServiceVersionAtLeast(serviceVersion));
+
+        // Service version should not be cached on a remote exception.
+        doThrow(new RemoteException()).when(mISupplicantMock).getInterfaceVersion();
+        assertFalse(mDut.startDaemon());
+        verify(mISupplicantMock).getInterfaceVersion();
+        assertFalse(mDut.isServiceVersionAtLeast(serviceVersion));
+
+        // Service version should be cached if retrieved successfully.
+        reset(mISupplicantMock);
+        when(mISupplicantMock.getInterfaceVersion()).thenReturn(serviceVersion);
+        assertTrue(mDut.startDaemon());
+        verify(mISupplicantMock).getInterfaceVersion();
+        verify(mWifiSettingsConfigStore).put(any(), anyInt());
+        assertTrue(mDut.isServiceVersionAtLeast(serviceVersion));
+
+        // Interface version should not be retrieved again after it has been cached.
+        reset(mISupplicantMock);
+        assertTrue(mDut.startDaemon());
+        verify(mISupplicantMock, never()).getInterfaceVersion();
     }
 }

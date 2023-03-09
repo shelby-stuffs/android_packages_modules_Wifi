@@ -1056,6 +1056,7 @@ public class WifiP2pManager {
 
     /** Interface for callback invocation when p2p state is available
      *  in response to {@link #getListenState}.
+     *  @hide
      */
     public interface ListenStateListener {
         /**
