@@ -30,6 +30,7 @@ import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_NO_INTERNET_PERMANENT;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_NO_INTERNET_TEMPORARY;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.NETWORK_SELECTION_PERMANENTLY_DISABLED;
+import static android.net.wifi.WifiManager.AddNetworkResult.STATUS_SUCCESS;
 
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_PRIMARY;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SCAN_ONLY;
@@ -284,6 +285,8 @@ public class ClientModeImplTest extends WifiBaseTest {
 
     private static final int TEST_MLO_LINK_ID = 1;
     private static final int TEST_MLO_LINK_ID_1 = 2;
+
+    private static final String TEST_TDLS_PEER_ADDR_STR = "02:55:11:02:36:4C";
 
     private long mBinderToken;
     private MockitoSession mSession;
@@ -880,7 +883,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         IActionListener connectActionListener = mock(IActionListener.class);
         when(mWifiPermissionsUtil.isAdminRestrictedNetwork(any())).thenReturn(true);
         mCmi.saveNetwork(
-                new NetworkUpdateResult(TEST_NETWORK_ID, false, false, true, false),
+                new NetworkUpdateResult(TEST_NETWORK_ID, STATUS_SUCCESS, false, false, true, false),
                 new ActionListenerWrapper(connectActionListener),
                 Binder.getCallingUid(), OP_PACKAGE_NAME);
         mLooper.dispatchAll();
@@ -2022,6 +2025,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         // established).
         NetworkUpdateResult networkUpdateResult = new NetworkUpdateResult(
                 FRAMEWORK_NETWORK_ID,
+                STATUS_SUCCESS,
                 false /* ip */,
                 false /* proxy */,
                 true /* credential */,
@@ -2984,6 +2988,25 @@ public class ClientModeImplTest extends WifiBaseTest {
         assertEquals("DisconnectedState", getCurrentState().getName());
     }
 
+    @Test
+    public void testTriggerWifiNetworkStateChangedListener() throws Exception {
+        InOrder inOrder = inOrder(mActiveModeWarden);
+        connect();
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_CONNECTING);
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener
+                        .WIFI_NETWORK_STATUS_OBTAINING_IPADDR);
+        inOrder.verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_CONNECTED);
+        inOrder.verify(mActiveModeWarden, never()).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_DISCONNECTED);
+    }
+
     /**
      * Verifies that WifiInfo is updated upon CMD_ASSOCIATED_BSSID event.
      */
@@ -3114,6 +3137,9 @@ public class ClientModeImplTest extends WifiBaseTest {
     public void testReconnectCommandWhenDisconnected() throws Exception {
         // Connect to network with |TEST_BSSID_STR|, |sFreq|, and then disconnect.
         disconnect();
+        verify(mActiveModeWarden).onNetworkStateChanged(
+                WifiManager.WifiNetworkStateChangedListener.WIFI_ROLE_CLIENT_PRIMARY,
+                WifiManager.WifiNetworkStateChangedListener.WIFI_NETWORK_STATUS_DISCONNECTED);
 
         mCmi.reconnect(ClientModeImpl.WIFI_WORK_SOURCE);
         mLooper.dispatchAll();
@@ -8068,7 +8094,7 @@ public class ClientModeImplTest extends WifiBaseTest {
         IActionListener connectActionListener = mock(IActionListener.class);
         mCmi.saveNetwork(
                 new NetworkUpdateResult(
-                        updatedConfig.networkId, false, false, true, false),
+                        updatedConfig.networkId, STATUS_SUCCESS, false, false, true, false),
                 new ActionListenerWrapper(connectActionListener),
                 Binder.getCallingUid(), OP_PACKAGE_NAME);
         mLooper.dispatchAll();
@@ -8882,8 +8908,10 @@ public class ClientModeImplTest extends WifiBaseTest {
         when(mScanResult.getApMloLinkId()).thenReturn(TEST_MLO_LINK_ID);
         when(mScanResult.getAffiliatedMloLinks()).thenReturn(mloLinks);
 
-        when(mScanRequestProxy.getScanResults()).thenReturn(Arrays.asList(mScanResult));
-        when(mScanRequestProxy.getScanResult(any())).thenReturn(mScanResult);
+        when(mWifiConfigManager.getScanDetailCacheForNetwork(FRAMEWORK_NETWORK_ID))
+                .thenReturn(mScanDetailCache);
+        when(mScanDetailCache.getScanResult(any())).thenReturn(mScanResult);
+
     }
 
     private void setScanResultWithoutMloInfo() {
@@ -9526,5 +9554,25 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
         // WifiInfo is updated to the actual used type.
         assertEquals(WifiInfo.SECURITY_TYPE_SAE, mWifiInfo.getCurrentSecurityType());
+    }
+
+    @Test
+    public void testEnableTdls() throws Exception {
+        connect();
+        when(mWifiNative.getMaxSupportedConcurrentTdlsSessions(WIFI_IFACE_NAME)).thenReturn(5);
+        when(mWifiNative.getSupportedFeatureSet(WIFI_IFACE_NAME))
+                .thenReturn(WifiManager.WIFI_FEATURE_TDLS);
+        when(mWifiNative.startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR), anyBoolean()))
+                .thenReturn(true);
+        assertEquals(5, mCmi.getMaxSupportedConcurrentTdlsSessions());
+        assertTrue(mCmi.isTdlsOperationCurrentlyAvailable());
+        mCmi.enableTdls(TEST_TDLS_PEER_ADDR_STR, true);
+        assertEquals(1, mCmi.getNumberOfEnabledTdlsSessions());
+        verify(mWifiNative).startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR),
+                eq(true));
+        mCmi.enableTdls(TEST_TDLS_PEER_ADDR_STR, false);
+        verify(mWifiNative).startTdls(eq(WIFI_IFACE_NAME), eq(TEST_TDLS_PEER_ADDR_STR),
+                eq(false));
+        assertEquals(0, mCmi.getNumberOfEnabledTdlsSessions());
     }
 }

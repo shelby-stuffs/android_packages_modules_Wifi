@@ -51,6 +51,7 @@ import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_AP_BRIDG
 import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_NAN;
 import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_P2P;
 import static com.android.server.wifi.HalDeviceManager.HDM_CREATE_IFACE_STA;
+import static com.android.server.wifi.ScanRequestProxy.createBroadcastOptionsForScanResultsAvailable;
 import static com.android.server.wifi.SelfRecovery.REASON_API_CALL;
 import static com.android.server.wifi.WifiSettingsConfigStore.SHOW_DIALOG_WHEN_THIRD_PARTY_APPS_ENABLE_WIFI;
 import static com.android.server.wifi.WifiSettingsConfigStore.SHOW_DIALOG_WHEN_THIRD_PARTY_APPS_ENABLE_WIFI_SET_BY_API;
@@ -114,6 +115,7 @@ import android.net.wifi.ISuggestionUserApprovalStatusListener;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
 import android.net.wifi.IWifiNetworkSelectionConfigListener;
+import android.net.wifi.IWifiNetworkStateChangedListener;
 import android.net.wifi.IWifiVerboseLoggingStatusChangedListener;
 import android.net.wifi.QosPolicyParams;
 import android.net.wifi.ScanResult;
@@ -213,6 +215,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -900,10 +903,12 @@ public class WifiServiceImpl extends BaseWifiService {
         // clear calling identity to send broadcast
         long callingIdentity = Binder.clearCallingIdentity();
         try {
+            final boolean scanSucceeded = false;
             Intent intent = new Intent(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
             intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-            intent.putExtra(WifiManager.EXTRA_RESULTS_UPDATED, false);
-            mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            intent.putExtra(WifiManager.EXTRA_RESULTS_UPDATED, scanSucceeded);
+            mContext.sendBroadcastAsUser(intent, UserHandle.ALL, null,
+                    createBroadcastOptionsForScanResultsAvailable(scanSucceeded));
         } finally {
             // restore calling identity
             Binder.restoreCallingIdentity(callingIdentity);
@@ -1377,6 +1382,45 @@ public class WifiServiceImpl extends BaseWifiService {
             if (!mActiveModeWarden.unregisterSubsystemRestartCallback(callback)) {
                 Log.e(TAG, "unregisterSubsystemRestartCallback: Failed to register callback");
             }
+        });
+    }
+
+    /**
+     * See {@link WifiManager#addWifiNetworkStateChangedListener(
+     * Executor, WifiManager.WifiNetworkStateChangedListener)}
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @Override
+    public void addWifiNetworkStateChangedListener(IWifiNetworkStateChangedListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException();
+        }
+        enforceNetworkSettingsPermission();
+        if (mVerboseLoggingEnabled) {
+            mLog.info("registerSubsystemRestartCallback uid=%").c(Binder.getCallingUid()).flush();
+        }
+        mWifiThreadRunner.post(() -> {
+            mActiveModeWarden.addWifiNetworkStateChangedListener(listener);
+        });
+    }
+
+    /**
+     * See {@link WifiManager#removeWifiNetworkStateChangedListener(
+     * WifiManager.WifiNetworkStateChangedListener)}
+     * @param listener
+     */
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @Override
+    public void removeWifiNetworkStateChangedListener(IWifiNetworkStateChangedListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException();
+        }
+        if (mVerboseLoggingEnabled) {
+            mLog.info("removeWifiNetworkStateChangedListener uid=%")
+                    .c(Binder.getCallingUid()).flush();
+        }
+        mWifiThreadRunner.post(() -> {
+            mActiveModeWarden.removeWifiNetworkStateChangedListener(listener);
         });
     }
 
@@ -3730,18 +3774,6 @@ public class WifiServiceImpl extends BaseWifiService {
             return new AddNetworkResult(AddNetworkResult.STATUS_SUCCESS, 0);
         }
 
-        if (config.isEnterprise() && config.enterpriseConfig.isEapMethodServerCertUsed()
-                && !config.enterpriseConfig.isMandatoryParameterSetForServerCertValidation()) {
-            if (!(mWifiGlobals.isInsecureEnterpriseConfigurationAllowed()
-                    && isSettingsOrSuw(Binder.getCallingPid(), Binder.getCallingUid()))) {
-                Log.e(TAG, "Enterprise network configuration is missing either a Root CA "
-                        + "or a domain name");
-                return new AddNetworkResult(
-                        AddNetworkResult.STATUS_INVALID_CONFIGURATION_ENTERPRISE, -1);
-            }
-            Log.w(TAG, "Insecure Enterprise network " + config.SSID
-                    + " configured by Settings/SUW");
-        }
         mLastCallerInfoManager.put(config.networkId < 0
                         ? WifiManager.API_ADD_NETWORK : WifiManager.API_UPDATE_NETWORK,
                 Process.myTid(), Binder.getCallingUid(),
@@ -3749,17 +3781,11 @@ public class WifiServiceImpl extends BaseWifiService {
         Log.i("addOrUpdateNetworkInternal", " uid = " + Binder.getCallingUid()
                 + " SSID " + config.SSID
                 + " nid=" + config.networkId);
-        // TODO: b/171981339, add more detailed failure reason into
-        //  WifiConfigManager.NetworkUpdateResult, and plumb that reason up.
-        int networkId =  mWifiThreadRunner.call(
+        NetworkUpdateResult result = mWifiThreadRunner.call(
                 () -> mWifiConfigManager.addOrUpdateNetwork(config, attributedCreatorUid,
-                        attributedCreatorPackage, overrideCreator).getNetworkId(),
-                WifiConfiguration.INVALID_NETWORK_ID);
-        if (networkId >= 0) {
-            return new AddNetworkResult(AddNetworkResult.STATUS_SUCCESS, networkId);
-        }
-        return new AddNetworkResult(
-                AddNetworkResult.STATUS_ADD_WIFI_CONFIG_FAILURE, -1);
+                        attributedCreatorPackage, overrideCreator),
+                new NetworkUpdateResult(WifiConfiguration.INVALID_NETWORK_ID));
+        return new AddNetworkResult(result.getStatusCode(), result.getNetworkId());
     }
 
     public static void verifyCert(X509Certificate caCert)
@@ -4874,9 +4900,40 @@ public class WifiServiceImpl extends BaseWifiService {
         TdlsTaskParams params = new TdlsTaskParams();
         params.mRemoteIpAddress = remoteAddress;
         params.mEnable = enable;
+        mLastCallerInfoManager.put(WifiManager.API_SET_TDLS_ENABLED, Process.myTid(),
+                Binder.getCallingUid(), Binder.getCallingPid(), "<unknown>", enable);
         new TdlsTask().execute(params);
     }
 
+    /**
+     * See {@link WifiManager#setTdlsEnabled(InetAddress, boolean, Executor, Consumer)}
+     */
+    @Override
+    public void enableTdlsWithRemoteIpAddress(String remoteAddress, boolean enable,
+            @NonNull IBooleanListener listener) {
+        if (remoteAddress == null) {
+            throw new NullPointerException("remoteAddress cannot be null");
+        }
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+
+        mLog.info("enableTdlsWithRemoteIpAddress uid=% enable=%")
+                .c(Binder.getCallingUid()).c(enable).flush();
+        mLastCallerInfoManager.put(WifiManager.API_SET_TDLS_ENABLED,
+                Process.myTid(), Binder.getCallingUid(), Binder.getCallingPid(), "<unknown>",
+                enable);
+
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(
+                        mActiveModeWarden.getPrimaryClientModeManager()
+                                .enableTdlsWithRemoteIpAddress(remoteAddress, enable));
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
 
     @Override
     public void enableTdlsWithMacAddress(String remoteMacAddress, boolean enable) {
@@ -4887,9 +4944,104 @@ public class WifiServiceImpl extends BaseWifiService {
         if (remoteMacAddress == null) {
           throw new IllegalArgumentException("remoteMacAddress cannot be null");
         }
+        mLastCallerInfoManager.put(WifiManager.API_SET_TDLS_ENABLED_WITH_MAC_ADDRESS,
+                Process.myTid(), Binder.getCallingUid(), Binder.getCallingPid(), "<unknown>",
+                enable);
         mWifiThreadRunner.post(() ->
                 mActiveModeWarden.getPrimaryClientModeManager().enableTdls(
                         remoteMacAddress, enable));
+    }
+
+    /**
+     * See {@link WifiManager#setTdlsEnabledWithMacAddress(String, boolean, Executor, Consumer)}
+     */
+    @Override
+    public void enableTdlsWithRemoteMacAddress(String remoteMacAddress, boolean enable,
+            @NonNull IBooleanListener listener) {
+        if (remoteMacAddress == null) {
+            throw new NullPointerException("remoteAddress cannot be null");
+        }
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+
+        mLog.info("enableTdlsWithRemoteMacAddress uid=% enable=%")
+                .c(Binder.getCallingUid()).c(enable).flush();
+        mLastCallerInfoManager.put(
+                WifiManager.API_SET_TDLS_ENABLED_WITH_MAC_ADDRESS,
+                Process.myTid(), Binder.getCallingUid(), Binder.getCallingPid(), "<unknown>",
+                enable);
+
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(
+                        mActiveModeWarden.getPrimaryClientModeManager()
+                                .enableTdls(remoteMacAddress, enable));
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * See {@link WifiManager#isTdlsOperationCurrentlyAvailable(Executor, Consumer)}
+     */
+    @Override
+    public void isTdlsOperationCurrentlyAvailable(@NonNull IBooleanListener listener) {
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(
+                        mActiveModeWarden.getPrimaryClientModeManager()
+                                .isTdlsOperationCurrentlyAvailable());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     *  See {@link WifiManager#getMaxSupportedConcurrentTdlsSessions(Executor, Consumer)}
+     */
+    @Override
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void getMaxSupportedConcurrentTdlsSessions(@NonNull IIntegerListener listener) {
+        if (!SdkLevel.isAtLeastU()) {
+            throw new UnsupportedOperationException("SDK level too old");
+        }
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(
+                        mActiveModeWarden.getPrimaryClientModeManager()
+                                .getMaxSupportedConcurrentTdlsSessions());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     *  See {@link WifiManager#getNumberOfEnabledTdlsSessions(Executor, Consumer)}
+     */
+    @Override
+    public void getNumberOfEnabledTdlsSessions(@NonNull IIntegerListener listener) {
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(
+                        mActiveModeWarden.getPrimaryClientModeManager()
+                                .getNumberOfEnabledTdlsSessions());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
     }
 
     /**
@@ -5265,6 +5417,10 @@ public class WifiServiceImpl extends BaseWifiService {
         mWifiMulticastLockManager.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiInjector.enableVerboseLogging(mVerboseLoggingEnabled, halVerboseEnabled);
         mWifiInjector.getSarManager().enableVerboseLogging(mVerboseLoggingEnabled);
+        WifiScanner wifiScanner = mWifiInjector.getWifiScanner();
+        if (wifiScanner != null) {
+            wifiScanner.enableVerboseLogging(mVerboseLoggingEnabled);
+        }
         ApConfigUtil.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
@@ -5322,7 +5478,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 if (network.isEnterprise()) {
                     mWifiInjector.getWifiKeyStore().removeKeys(network.enterpriseConfig, true);
                 }
-                removeNetwork(network.networkId, packageName);
+                mWifiConfigManager.removeNetwork(network.networkId, callingUid, packageName);
             }
         });
         // Delete all Passpoint configurations
@@ -5810,6 +5966,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiConnectivityManager.setDeviceMobilityState(state);
             mWifiHealthMonitor.setDeviceMobilityState(state);
             mWifiDataStall.setDeviceMobilityState(state);
+            mActiveModeWarden.setDeviceMobilityState(state);
         });
     }
 
@@ -7225,16 +7382,42 @@ public class WifiServiceImpl extends BaseWifiService {
                 .getInteger(R.integer.config_wifiNetworkSpecifierMaxPreferredChannels);
     }
 
+    private boolean isApplicationQosPolicyFeatureEnabled() {
+        // Both the experiment flag and overlay value must be enabled,
+        // and the HAL must support this feature.
+        return mDeviceConfigFacade.isApplicationQosPolicyApiEnabled()
+                && mContext.getResources().getBoolean(
+                        R.bool.config_wifiApplicationCentricQosPolicyFeatureEnabled)
+                && mWifiNative.isSupplicantAidlServiceVersionAtLeast(2);
+    }
+
+    private boolean policyIdsAreUnique(List<QosPolicyParams> policies) {
+        Set<Integer> policyIdSet = new HashSet<>();
+        for (QosPolicyParams policy : policies) {
+            policyIdSet.add(policy.getPolicyId());
+        }
+        return policyIdSet.size() == policies.size();
+    }
+
+    private boolean policyIdsAreUnique(int[] policyIds) {
+        Set<Integer> policyIdSet = new HashSet<>();
+        for (int policyId : policyIds) {
+            policyIdSet.add(policyId);
+        }
+        return policyIdSet.size() == policyIds.length;
+    }
+
     /**
-     * See {@link WifiManager#addQosPolicy(QosPolicyParams, Executor, Consumer)}.
+     * See {@link WifiManager#addQosPolicies(List, Executor, Consumer)}.
      */
     @Override
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    public void addQosPolicy(@NonNull QosPolicyParams policyParams, @NonNull IBinder binder,
-            @NonNull String packageName, @NonNull IIntegerListener listener) {
+    public void addQosPolicies(@NonNull List<QosPolicyParams> policyParamsList,
+            @NonNull IBinder binder, @NonNull String packageName,
+            @NonNull IListListener listener) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!mDeviceConfigFacade.isApplicationQosPolicyApiEnabled()) {
+        } else if (!isApplicationQosPolicyFeatureEnabled()) {
             throw new UnsupportedOperationException("addQosPolicy is disabled on this device");
         }
 
@@ -7245,13 +7428,24 @@ public class WifiServiceImpl extends BaseWifiService {
             throw new SecurityException("Uid=" + uid + " is not allowed to add QoS policies");
         }
 
-        Objects.requireNonNull(policyParams, "policyParams cannot be null");
+        Objects.requireNonNull(policyParamsList, "policyParamsList cannot be null");
         Objects.requireNonNull(binder, "binder cannot be null");
         Objects.requireNonNull(listener, "listener cannot be null");
 
+        if (policyParamsList.size() == 0
+                || policyParamsList.size() > WifiManager.getMaxNumberOfPoliciesPerQosRequest()
+                || !policyIdsAreUnique(policyParamsList)) {
+            throw new IllegalArgumentException("policyParamsList is invalid");
+        }
+
         mWifiThreadRunner.post(() -> {
             try {
-                listener.onResult(WifiManager.QOS_REQUEST_STATUS_INSUFFICIENT_RESOURCES);
+                // TODO: Add an implementation for this API.
+                List<Integer> statusList = new ArrayList<>();
+                for (QosPolicyParams policy : policyParamsList) {
+                    statusList.add(WifiManager.QOS_REQUEST_STATUS_FAILURE_UNKNOWN);
+                }
+                listener.onResult(statusList);
             } catch (RemoteException e) {
                 Log.e(TAG, e.getMessage());
             }
@@ -7259,14 +7453,14 @@ public class WifiServiceImpl extends BaseWifiService {
     }
 
     /**
-     * See {@link WifiManager#removeQosPolicy(int)}.
+     * See {@link WifiManager#removeQosPolicies(int[])}.
      */
     @Override
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    public void removeQosPolicy(int policyId, @NonNull String packageName) {
+    public void removeQosPolicies(@NonNull int[] policyIdList, @NonNull String packageName) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!mDeviceConfigFacade.isApplicationQosPolicyApiEnabled()) {
+        } else if (!isApplicationQosPolicyFeatureEnabled()) {
             Log.i(TAG, "removeQosPolicy is disabled on this device");
             return;
         }
@@ -7276,6 +7470,13 @@ public class WifiServiceImpl extends BaseWifiService {
                 && !mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid)) {
             throw new SecurityException("Uid=" + uid + " is not allowed to remove QoS policies");
         }
+        Objects.requireNonNull(policyIdList, "policyIdList cannot be null");
+        if (policyIdList.length == 0
+                || policyIdList.length > WifiManager.getMaxNumberOfPoliciesPerQosRequest()
+                || !policyIdsAreUnique(policyIdList)) {
+            throw new IllegalArgumentException("policyIdList is invalid");
+        }
+        // TODO: Add an implementation for this API.
     }
 
     /**
@@ -7286,7 +7487,7 @@ public class WifiServiceImpl extends BaseWifiService {
     public void removeAllQosPolicies(@NonNull String packageName) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!mDeviceConfigFacade.isApplicationQosPolicyApiEnabled()) {
+        } else if (!isApplicationQosPolicyFeatureEnabled()) {
             Log.i(TAG, "removeAllQosPolicies is disabled on this device");
             return;
         }
@@ -7296,5 +7497,6 @@ public class WifiServiceImpl extends BaseWifiService {
                 && !mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid)) {
             throw new SecurityException("Uid=" + uid + " is not allowed to remove QoS policies");
         }
+        // TODO: Add an implementation for this API.
     }
 }

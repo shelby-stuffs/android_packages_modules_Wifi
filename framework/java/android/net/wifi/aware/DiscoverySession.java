@@ -267,19 +267,23 @@ public class DiscoverySession implements AutoCloseable {
      * {@link DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)} event is received.
      * The peer will get a callback indicating a message was received using
      * {@link DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle, int)}.
-     * When the Aware Pairing setup finished, both side will receive
-     * {@link DiscoverySessionCallback#onPairingSetupConfirmed(PeerHandle, boolean, String)}
-     * @param peerHandle The peer's handle for the pairing request. Must be a result of an
-     * {@link DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)} or
-     *{@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])} events.
-     * @param password The password is used for the pairing setup. If set to empty or null, will use
-     *                 the opportunistic pairing
+     * When the Aware Pairing setup is finished, both sides will receive
+     * {@link DiscoverySessionCallback#onPairingSetupSucceeded(PeerHandle, String)}
+     *
+     * @param peerHandle      The peer's handle for the pairing request. Must be a result of a
+     *                        {@link
+     *                        DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)}
+     *                        or
+     *                        {@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])}
+     *                        events.
      * @param peerDeviceAlias The alias of paired device set by caller, will help caller to identify
      *                        the paired device.
+     * @param password        The password used for the pairing setup. If set to empty or null,
+     *                        opportunistic pairing will be used.
      */
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    public void initiatePairingRequest(@NonNull PeerHandle peerHandle, @Nullable String password,
-            @NonNull String peerDeviceAlias) {
+    public void initiatePairingRequest(@NonNull PeerHandle peerHandle,
+            @NonNull String peerDeviceAlias, @Nullable String password) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException();
         }
@@ -293,25 +297,30 @@ public class DiscoverySession implements AutoCloseable {
     }
 
     /**
-     * Respond to a Wi-Fi Aware Pairing setup request received from peer. This is the response to
-     * the {@link DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle, int)}
-     * When the Aware Pairing setup finished, both side will receive
-     * {@link DiscoverySessionCallback#onPairingSetupConfirmed(PeerHandle, boolean, String)}
-     *
-     * @param requestId Id to identify the received pairing session, get by
+     * Accept and respond to a Wi-Fi Aware Pairing setup request received from peer. This is the
+     * response to the
      * {@link DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle, int)}
-     * @param peerHandle The peer's handle for the pairing request. Must be a result of an
-     * {@link DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)} or
-     * {@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])} events.
-     * @param accept True to accept the request, false to reject.
-     * @param password The password is used for the pairing setup. If set to empty or null, will use
-     *                 the opportunistic pairing
+     * When the Aware Pairing setup is finished, both sides will receive
+     * {@link DiscoverySessionCallback#onPairingSetupSucceeded(PeerHandle, String)}
+     *
+     * @param requestId       Id to identify the received pairing session, obtained by
+     *                        {@link
+     *                        DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle,
+     *                        int)}
+     * @param peerHandle      The peer's handle for the pairing request. Must be a result of a
+     *                        {@link
+     *                        DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)}
+     *                        or
+     *                        {@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])}
+     *                        events.
      * @param peerDeviceAlias The alias of paired device set by caller, will help caller to identify
      *                        the paired device.
+     * @param password        The password is used for the pairing setup. If set to empty or null,
+     *                        opportunistic pairing will be used.
      */
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-    public void respondToPairingRequest(int requestId, @NonNull PeerHandle peerHandle,
-            boolean accept, @Nullable String password, @Nullable String peerDeviceAlias) {
+    public void acceptPairingRequest(int requestId, @NonNull PeerHandle peerHandle,
+            @NonNull String peerDeviceAlias, @Nullable String password) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException();
         }
@@ -321,7 +330,37 @@ public class DiscoverySession implements AutoCloseable {
             return;
         }
         mgr.responseNanPairingSetupRequest(mClientId, mSessionId, peerHandle, requestId, password,
-                peerDeviceAlias, accept);
+                peerDeviceAlias, true);
+    }
+
+    /**
+     * Reject a Wi-Fi Aware Pairing setup request received from peer. This is the
+     * response to the
+     * {@link DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle, int)}
+     *
+     * @param requestId       Id to identify the received pairing session, get by
+     *                        {@link
+     *                        DiscoverySessionCallback#onPairingSetupRequestReceived(PeerHandle,
+     *                        int)}
+     * @param peerHandle      The peer's handle for the pairing request. Must be a result of a
+     *                        {@link
+     *                        DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)}
+     *                        or
+     *                        {@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])}
+     *                        events.
+     */
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void rejectPairingRequest(int requestId, @NonNull PeerHandle peerHandle) {
+        if (!SdkLevel.isAtLeastU()) {
+            throw new UnsupportedOperationException();
+        }
+        WifiAwareManager mgr = mMgr.get();
+        if (mgr == null) {
+            Log.w(TAG, "initiatePairingRequest: called post GC on WifiAwareManager");
+            return;
+        }
+        mgr.responseNanPairingSetupRequest(mClientId, mSessionId, peerHandle, requestId, null,
+                null, false);
     }
 
     /**
@@ -332,7 +371,7 @@ public class DiscoverySession implements AutoCloseable {
      * The peer will check if the method can be fulfilled by
      * {@link AwarePairingConfig.Builder#setBootstrappingMethods(int)}
      * When the Aware Bootstrapping setup finished, both side will receive
-     * {@link DiscoverySessionCallback#onBootstrappingConfirmed(PeerHandle, boolean, int)}
+     * {@link DiscoverySessionCallback#onBootstrappingSucceeded(PeerHandle, boolean, int)}
      * @param peerHandle The peer's handle for the pairing request. Must be a result of an
      * {@link DiscoverySessionCallback#onServiceDiscovered(ServiceDiscoveryInfo)} or
      * {@link DiscoverySessionCallback#onMessageReceived(PeerHandle, byte[])} events.
@@ -356,6 +395,12 @@ public class DiscoverySession implements AutoCloseable {
 
     /**
      * Put Aware connection into suspension mode to save power.
+     * <p>
+     * This method would work only for a {@link DiscoverySession} which has been created using
+     * a suspendable {@link PublishConfig} or {@link SubscribeConfig}.
+     *
+     * @see PublishConfig#isSuspendable()
+     * @see SubscribeConfig#isSuspendable()
      * @hide
      */
     @SystemApi
@@ -363,13 +408,11 @@ public class DiscoverySession implements AutoCloseable {
     @RequiresPermission(MANAGE_WIFI_NETWORK_SELECTION)
     public void suspend() {
         if (mTerminated) {
-            Log.w(TAG, "suspend: called on terminated session");
             throw new IllegalStateException("Suspend called on a terminated session.");
         }
 
         WifiAwareManager mgr = mMgr.get();
         if (mgr == null) {
-            Log.w(TAG, "suspend: called post GC on WifiAwareManager");
             throw new IllegalStateException("Failed to get WifiAwareManager.");
         }
 
@@ -382,6 +425,12 @@ public class DiscoverySession implements AutoCloseable {
 
     /**
      * Wake up Aware connection from suspension mode to transmit data.
+     * <p>
+     * This method would work only for a {@link DiscoverySession} which has been created using
+     * a suspendable {@link PublishConfig} or {@link SubscribeConfig}.
+     *
+     * @see PublishConfig#isSuspendable()
+     * @see SubscribeConfig#isSuspendable()
      * @hide
      */
     @SystemApi
@@ -389,13 +438,11 @@ public class DiscoverySession implements AutoCloseable {
     @RequiresPermission(MANAGE_WIFI_NETWORK_SELECTION)
     public void resume() {
         if (mTerminated) {
-            Log.w(TAG, "resume: called on terminated session");
             throw new IllegalStateException("Resume called on a terminated session.");
         }
 
         WifiAwareManager mgr = mMgr.get();
         if (mgr == null) {
-            Log.w(TAG, "resume: called post GC on WifiAwareManager");
             throw new IllegalStateException("Failed to get WifiAwareManager.");
         }
 

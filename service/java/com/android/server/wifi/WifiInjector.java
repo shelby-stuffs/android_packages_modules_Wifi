@@ -18,6 +18,7 @@ package com.android.server.wifi;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SuppressLint;
 import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.AppOpsManager;
@@ -360,7 +361,7 @@ public class WifiInjector {
                 mWifiConfigStore, wifiHandler, mWifiMetrics, mClock);
         String l2KeySeed = Secure.getString(mContext.getContentResolver(), Secure.ANDROID_ID);
         mWifiScoreCard = new WifiScoreCard(mClock, l2KeySeed, mDeviceConfigFacade,
-                mContext);
+                mContext, mWifiGlobals);
         mWifiMetrics.setWifiScoreCard(mWifiScoreCard);
         mLruConnectionTracker = new LruConnectionTracker(MAX_RECENTLY_CONNECTED_NETWORK,
                 mContext);
@@ -464,7 +465,7 @@ public class WifiInjector {
             mActiveModeWarden);
         mWifiDataStall = new WifiDataStall(mWifiMetrics, mContext,
                 mDeviceConfigFacade, wifiChannelUtilizationConnected, mClock, wifiHandler,
-                mThroughputPredictor, mActiveModeWarden, mCmiMonitor);
+                mThroughputPredictor, mActiveModeWarden, mCmiMonitor, mWifiGlobals);
         mWifiMetrics.setWifiDataStall(mWifiDataStall);
         mWifiMetrics.setWifiHealthMonitor(mWifiHealthMonitor);
         mWifiP2pConnection = new WifiP2pConnection(mContext, wifiLooper, mActiveModeWarden);
@@ -543,7 +544,8 @@ public class WifiInjector {
         mLockManager = new WifiLockManager(mContext, mBatteryStats, mActiveModeWarden,
                 mFrameworkFacade, wifiHandler, mClock, mWifiMetrics, mDeviceConfigFacade,
                 mWifiPermissionsUtil);
-        mSelfRecovery = new SelfRecovery(mContext, mActiveModeWarden, mClock, mWifiNative);
+        mSelfRecovery = new SelfRecovery(mContext, mActiveModeWarden, mClock, mWifiNative,
+                mWifiGlobals);
         mWifiMulticastLockManager = new WifiMulticastLockManager(mActiveModeWarden, mBatteryStats,
                 wifiLooper);
 
@@ -768,8 +770,7 @@ public class WifiInjector {
             @NonNull ActiveModeManager.SoftApRole role,
             boolean verboseLoggingEnabled) {
         return new SoftApManager(mContext, mWifiHandlerThread.getLooper(), mFrameworkFacade,
-                mWifiNative, this,
-                mCoexManager, makeBatteryManager(), mInterfaceConflictManager,
+                mWifiNative, this, mCoexManager, mInterfaceConflictManager,
                 listener, callback, mWifiApConfigStore,
                 config, mWifiMetrics, mSarManager, mWifiDiagnostics,
                 new SoftApNotifier(mContext, mFrameworkFacade, mWifiNotificationManager),
@@ -1110,6 +1111,8 @@ public class WifiInjector {
     /**
      * Creates a BroadcastOptions.
      */
+    // TODO(b/193460475): Remove when tooling supports SystemApi to public API.
+    @SuppressLint("NewApi")
     public BroadcastOptions makeBroadcastOptions() {
         return BroadcastOptions.makeBasic();
     }

@@ -509,8 +509,9 @@ public class WifiAwareDataPathStateManager {
      *
      * @param ndpId The ID of the data-path (NDP)
      * @param success Whether or not the 'RespondToDataPathRequest' operation was a success.
+     * @return true if framework start to waiting for the confirm
      */
-    public void onRespondToDataPathRequest(int ndpId, boolean success, int reasonOnFailure) {
+    public boolean onRespondToDataPathRequest(int ndpId, boolean success, int reasonOnFailure) {
         mLocalLog.log("onRespondToDataPathRequest: ndpId=" + ndpId + ", success=" + success);
         Map.Entry<WifiAwareNetworkSpecifier, AwareNetworkRequestInformation> nnriE =
                 getNetworkRequestByNdpId(ndpId);
@@ -522,7 +523,7 @@ public class WifiAwareDataPathStateManager {
                 Log.v(TAG, "onRespondToDataPathRequest: network request cache = "
                         + mNetworkRequestsCache);
             }
-            return;
+            return false;
         }
 
         WifiAwareNetworkSpecifier networkSpecifier = nnriE.getKey();
@@ -539,7 +540,7 @@ public class WifiAwareDataPathStateManager {
             }
             mAwareMetrics.recordNdpStatus(reasonOnFailure, networkSpecifier.isOutOfBand(),
                     ndpInfo.startTimestamp);
-            return;
+            return false;
         }
 
         if (ndpInfo.state != NdpInfo.STATE_RESPONDER_WAIT_FOR_RESPOND_RESPONSE
@@ -552,10 +553,11 @@ public class WifiAwareDataPathStateManager {
                 mNetworkRequestsCache.remove(networkSpecifier);
                 mNetworkFactory.letAppKnowThatRequestsAreUnavailable(nnri);
             }
-            return;
+            return false;
         }
 
         ndpInfo.state = NdpInfo.STATE_WAIT_FOR_CONFIRM;
+        return true;
     }
 
     /**

@@ -22,6 +22,9 @@ import android.Manifest;
 import android.annotation.NonNull;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.wifi.IBooleanListener;
+import android.net.wifi.IIntegerListener;
+import android.net.wifi.IListListener;
 import android.net.wifi.WifiManager;
 import android.net.wifi.aware.AwareParams;
 import android.net.wifi.aware.AwareResources;
@@ -32,7 +35,6 @@ import android.net.wifi.aware.IWifiAwareDiscoverySessionCallback;
 import android.net.wifi.aware.IWifiAwareEventCallback;
 import android.net.wifi.aware.IWifiAwareMacAddressProvider;
 import android.net.wifi.aware.IWifiAwareManager;
-import android.net.wifi.aware.IWifiAwarePairedDevicesListener;
 import android.net.wifi.aware.PublishConfig;
 import android.net.wifi.aware.SubscribeConfig;
 import android.os.Binder;
@@ -251,8 +253,7 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
     }
 
     @Override
-    public void getPairedDevices(String callingPackage, @NonNull
-            IWifiAwarePairedDevicesListener listener) {
+    public void getPairedDevices(String callingPackage, @NonNull IListListener listener) {
         if (listener == null) {
             throw new IllegalArgumentException("listener should not be null");
         }
@@ -261,9 +262,26 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
     }
 
     @Override
+    public void setOpportunisticModeEnabled(String callingPackage, boolean enabled) {
+
+        enforceChangePermission();
+        mStateManager.setOpportunisticPackage(callingPackage, enabled);
+    }
+
+    @Override
+    public void isOpportunisticModeEnabled(String callingPackage,
+            @NonNull IBooleanListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener should not be null");
+        }
+        enforceAccessPermission();
+        mStateManager.isOpportunistic(callingPackage, listener);
+    }
+
+    @Override
     public void connect(final IBinder binder, String callingPackage, String callingFeatureId,
             IWifiAwareEventCallback callback, ConfigRequest configRequest,
-            boolean notifyOnIdentityChanged, Bundle extras) {
+            boolean notifyOnIdentityChanged, Bundle extras, boolean forOffloading) {
         enforceAccessPermission();
         enforceChangePermission();
 
@@ -284,6 +302,10 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         if (notifyOnIdentityChanged) {
             enforceNearbyOrLocationPermission(callingPackage, callingFeatureId,
                     getMockableCallingUid(), extras, "Wifi Aware attach");
+        }
+        if (forOffloading && !mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
+            throw new SecurityException("Enable Wifi Aware for offloading require"
+                    + "OVERRIDE_WIFI_CONFIG permission");
         }
 
         if (configRequest != null) {
@@ -339,7 +361,7 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         }
 
         mStateManager.connect(clientId, uid, pid, callingPackage, callingFeatureId, callback,
-                configRequest, notifyOnIdentityChanged, extras);
+                configRequest, notifyOnIdentityChanged, extras, forOffloading);
     }
 
     @Override
@@ -368,6 +390,53 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
 
         mStateManager.disconnect(clientId);
     }
+
+    @Override
+    public void setMasterPreference(int clientId, IBinder binder, int mp) {
+        int uid = getMockableCallingUid();
+        enforceClientValidity(uid, clientId);
+        if (binder == null) {
+            throw new IllegalArgumentException("Binder must not be null");
+        }
+        if (!mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
+            throw new SecurityException("setMasterPreference requires "
+                    + "OVERRIDE_WIFI_CONFIG permission");
+        }
+
+        if (mp < 0) {
+            throw new IllegalArgumentException(
+                    "Master Preference specification must be non-negative");
+        }
+        if (mp == 1 || mp == 255 || mp > 255) {
+            throw new IllegalArgumentException("Master Preference specification must not "
+                    + "exceed 255 or use 1 or 255 (reserved values)");
+        }
+
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "setMasterPreference: uid=" + uid + ", clientId=" + clientId);
+        }
+
+        mStateManager.setMasterPreference(clientId, mp);
+    }
+
+    @Override
+    public void getMasterPreference(int clientId, IBinder binder, IIntegerListener listener) {
+        int uid = getMockableCallingUid();
+        enforceClientValidity(uid, clientId);
+        if (binder == null) {
+            throw new IllegalArgumentException("Binder must not be null");
+        }
+        if (!mWifiPermissionsUtil.checkConfigOverridePermission(uid)) {
+            throw new SecurityException("getMasterPreference requires "
+                    + "OVERRIDE_WIFI_CONFIG permission");
+        }
+
+        if (mVerboseLoggingEnabled) {
+            Log.v(TAG, "getMasterPreference: uid=" + uid + ", clientId=" + clientId);
+        }
+        mStateManager.getMasterPreference(clientId, listener);
+    }
+
 
     @Override
     public void terminateSession(int clientId, int sessionId) {
@@ -560,6 +629,10 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
             throw new IllegalArgumentException(
                     "NAN pairing is not supported");
         }
+        if (pairingDeviceAlias == null) {
+            throw new IllegalArgumentException(
+                    "initiateNanPairingRequest: invalid pairingDeviceAlias - must be non-null");
+        }
         int uid = getMockableCallingUid();
         enforceClientValidity(uid, clientId);
         if (mVerboseLoggingEnabled) {
@@ -579,6 +652,13 @@ public class WifiAwareServiceImpl extends IWifiAwareManager.Stub {
         if (!mStateManager.getCharacteristics().isAwarePairingSupported()) {
             throw new IllegalArgumentException(
                     "NAN pairing is not supported");
+        }
+        if (accept) {
+            if (pairingDeviceAlias == null) {
+                throw new IllegalArgumentException(
+                        "responseNanPairingSetupRequest: invalid pairingDeviceAlias - "
+                                + "must be non-null");
+            }
         }
         int uid = getMockableCallingUid();
         enforceClientValidity(uid, clientId);

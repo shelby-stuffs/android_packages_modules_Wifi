@@ -30,6 +30,7 @@ import android.net.MacAddress;
 import android.net.TrafficStats;
 import android.net.apf.ApfCapabilities;
 import android.net.wifi.CoexUnsafeChannel;
+import android.net.wifi.QosPolicyParams;
 import android.net.wifi.ScanResult;
 import android.net.wifi.SecurityParams;
 import android.net.wifi.SoftApConfiguration;
@@ -124,6 +125,8 @@ public class WifiNative {
     private boolean mQosPolicyFeatureEnabled = false;
     private final Map<String, String> mWifiCondIfacesForBridgedAp = new ArrayMap<>();
     private MockWifiServiceUtil mMockWifiModem = null;
+    private InterfaceObserverInternal mInterfaceObserver;
+    private InterfaceEventCallback mInterfaceListener;
 
     public WifiNative(WifiVendorHal vendorHal,
                       SupplicantStaIfaceHal staIfaceHal, HostapdHal hostapdHal,
@@ -647,6 +650,24 @@ public class WifiNative {
         }
     }
 
+    /**
+     * Helper method to register a new {@link InterfaceObserverInternal}, if there is no previous
+     * observer in place and {@link WifiGlobals#isWifiInterfaceAddedSelfRecoveryEnabled()} is
+     * enabled.
+     */
+    private void registerInterfaceObserver() {
+        if (!mWifiInjector.getWifiGlobals().isWifiInterfaceAddedSelfRecoveryEnabled()) {
+            return;
+        }
+        if (mInterfaceObserver != null) {
+            Log.d(TAG, "Interface observer has previously been registered.");
+            return;
+        }
+        mInterfaceObserver = new InterfaceObserverInternal();
+        mNetdWrapper.registerObserver(mInterfaceObserver);
+        Log.d(TAG, "Registered new interface observer.");
+    }
+
     /** Helper method to register a network observer and return it */
     private boolean registerNetworkObserver(NetworkObserverInternal observer) {
         if (observer == null) return false;
@@ -865,6 +886,76 @@ public class WifiNative {
     }
 
     /**
+     * Listener for wifi interface events.
+     */
+    public interface InterfaceEventCallback {
+
+        /**
+         * Interface physical-layer link state has changed.
+         *
+         * @param ifaceName The interface.
+         * @param isLinkUp True if the physical link-layer connection signal is valid.
+         */
+        void onInterfaceLinkStateChanged(String ifaceName, boolean isLinkUp);
+
+        /**
+         * Interface has been added.
+         *
+         * @param ifaceName Name of the interface.
+         */
+        void onInterfaceAdded(String ifaceName);
+    }
+
+    /**
+     * Register a listener for wifi interface events.
+     *
+     * @param ifaceEventCallback Listener object.
+     */
+    public void setWifiNativeInterfaceEventCallback(InterfaceEventCallback ifaceEventCallback) {
+        mInterfaceListener = ifaceEventCallback;
+        Log.d(TAG, "setWifiNativeInterfaceEventCallback");
+    }
+
+    private class InterfaceObserverInternal implements NetdEventObserver {
+        private static final String TAG = "InterfaceObserverInternal";
+        private final String mSelfRecoveryInterfaceName = mContext.getResources().getString(
+                R.string.config_wifiSelfRecoveryInterfaceName);
+
+        @Override
+        public void interfaceLinkStateChanged(String ifaceName, boolean isLinkUp) {
+            if (!ifaceName.equals(mSelfRecoveryInterfaceName)) {
+                return;
+            }
+            Log.d(TAG, "Received interfaceLinkStateChanged, iface=" + ifaceName + " up="
+                    + isLinkUp);
+            if (mInterfaceListener != null) {
+                mInterfaceListener.onInterfaceLinkStateChanged(ifaceName, isLinkUp);
+            } else {
+                Log.e(TAG, "Received interfaceLinkStateChanged, interfaceListener=null");
+            }
+        }
+
+        @Override
+        public void interfaceStatusChanged(String iface, boolean up) {
+            // unused.
+        }
+
+        @Override
+        public void interfaceAdded(String ifaceName) {
+            if (!ifaceName.equals(mSelfRecoveryInterfaceName)) {
+                return;
+            }
+            Log.d(TAG, "Received interfaceAdded, iface=" + ifaceName);
+            if (mInterfaceListener != null) {
+                mInterfaceListener.onInterfaceAdded(ifaceName);
+            } else {
+                Log.e(TAG, "Received interfaceAdded, interfaceListener=null");
+            }
+        }
+
+    }
+
+    /**
      * Network observer to use for all interface up/down notifications.
      */
     private class NetworkObserverInternal implements NetdEventObserver {
@@ -918,6 +1009,11 @@ public class WifiNative {
         @Override
         public void interfaceStatusChanged(String ifaceName, boolean unusedIsLinkUp) {
             // unused currently. Look at note above.
+        }
+
+        @Override
+        public void interfaceAdded(String iface){
+            // unused currently.
         }
     }
 
@@ -1232,6 +1328,7 @@ public class WifiNative {
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToWificond();
                 return null;
             }
+            registerInterfaceObserver();
             iface.networkObserver = new NetworkObserverInternal(iface.id);
             if (!registerNetworkObserver(iface.networkObserver)) {
                 Log.e(TAG, "Failed to register network observer for iface=" + iface.name);
@@ -1621,11 +1718,12 @@ public class WifiNative {
      * @param freqs list of frequencies to scan for, if null scan all supported channels.
      * @param hiddenNetworkSSIDs List of hidden networks to be scanned for.
      * @param enable6GhzRnr whether Reduced Neighbor Report should be enabled for 6Ghz scanning.
+     * @param vendorIes Byte array of vendor IEs
      * @return Returns true on success.
      */
     public int scan(
             @NonNull String ifaceName, @WifiAnnotations.ScanType int scanType, Set<Integer> freqs,
-            List<String> hiddenNetworkSSIDs, boolean enable6GhzRnr) {
+            List<String> hiddenNetworkSSIDs, boolean enable6GhzRnr, byte[] vendorIes) {
         int scanRequestStatus = WifiScanner.REASON_SUCCEEDED;
         boolean scanStatus = true;
         List<byte[]> hiddenNetworkSsidsArrays = new ArrayList<>();
@@ -1645,6 +1743,8 @@ public class WifiNative {
             extraScanningParams.putBoolean(WifiNl80211Manager.SCANNING_PARAM_ENABLE_6GHZ_RNR,
                     enable6GhzRnr);
             if (SdkLevel.isAtLeastU()) {
+                extraScanningParams.putByteArray(WifiNl80211Manager.EXTRA_SCANNING_PARAM_VENDOR_IES,
+                        vendorIes);
                 scanRequestStatus = mWifiCondManager.startScan2(ifaceName, scanType, freqs,
                         hiddenNetworkSsidsArrays, extraScanningParams);
             } else {
@@ -2375,14 +2475,17 @@ public class WifiNative {
      * @param ifaceName Name of the interface.
      * @param macAddr MAC Address of the peer.
      * @param enable true to start discovery and setup, false to teardown.
+     * @return true if request is sent successfully, false otherwise.
      */
-    public void startTdls(@NonNull String ifaceName, String macAddr, boolean enable) {
+    public boolean startTdls(@NonNull String ifaceName, String macAddr, boolean enable) {
+        boolean ret = true;
         if (enable) {
             mSupplicantStaIfaceHal.initiateTdlsDiscover(ifaceName, macAddr);
-            mSupplicantStaIfaceHal.initiateTdlsSetup(ifaceName, macAddr);
+            ret = mSupplicantStaIfaceHal.initiateTdlsSetup(ifaceName, macAddr);
         } else {
-            mSupplicantStaIfaceHal.initiateTdlsTeardown(ifaceName, macAddr);
+            ret = mSupplicantStaIfaceHal.initiateTdlsTeardown(ifaceName, macAddr);
         }
+        return ret;
     }
 
     /**
@@ -3009,6 +3112,16 @@ public class WifiNative {
         mSupplicantStaIfaceHal.registerDppCallback(dppEventCallback);
     }
 
+    /**
+     * Check whether the Supplicant AIDL service is running at least the expected version.
+     *
+     * @param expectedVersion Version number to check.
+     * @return true if the AIDL service is available and >= the expected version, false otherwise.
+     */
+    public boolean isSupplicantAidlServiceVersionAtLeast(int expectedVersion) {
+        return mSupplicantStaIfaceHal.isAidlServiceVersionAtLeast(expectedVersion);
+    }
+
     /********************************************************
      * Vendor HAL operations
      ********************************************************/
@@ -3152,6 +3265,7 @@ public class WifiNative {
         /* Not used for bg scans. Only works for single scans. */
         public HiddenNetwork[] hiddenNetworks;
         public BucketSettings[] buckets;
+        public byte[] vendorIes;
     }
 
     /**
@@ -3207,6 +3321,8 @@ public class WifiNative {
         public int min24GHzRssi;
         public int min6GHzRssi;
         public int periodInMs;
+        public int scanIterations;
+        public int scanIntervalMultiplier;
         public boolean isConnected;
         public PnoNetwork[] networkList;
 
@@ -3217,6 +3333,10 @@ public class WifiNative {
             nativePnoSettings.setMin2gRssiDbm(min24GHzRssi);
             nativePnoSettings.setMin5gRssiDbm(min5GHzRssi);
             nativePnoSettings.setMin6gRssiDbm(min6GHzRssi);
+            if (SdkLevel.isAtLeastU()) {
+                nativePnoSettings.setScanIterations(scanIterations);
+                nativePnoSettings.setScanIntervalMultiplier(scanIntervalMultiplier);
+            }
 
             List<android.net.wifi.nl80211.PnoNetwork> pnoNetworks = new ArrayList<>();
             if (networkList != null) {
@@ -4745,6 +4865,70 @@ public class WifiNative {
     }
 
     /**
+     * Send a set of QoS SCS policy add requests to the AP.
+     *
+     * Immediate response will indicate which policies were sent to the AP, and which were
+     * rejected immediately by the supplicant. If any requests were sent to the AP, the AP's
+     * response will arrive later in the onQosPolicyResponseForScs callback.
+     *
+     * @param ifaceName Name of the interface.
+     * @param policies List of policies that the caller is requesting to add.
+     * @return List of responses for each policy in the request, or null if an error occurred.
+     *         Status code will be one of
+     *         {@link SupplicantStaIfaceHal.QosPolicyScsRequestStatusCode}.
+     */
+    List<SupplicantStaIfaceHal.QosPolicyStatus> addQosPolicyRequestForScs(
+            @NonNull String ifaceName, @NonNull List<QosPolicyParams> policies) {
+        return mSupplicantStaIfaceHal.addQosPolicyRequestForScs(ifaceName, policies);
+    }
+
+    /**
+     * Request the removal of specific QoS policies for SCS.
+     *
+     * Immediate response will indicate which policies were sent to the AP, and which were
+     * rejected immediately by the supplicant. If any requests were sent to the AP, the AP's
+     * response will arrive later in the onQosPolicyResponseForScs callback.
+     *
+     * @param ifaceName Name of the interface.
+     * @param policyIds List of policy IDs for policies that should be removed.
+     * @return List of responses for each policy in the request, or null if an error occurred.
+     *         Status code will be one of
+     *         {@link SupplicantStaIfaceHal.QosPolicyScsRequestStatusCode}.
+     */
+    List<SupplicantStaIfaceHal.QosPolicyStatus> removeQosPolicyForScs(
+            @NonNull String ifaceName, @NonNull List<Byte> policyIds) {
+        return mSupplicantStaIfaceHal.removeQosPolicyForScs(ifaceName, policyIds);
+    }
+
+    /**
+     * Request the removal of all QoS policies for SCS.
+     *
+     * Immediate response will indicate which policies were sent to the AP, and which were
+     * rejected immediately by the supplicant. If any requests were sent to the AP, the AP's
+     * response will arrive later in the onQosPolicyResponseForScs callback.
+     *
+     * @param ifaceName Name of the interface.
+     * @return List of responses for each policy in the request, or null if an error occurred.
+     *         Status code will be one of
+     *         {@link SupplicantStaIfaceHal.QosPolicyScsRequestStatusCode}.
+     */
+    List<SupplicantStaIfaceHal.QosPolicyStatus> removeAllQosPoliciesForScs(
+            @NonNull String ifaceName) {
+        return mSupplicantStaIfaceHal.removeAllQosPoliciesForScs(ifaceName);
+    }
+
+    /**
+     * Register a callback to receive notifications for QoS SCS transactions.
+     * Callback should only be registered once.
+     *
+     * @param callback {@link SupplicantStaIfaceHal.QosScsResponseCallback} to register.
+     */
+    public void registerQosScsResponseCallback(
+            @NonNull SupplicantStaIfaceHal.QosScsResponseCallback callback) {
+        mSupplicantStaIfaceHal.registerQosScsResponseCallback(callback);
+    }
+
+    /**
      * Generate DPP credential for network access
      *
      * @param ifaceName Name of the interface.
@@ -4786,6 +4970,24 @@ public class WifiNative {
                 Log.e(TAG, "Fail to notify wificond country code changed to " + countryCode
                         + "because exception happened:" + re);
             }
+        }
+    }
+
+    /**
+     *  Return the maximum number of TDLS sessions supported by the device.
+     *  @return -1 if the information is not available on the device
+     */
+    public int getMaxSupportedConcurrentTdlsSessions(@NonNull String ifaceName) {
+        synchronized (mLock) {
+            Iface iface = mIfaceMgr.getIface(ifaceName);
+            if (iface == null) {
+                Log.e(TAG, "Failed to get the TDLS peer count, interface not found: "
+                        + ifaceName);
+                return -1;
+            }
+            // TODO b/262591976 call into HalDeviceManager and get the info from chip capabilities
+            // (IWifiChip#getWifiChipCapabilities()
+            return -1;
         }
     }
 

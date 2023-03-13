@@ -35,6 +35,7 @@ import android.net.MacAddress;
 import android.net.wifi.ScanResult;
 import android.net.wifi.SecurityParams;
 import android.net.wifi.SupplicantState;
+import android.net.wifi.WifiAnnotations;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiNetworkSelectionConfig.AssociatedNetworkSelectionOverride;
@@ -308,10 +309,18 @@ public class WifiNetworkSelector {
 
         // External scorer is not being used, and the current network's score is below the
         // sufficient score threshold configured for the AOSP scorer.
-        if (!mWifiGlobals.isUsingExternalScorer()
-                && wifiInfo.getScore()
+        if (!mWifiGlobals.isUsingExternalScorer() && wifiInfo.getScore()
                 < mWifiGlobals.getWifiLowConnectedScoreThresholdToTriggerScanForMbb()) {
-            return false;
+            if (!SdkLevel.isAtLeastS()) {
+                // Return false to prevent build issues since WifiInfo#isPrimary is only supported
+                // on S and above.
+                return false;
+            }
+            // Only return false to trigger network selection on the primary, since the secondary
+            // STA is not scored.
+            if (wifiInfo.isPrimary()) {
+                return false;
+            }
         }
 
         // OEM paid/private networks are only available to system apps, so this is never sufficient.
@@ -551,7 +560,7 @@ public class WifiNetworkSelector {
             // Skip network that does not meet the admin set minimum security level restriction
             if (adminMinimumSecurityLevel != 0) {
                 boolean securityRestrictionPassed = false;
-                @WifiInfo.SecurityType int[] securityTypes = scanResult.getSecurityTypes();
+                @WifiAnnotations.SecurityType int[] securityTypes = scanResult.getSecurityTypes();
                 for (int type : securityTypes) {
                     int securityLevel = WifiInfo.convertSecurityTypeToDpmWifiSecurity(type);
 
