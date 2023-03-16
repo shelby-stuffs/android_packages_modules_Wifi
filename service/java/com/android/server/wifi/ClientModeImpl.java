@@ -2823,7 +2823,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (SdkLevel.isAtLeastU()) {
             opts = BroadcastOptions.makeBasic()
                     .setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT)
-                    .setDeferUntilActive(true)
+                    .setDeferralPolicy(BroadcastOptions.DEFERRAL_POLICY_UNTIL_ACTIVE)
                     .toBundle();
         } else {
             opts = null;
@@ -2980,7 +2980,17 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     + " networkAgentState=" + networkAgentState);
         }
         //TODO(b/69974497) This should be non-sticky, but settings needs fixing first.
-        context.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+        if (SdkLevel.isAtLeastU()) {
+            final Context userAllContext = context.createContextAsUser(
+                    UserHandle.ALL, 0 /* flags */);
+            final Bundle opts = BroadcastOptions.makeBasic()
+                    .setDeliveryGroupPolicy(BroadcastOptions.DELIVERY_GROUP_POLICY_MOST_RECENT)
+                    .setDeferUntilActive(true)
+                    .toBundle();
+            userAllContext.sendStickyBroadcast(intent, opts);
+        } else {
+            context.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+        }
     }
 
     private static NetworkInfo makeNetworkInfo(DetailedState networkAgentState) {
@@ -3801,66 +3811,82 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         updateCurrentConnectionInfo();
     }
 
-    private void handleIpReachabilityFailure(ReachabilityLossInfoParcelable lossInfo) {
-        if (lossInfo == null || lossInfo.reason == ReachabilityLossReason.CONFIRM
-                || lossInfo.reason == ReachabilityLossReason.ORGANIC) {
-            mWifiMetrics.logStaEvent(mInterfaceName, StaEvent.TYPE_CMD_IP_REACHABILITY_LOST);
-            mWifiMetrics.logWifiIsUnusableEvent(mInterfaceName,
-                    WifiIsUnusableEvent.TYPE_IP_REACHABILITY_LOST);
-            mWifiMetrics.addToWifiUsabilityStatsList(mInterfaceName,
-                    WifiUsabilityStats.LABEL_BAD,
-                    WifiUsabilityStats.TYPE_IP_REACHABILITY_LOST, -1);
-            if (mWifiGlobals.getIpReachabilityDisconnectEnabled()) {
-                if (mWifiGlobals.getDisconnectOnlyOnInitialIpReachability()
-                        && !mIpReachabilityMonitorActive) {
-                    logd("CMD_IP_REACHABILITY_LOST Connect session is over, skip ip reachability lost indication.");
-                    return;
-                }
-                handleIpReachabilityLost();
+    /**
+     * Process IP Reachability failures by recreating a new IpClient instance to refresh L3
+     * provisioning while attempting to keep L2 still connected.
+     *
+     * This method is invoked only upon receiving reachability failure post roaming so far.
+     */
+    private void processIpReachabilityFailure() {
+        WifiConfiguration config = getConnectedWifiConfigurationInternal();
+        if (config == null) {
+            // special case for IP reachability lost which happens right after linked network
+            // roaming. The linked network roaming reset the mLastNetworkId which results in
+            // the connected configuration to be null.
+            config = getConnectingWifiConfigurationInternal();
+        }
+        if (config == null) {
+            // config could be null if it had been removed from WifiConfigManager. In this case
+            // we should simply disconnect.
+            handleIpReachabilityLost();
+            return;
+        }
+        final NetworkAgentConfig naConfig = getNetworkAgentConfigInternal(config);
+        final NetworkCapabilities nc = getCapabilities(
+                getConnectedWifiConfigurationInternal(), getConnectedBssidInternal());
+
+        mWifiInfo.setInetAddress(null);
+        if (mNetworkAgent != null) {
+            if (SdkLevel.isAtLeastT()) {
+                mNetworkAgent.unregisterAfterReplacement(NETWORK_AGENT_TEARDOWN_DELAY_MS);
             } else {
-                logd("CMD_IP_REACHABILITY_LOST but disconnect disabled -- ignore");
+                mNetworkAgent.unregister();
             }
+        }
+        mNetworkAgent = mWifiInjector.makeWifiNetworkAgent(nc, mLinkProperties, naConfig,
+                mNetworkFactory.getProvider(), new WifiNetworkAgentCallback());
+        mWifiScoreReport.setNetworkAgent(mNetworkAgent);
+        if (SdkLevel.isAtLeastT()) {
+            mQosPolicyRequestHandler.setNetworkAgent(mNetworkAgent);
+        }
+
+        transitionTo(mWaitBeforeL3ProvisioningState);
+
+        updateCurrentConnectionInfo();
+    }
+
+    private void processLegacyIpReachabilityLost() {
+        mWifiMetrics.logStaEvent(mInterfaceName, StaEvent.TYPE_CMD_IP_REACHABILITY_LOST);
+        mWifiMetrics.logWifiIsUnusableEvent(mInterfaceName,
+                WifiIsUnusableEvent.TYPE_IP_REACHABILITY_LOST);
+        mWifiMetrics.addToWifiUsabilityStatsList(mInterfaceName,
+                WifiUsabilityStats.LABEL_BAD,
+                WifiUsabilityStats.TYPE_IP_REACHABILITY_LOST, -1);
+        if (mWifiGlobals.getIpReachabilityDisconnectEnabled()) {
+            handleIpReachabilityLost();
+        } else {
+            logd("CMD_IP_REACHABILITY_LOST but disconnect disabled -- ignore");
+        }
+    }
+
+    private void handleIpReachabilityFailure(@NonNull ReachabilityLossInfoParcelable lossInfo) {
+        if (lossInfo == null) {
+            Log.e(getTag(), "lossInfo should never be null");
+            processLegacyIpReachabilityLost();
             return;
         }
 
-        if (lossInfo.reason == ReachabilityLossReason.ROAM) {
-            WifiConfiguration config = getConnectedWifiConfigurationInternal();
-            if (config == null) {
-                // special case for IP reachability lost which happens right after linked network
-                // roaming. The linked network roaming reset the mLastNetworkId which results in
-                // the connected configuration to be null.
-                config = getConnectingWifiConfigurationInternal();
-            }
-            if (config == null) {
-                // config could be null if it had been removed from WifiConfigManager. In this case
-                // we should simply disconnect.
-                handleIpReachabilityLost();
-                return;
-            }
-            final NetworkAgentConfig naConfig = getNetworkAgentConfigInternal(config);
-            final NetworkCapabilities nc = getCapabilities(
-                    getConnectedWifiConfigurationInternal(), getConnectedBssidInternal());
-
-            mWifiInfo.setInetAddress(null);
-            if (mNetworkAgent != null) {
-                if (SdkLevel.isAtLeastT()) {
-                    mNetworkAgent.unregisterAfterReplacement(NETWORK_AGENT_TEARDOWN_DELAY_MS);
-                } else {
-                    mNetworkAgent.unregister();
-                }
-            }
-            mNetworkAgent = mWifiInjector.makeWifiNetworkAgent(nc, mLinkProperties, naConfig,
-                    mNetworkFactory.getProvider(), new WifiNetworkAgentCallback());
-            mWifiScoreReport.setNetworkAgent(mNetworkAgent);
-            if (SdkLevel.isAtLeastT()) {
-                mQosPolicyRequestHandler.setNetworkAgent(mNetworkAgent);
-            }
-
-            transitionTo(mWaitBeforeL3ProvisioningState);
-        } else {
-            logd("Invalid failure reason from onIpReachabilityFailure");
+        switch (lossInfo.reason) {
+            case ReachabilityLossReason.ROAM:
+                processIpReachabilityFailure();
+                break;
+            case ReachabilityLossReason.CONFIRM:
+            case ReachabilityLossReason.ORGANIC:
+                processLegacyIpReachabilityLost();
+                break;
+            default:
+                logd("Invalid failure reason " + lossInfo.reason + "from onIpReachabilityFailure");
         }
-        updateCurrentConnectionInfo();
     }
 
     private NetworkAgentConfig getNetworkAgentConfigInternal(WifiConfiguration config) {
