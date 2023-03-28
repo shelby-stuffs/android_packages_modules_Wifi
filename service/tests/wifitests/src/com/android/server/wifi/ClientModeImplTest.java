@@ -29,6 +29,7 @@ import static android.net.wifi.WifiConfiguration.METERED_OVERRIDE_NOT_METERED;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_NONE;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_NO_INTERNET_PERMANENT;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_NO_INTERNET_TEMPORARY;
+import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.DISABLED_UNWANTED_LOW_RSSI;
 import static android.net.wifi.WifiConfiguration.NetworkSelectionStatus.NETWORK_SELECTION_PERMANENTLY_DISABLED;
 import static android.net.wifi.WifiManager.AddNetworkResult.STATUS_SUCCESS;
 
@@ -5854,6 +5855,30 @@ public class ClientModeImplTest extends WifiBaseTest {
     }
 
     /**
+     * Verify that a WifiIsUnusableEvent isn't logged and the current list of usability stats
+     * entries are not labeled and saved when receiving an IP reachability failure message with
+     * non roam type but {@link isHandleRssiOrganicKernelFailuresEnabled} is enabled.
+     * @throws Exception
+     */
+    @Test
+    public void verifyIpReachabilityFailureMsgUpdatesWifiUsabilityMetrics_enableFlag()
+            throws Exception {
+        when(mDeviceConfigFacade.isHandleRssiOrganicKernelFailuresEnabled()).thenReturn(true);
+        assumeTrue(SdkLevel.isAtLeastU());
+        connect();
+
+        ReachabilityLossInfoParcelable lossInfo =
+                new ReachabilityLossInfoParcelable("", ReachabilityLossReason.CONFIRM);
+        mCmi.sendMessage(ClientModeImpl.CMD_IP_REACHABILITY_FAILURE, lossInfo);
+        mLooper.dispatchAll();
+        verify(mWifiMetrics, never()).logWifiIsUnusableEvent(WIFI_IFACE_NAME,
+                WifiIsUnusableEvent.TYPE_IP_REACHABILITY_LOST);
+        verify(mWifiMetrics, never()).addToWifiUsabilityStatsList(WIFI_IFACE_NAME,
+                WifiUsabilityStats.LABEL_BAD,
+                WifiUsabilityStats.TYPE_IP_REACHABILITY_LOST, -1);
+    }
+
+    /**
      * Tests that when {@link ClientModeImpl} receives a SUP_REQUEST_IDENTITY message, it responds
      * to the supplicant with the SIM identity.
      */
@@ -5954,6 +5979,20 @@ public class ClientModeImplTest extends WifiBaseTest {
         mLooper.dispatchAll();
 
         verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
+    }
+
+    @Test
+    public void testUnwantedDisconnectTemporarilyDisableNetwork() throws Exception {
+        connect();
+        when(mWifiGlobals.disableUnwantedNetworkOnLowRssi()).thenReturn(true);
+        when(mWifiConfigManager.getLastSelectedNetwork()).thenReturn(-1);
+        mWifiInfo.setRssi(RSSI_THRESHOLD_MIN);
+        mCmi.sendMessage(CMD_UNWANTED_NETWORK,
+                ClientModeImpl.NETWORK_STATUS_UNWANTED_DISCONNECT);
+        mLooper.dispatchAll();
+
+        verify(mWifiConfigManager).updateNetworkSelectionStatus(anyInt(),
+                eq(DISABLED_UNWANTED_LOW_RSSI));
     }
 
     /**
@@ -6811,6 +6850,46 @@ public class ClientModeImplTest extends WifiBaseTest {
         verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
     }
 
+    private void doIpReachabilityFailureTest(int lossReason, boolean shouldWifiDisconnect)
+            throws Exception {
+        assumeTrue(SdkLevel.isAtLeastU());
+        connect();
+        expectRegisterNetworkAgent((agentConfig) -> { }, (cap) -> { });
+        reset(mWifiNetworkAgent);
+
+        // Trigger ip reachability failure from cmd_confirm or organic kernel probe and ensure
+        // wifi never disconnects and eventually state machine transits to L3ProvisioningState
+        // on U and above, but wifi should still disconnect on previous platforms.
+        ReachabilityLossInfoParcelable lossInfo =
+                new ReachabilityLossInfoParcelable("", lossReason);
+        mCmi.sendMessage(ClientModeImpl.CMD_IP_REACHABILITY_FAILURE, lossInfo);
+        mLooper.dispatchAll();
+        if (!shouldWifiDisconnect) {
+            verify(mWifiNative, never()).disconnect(WIFI_IFACE_NAME);
+            assertEquals("L3ProvisioningState", getCurrentState().getName());
+        } else {
+            verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
+        }
+    }
+
+    @Test
+    public void testIpReachabilityFailureConfirm_enableHandleRssiOrganicKernelFailuresFlag()
+            throws Exception {
+        when(mDeviceConfigFacade.isHandleRssiOrganicKernelFailuresEnabled()).thenReturn(true);
+
+        doIpReachabilityFailureTest(ReachabilityLossReason.CONFIRM,
+                false /* shouldWifiDisconnect */);
+    }
+
+    @Test
+    public void testIpReachabilityFailureConfirm_disableHandleRssiOrganicKernelFailuresFlag()
+            throws Exception {
+        when(mDeviceConfigFacade.isHandleRssiOrganicKernelFailuresEnabled()).thenReturn(false);
+
+        doIpReachabilityFailureTest(ReachabilityLossReason.CONFIRM,
+                true /* shouldWifiDisconnect */);
+    }
+
     @Test
     public void testIpReachabilityFailureOrganicTriggersDisconnection() throws Exception {
         assumeTrue(SdkLevel.isAtLeastT());
@@ -6824,6 +6903,24 @@ public class ClientModeImplTest extends WifiBaseTest {
         mCmi.sendMessage(ClientModeImpl.CMD_IP_REACHABILITY_FAILURE, lossInfo);
         mLooper.dispatchAll();
         verify(mWifiNative).disconnect(WIFI_IFACE_NAME);
+    }
+
+    @Test
+    public void testIpReachabilityFailureOrganic_enableHandleRssiOrganicKernelFailuresFlag()
+            throws Exception {
+        when(mDeviceConfigFacade.isHandleRssiOrganicKernelFailuresEnabled()).thenReturn(true);
+
+        doIpReachabilityFailureTest(ReachabilityLossReason.ORGANIC,
+                false /* shouldWifiDisconnect */);
+    }
+
+    @Test
+    public void testIpReachabilityFailureOrganic_disableHandleRssiOrganicKernelFailuresFlag()
+            throws Exception {
+        when(mDeviceConfigFacade.isHandleRssiOrganicKernelFailuresEnabled()).thenReturn(false);
+
+        doIpReachabilityFailureTest(ReachabilityLossReason.ORGANIC,
+                true /* shouldWifiDisconnect */);
     }
 
     @Test
@@ -8740,9 +8837,16 @@ public class ClientModeImplTest extends WifiBaseTest {
         assumeTrue(SdkLevel.isAtLeastT());
         WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, true);
 
-        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID,
+                testConfig.networkId);
         mLooper.dispatchAll();
-        verify(mWifiConnectivityManager).forceConnectivityScan(eq(ClientModeImpl.WIFI_WORK_SOURCE));
+        ArgumentCaptor<WifiConfiguration> wifiConfigurationArgumentCaptor =
+                ArgumentCaptor.forClass(WifiConfiguration.class);
+
+        // TOFU will first connect to get the certificates, and then connect once approved
+        verify(mWifiNative, times(2)).connectToNetwork(eq(WIFI_IFACE_NAME),
+                wifiConfigurationArgumentCaptor.capture());
+        assertEquals(testConfig.networkId, wifiConfigurationArgumentCaptor.getValue().networkId);
     }
 
     /**
@@ -8764,6 +8868,14 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(WifiMetricsProto.ConnectionEvent.HLF_NONE),
                 eq(WifiMetricsProto.ConnectionEvent.FAILURE_REASON_UNKNOWN),
                 anyInt());
+        ArgumentCaptor<WifiConfiguration> wifiConfigurationArgumentCaptor =
+                ArgumentCaptor.forClass(WifiConfiguration.class);
+
+        // TOFU will connect only once to get the certificates, but will not proceed
+        verify(mWifiNative).connectToNetwork(eq(WIFI_IFACE_NAME),
+                wifiConfigurationArgumentCaptor.capture());
+        assertEquals(testConfig.networkId, wifiConfigurationArgumentCaptor.getValue().networkId);
+
     }
 
     /**
@@ -8798,9 +8910,16 @@ public class ClientModeImplTest extends WifiBaseTest {
         assumeTrue(SdkLevel.isAtLeastT());
         WifiConfiguration testConfig = setupTrustOnFirstUse(true, true, false);
 
-        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID,
+                testConfig.networkId);
         mLooper.dispatchAll();
-        verify(mWifiConnectivityManager).forceConnectivityScan(eq(ClientModeImpl.WIFI_WORK_SOURCE));
+        ArgumentCaptor<WifiConfiguration> wifiConfigurationArgumentCaptor =
+                ArgumentCaptor.forClass(WifiConfiguration.class);
+
+        // TOFU will first connect to get the certificates, and then connect once approved
+        verify(mWifiNative, times(2)).connectToNetwork(eq(WIFI_IFACE_NAME),
+                wifiConfigurationArgumentCaptor.capture());
+        assertEquals(testConfig.networkId, wifiConfigurationArgumentCaptor.getValue().networkId);
     }
 
     /**
@@ -8823,6 +8942,13 @@ public class ClientModeImplTest extends WifiBaseTest {
                 eq(WifiMetricsProto.ConnectionEvent.HLF_NONE),
                 eq(WifiMetricsProto.ConnectionEvent.FAILURE_REASON_UNKNOWN),
                 anyInt());
+        ArgumentCaptor<WifiConfiguration> wifiConfigurationArgumentCaptor =
+                ArgumentCaptor.forClass(WifiConfiguration.class);
+
+        // TOFU will connect only once to get the certificates, but will not proceed
+        verify(mWifiNative).connectToNetwork(eq(WIFI_IFACE_NAME),
+                wifiConfigurationArgumentCaptor.capture());
+        assertEquals(testConfig.networkId, wifiConfigurationArgumentCaptor.getValue().networkId);
     }
 
     /**
@@ -8866,7 +8992,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         assumeFalse(SdkLevel.isAtLeastT());
         WifiConfiguration testConfig = setupLegacyEapNetworkTest(true);
 
-        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID,
+                testConfig.networkId);
         mLooper.dispatchAll();
         verify(mWifiMetrics, never()).endConnectionEvent(
                 any(), anyInt(), anyInt(), anyInt(), anyInt());
@@ -8899,7 +9026,8 @@ public class ClientModeImplTest extends WifiBaseTest {
         assumeFalse(SdkLevel.isAtLeastT());
         WifiConfiguration testConfig = setupLegacyEapNetworkTest(false);
 
-        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID);
+        mCmi.mInsecureEapNetworkHandlerCallbacksImpl.onAccept(testConfig.SSID,
+                testConfig.networkId);
         mLooper.dispatchAll();
         verify(mWifiMetrics, never()).endConnectionEvent(
                 any(), anyInt(), anyInt(), anyInt(), anyInt());
