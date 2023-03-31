@@ -392,7 +392,7 @@ public class HostapdHalHidlImp implements IHostapdHal {
 
             // Setup log level
             if (isV1_2()) {
-               return setDebugParams();
+               setDebugParams();
             }
         }
         if (!initHostapdVendorService()) {
