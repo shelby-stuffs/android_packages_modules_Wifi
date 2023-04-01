@@ -215,6 +215,7 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     private MacAddress mTestWifiP2pPeerAddress;
     private WifiP2pConfig mTestWifiP2pPeerConfig;
     private WifiP2pConfig mTestWifiP2pFastConnectionConfig;
+    private WifiP2pConfig mTestWifiP2pJoinExistingGroupConfig;
     private WifiP2pGroup mTestWifiP2pNewPersistentGoGroup;
     private WifiP2pGroup mTestWifiP2pGroup;
     private WifiP2pDevice mTestWifiP2pDevice;
@@ -280,6 +281,12 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         // for general connect command
         mTestWifiP2pPeerConfig = new WifiP2pConfig();
         mTestWifiP2pPeerConfig.deviceAddress = mTestWifiP2pDevice.deviceAddress;
+
+        // for config with join existing group flag set to true
+        mTestWifiP2pJoinExistingGroupConfig = new WifiP2pConfig.Builder()
+                .setDeviceAddress(MacAddress.fromString((mTestWifiP2pDevice.deviceAddress)))
+                .setJoinExistingGroup(true)
+                .build();
 
         // for fast-connection connect command
         mTestWifiP2pFastConnectionConfig = new WifiP2pConfig.Builder()
@@ -1461,6 +1468,11 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
     private void mockEnterProvisionDiscoveryState() throws Exception {
         mockPeersList();
         sendConnectMsg(mClientMessenger, mTestWifiP2pPeerConfig);
+    }
+
+    private void mockEnterProvisionDiscoveryState(WifiP2pConfig p2pConfig) throws Exception {
+        mockPeersList();
+        sendConnectMsg(mClientMessenger, p2pConfig);
     }
 
     /**
@@ -3853,6 +3865,50 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
         Message message = mMessageCaptor.getValue();
         assertEquals(WifiP2pManager.STOP_DISCOVERY_FAILED, message.what);
         assertEquals(WifiP2pManager.BUSY, message.arg1);
+    }
+
+    /**
+     * Verify WifiP2pManager.START_LISTEN_FAILED is returned when creating group.
+     */
+    @Test
+    public void testStartListenFailureWhenCreatingGroup() throws Exception {
+        // Move to group creating state
+        testConnectWithConfigValidAsGroupSuccess();
+        sendSimpleMsg(mClientMessenger, WifiP2pManager.START_LISTEN);
+        verify(mClientHandler, atLeastOnce()).sendMessage(mMessageCaptor.capture());
+        Message message = mMessageCaptor.getValue();
+        assertEquals(WifiP2pManager.START_LISTEN_FAILED, message.what);
+        assertEquals(WifiP2pManager.BUSY, message.arg1);
+    }
+
+    /**
+     * Verify WifiP2pManager.STOP_LISTEN_SUCCEEDED is returned when native call to stop listen
+     * succeed in creating group.
+     */
+    @Test
+    public void testStopListenSuccessWhenNativeCallSucceedInCreatingGroup() throws Exception {
+        when(mWifiNative.p2pExtListen(eq(false), anyInt(), anyInt())).thenReturn(true);
+        // Move to group creating state
+        testConnectWithConfigValidAsGroupSuccess();
+        sendSimpleMsg(mClientMessenger, WifiP2pManager.STOP_LISTEN);
+        verify(mClientHandler, atLeastOnce()).sendMessage(mMessageCaptor.capture());
+        Message message = mMessageCaptor.getValue();
+        assertEquals(WifiP2pManager.STOP_LISTEN_SUCCEEDED, message.what);
+    }
+
+    /**
+     * Verify WifiP2pManager.STOP_LISTEN_FAILED is returned when native call to stop listen
+     * fail in creating group.
+     */
+    @Test
+    public void testStopListenFailureWhenNativeCallFailInCreatingGroup() throws Exception {
+        when(mWifiNative.p2pExtListen(eq(false), anyInt(), anyInt())).thenReturn(false);
+        // Move to group creating state
+        testConnectWithConfigValidAsGroupSuccess();
+        sendSimpleMsg(mClientMessenger, WifiP2pManager.STOP_LISTEN);
+        verify(mClientHandler, atLeastOnce()).sendMessage(mMessageCaptor.capture());
+        Message message = mMessageCaptor.getValue();
+        assertEquals(WifiP2pManager.STOP_LISTEN_FAILED, message.what);
     }
 
     /**
@@ -7218,5 +7274,25 @@ public class WifiP2pServiceImplTest extends WifiBaseTest {
 
         /* Verify that p2p discover is triggered */
         verify(mWifiNative).p2pFind(anyInt());
+    }
+
+    /**
+     * Verify that p2p connect with Join existing group is set
+     */
+    private void verifyP2pConnectWithJoinExistingGroupSet() throws Exception {
+        forceP2pEnabled(mClient1);
+        mockEnterProvisionDiscoveryState(mTestWifiP2pJoinExistingGroupConfig);
+
+        WifiP2pProvDiscEvent pdEvent = new WifiP2pProvDiscEvent();
+        pdEvent.device = mTestWifiP2pDevice;
+        sendSimpleMsg(null,
+                WifiP2pMonitor.P2P_PROV_DISC_PBC_RSP_EVENT,
+                pdEvent);
+
+        ArgumentCaptor<WifiP2pConfig> configCaptor =
+                ArgumentCaptor.forClass(WifiP2pConfig.class);
+        verify(mWifiNative).p2pConnect(configCaptor.capture(), eq(true));
+        WifiP2pConfig config = configCaptor.getValue();
+        assertTrue(config.isJoinExistingGroup());
     }
 }

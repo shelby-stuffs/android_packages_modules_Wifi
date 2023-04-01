@@ -330,6 +330,7 @@ public class WifiNativeTest extends WifiBaseTest {
                 mWifiVendorHal, mStaIfaceHal, mHostapdHal, mWificondControl,
                 mWifiMonitor, mPropertyService, mWifiMetrics,
                 mHandler, mRandom, mBuildProperties, mWifiInjector);
+        mWifiNative.enableVerboseLogging(true, true);
         mWifiNative.initialize();
     }
 
@@ -984,6 +985,21 @@ public class WifiNativeTest extends WifiBaseTest {
 
     /**
      * Verifies that getScanResults() can parse NativeScanResult from wificond correctly,
+     */
+    @Test
+    public void testGetScanResultsWithInvalidSsidLength() {
+        // Mock the returned array of NativeScanResult.
+        List<NativeScanResult> mockScanResults = Arrays.asList(createMockNativeScanResult());
+        for (NativeScanResult scanResult : mockScanResults) {
+            scanResult.ssid = Arrays.copyOf(scanResult.ssid, 33);
+        }
+        when(mWificondControl.getScanResults(anyString(), anyInt())).thenReturn(mockScanResults);
+
+        assertEquals(0, mWifiNative.getScanResults(WIFI_IFACE_NAME).size());
+    }
+
+    /**
+     * Verifies that getScanResults() can parse NativeScanResult from wificond correctly,
      * when there is radio chain info.
      */
     @Test
@@ -1577,5 +1593,13 @@ public class WifiNativeTest extends WifiBaseTest {
     public void testIsSoftApInstanceDiedHandlerSupported() throws Exception {
         mWifiNative.isSoftApInstanceDiedHandlerSupported();
         verify(mHostapdHal).isSoftApInstanceDiedHandlerSupported();
+    }
+
+    @Test
+    public void testEnableStaChannelForPeerNetworkWithOverride() throws Exception {
+        mResources.setBoolean(R.bool.config_wifiEnableStaIndoorChannelForPeerNetwork, true);
+        mResources.setBoolean(R.bool.config_wifiEnableStaDfsChannelForPeerNetwork, true);
+        mWifiNative.setupInterfaceForClientInScanMode(null, TEST_WORKSOURCE);
+        verify(mWifiVendorHal).enableStaChannelForPeerNetwork(true, true);
     }
 }

@@ -131,7 +131,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     private boolean mVerboseLoggingEnabled = false;
     private boolean mVerboseHalLoggingEnabled = false;
     private boolean mServiceDeclared = false;
-    private int mServiceVersion;
+    private int mServiceVersion = -1;
 
     // Supplicant HAL interface objects
     private ISupplicant mISupplicant = null;
@@ -156,6 +156,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
     private final WifiMetrics mWifiMetrics;
     private final WifiGlobals mWifiGlobals;
     private final SsidTranslator mSsidTranslator;
+    private final WifiInjector mWifiInjector;
     private CountDownLatch mWaitForDeathLatch;
     private INonStandardCertCallback mNonStandardCertCallback;
     private SupplicantStaIfaceHal.QosScsResponseCallback mQosScsResponseCallback;
@@ -183,7 +184,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
 
     public SupplicantStaIfaceHalAidlImpl(Context context, WifiMonitor monitor, Handler handler,
             Clock clock, WifiMetrics wifiMetrics, WifiGlobals wifiGlobals,
-            @NonNull SsidTranslator ssidTranslator) {
+            @NonNull SsidTranslator ssidTranslator, WifiInjector wifiInjector) {
         mContext = context;
         mWifiMonitor = monitor;
         mEventHandler = handler;
@@ -193,6 +194,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
         mSsidTranslator = ssidTranslator;
         mSupplicantDeathRecipient = new SupplicantDeathRecipient();
         mPmkCacheManager = new PmkCacheManager(mClock, mEventHandler);
+        mWifiInjector = wifiInjector;
     }
 
     /**
@@ -451,7 +453,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             Log.i(TAG, "Local Version: " + ISupplicant.VERSION);
 
             try {
-                mServiceVersion = mISupplicant.getInterfaceVersion();
+                getServiceVersion();
                 Log.i(TAG, "Remote Version: " + mServiceVersion);
                 IBinder serviceBinder = getServiceBinderMockable();
                 if (serviceBinder == null) {
@@ -465,6 +467,20 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
                 return false;
+            }
+        }
+    }
+
+    private void getServiceVersion() throws RemoteException {
+        synchronized (mLock) {
+            if (mISupplicant == null) return;
+            if (mServiceVersion == -1) {
+                int serviceVersion = mISupplicant.getInterfaceVersion();
+                mWifiInjector.getSettingsConfigStore().put(
+                        WifiSettingsConfigStore.SUPPLICANT_HAL_AIDL_SERVICE_VERSION,
+                        serviceVersion);
+                mServiceVersion = serviceVersion;
+                Log.i(TAG, "Remote service version was cached");
             }
         }
     }
@@ -2962,6 +2978,7 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
                 capOut.is11bMode = (cap.legacyMode == LegacyMode.B_MODE);
                 capOut.maxNumberTxSpatialStreams = cap.maxNumberTxSpatialStreams;
                 capOut.maxNumberRxSpatialStreams = cap.maxNumberRxSpatialStreams;
+                capOut.apTidToLinkMapNegotiationSupported = cap.apTidToLinkMapNegotiationSupported;
                 return capOut;
             } catch (RemoteException e) {
                 handleRemoteException(e, methodStr);
@@ -3030,13 +3047,22 @@ public class SupplicantStaIfaceHalAidlImpl implements ISupplicantStaIfaceHal {
                 WifiNative.ConnectionMloLinksInfo nativeInfo =
                         new WifiNative.ConnectionMloLinksInfo();
 
+                // The parameter 'apMldMacAddress' can come as null.
+                if (halInfo.apMldMacAddress != null) {
+                    nativeInfo.apMldMacAddress = MacAddress.fromBytes(halInfo.apMldMacAddress);
+                }
+                nativeInfo.apMloLinkId = halInfo.apMloLinkId;
                 nativeInfo.links = new WifiNative.ConnectionMloLink[halInfo.links.length];
 
                 for (int i = 0; i < halInfo.links.length; i++) {
+                    // The parameter 'apLinkMacAddress' can come as null.
                     nativeInfo.links[i] = new WifiNative.ConnectionMloLink(
                             halInfo.links[i].linkId,
                             MacAddress.fromBytes(halInfo.links[i].staLinkMacAddress),
-                            halInfo.links[i].tidsUplinkMap, halInfo.links[i].tidsDownlinkMap);
+                            (halInfo.links[i].apLinkMacAddress != null) ? MacAddress.fromBytes(
+                                    halInfo.links[i].apLinkMacAddress) : null,
+                            halInfo.links[i].tidsUplinkMap, halInfo.links[i].tidsDownlinkMap,
+                            halInfo.links[i].frequencyMHz);
                 }
                 return nativeInfo;
             } catch (RemoteException e) {

@@ -39,6 +39,7 @@ import static android.net.wifi.WifiManager.WIFI_INTERFACE_TYPE_AWARE;
 import static android.net.wifi.WifiManager.WIFI_INTERFACE_TYPE_DIRECT;
 import static android.net.wifi.WifiManager.WIFI_INTERFACE_TYPE_STA;
 import static android.net.wifi.WifiManager.WIFI_STATE_ENABLED;
+import static android.os.Process.WIFI_UID;
 
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_LOCAL_ONLY;
 import static com.android.server.wifi.ActiveModeManager.ROLE_CLIENT_SECONDARY_LONG_LIVED;
@@ -78,6 +79,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
+import android.hardware.wifi.WifiStatusCode;
 import android.location.LocationManager;
 import android.net.DhcpInfo;
 import android.net.DhcpOption;
@@ -816,6 +818,7 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiInjector.getSsidTranslator().handleBootCompleted();
             mWifiInjector.getPasspointManager().handleBootCompleted();
             mWifiInjector.getInterfaceConflictManager().handleBootCompleted();
+            mWifiInjector.getHalDeviceManager().handleBootCompleted();
             // HW capabilities is ready after boot completion.
             if (!mWifiGlobals.isInsecureEnterpriseConfigurationAllowed()) {
                 mWifiConfigManager.updateTrustOnFirstUseFlag(isTrustOnFirstUseSupported());
@@ -3118,7 +3121,7 @@ public class WifiServiceImpl extends BaseWifiService {
 
         int targetConfigUid = Process.INVALID_UID; // don't expose any MAC addresses
         if (isPrivileged) {
-            targetConfigUid = Process.WIFI_UID; // expose all MAC addresses
+            targetConfigUid = WIFI_UID; // expose all MAC addresses
         } else if (isCarrierApp || isDeviceOrProfileOwner) {
             targetConfigUid = callingUid; // expose only those configs created by the calling App
         }
@@ -5162,7 +5165,7 @@ public class WifiServiceImpl extends BaseWifiService {
     private void updateWifiMetrics() {
         mWifiThreadRunner.run(() -> {
             mWifiMetrics.updateSavedNetworks(
-                    mWifiConfigManager.getSavedNetworks(Process.WIFI_UID));
+                    mWifiConfigManager.getSavedNetworks(WIFI_UID));
             mActiveModeWarden.updateMetrics();
             mPasspointManager.updateMetrics();
         });
@@ -5471,7 +5474,7 @@ public class WifiServiceImpl extends BaseWifiService {
         // Delete all Wifi SSIDs
         mWifiThreadRunner.run(() -> {
             List<WifiConfiguration> networks = mWifiConfigManager
-                    .getSavedNetworks(Process.WIFI_UID);
+                    .getSavedNetworks(WIFI_UID);
             EventLog.writeEvent(0x534e4554, "231985227", -1,
                     "Remove certs for factory reset");
             for (WifiConfiguration network : networks) {
@@ -5483,7 +5486,7 @@ public class WifiServiceImpl extends BaseWifiService {
         });
         // Delete all Passpoint configurations
         List<PasspointConfiguration> configs = mWifiThreadRunner.call(
-                () -> mPasspointManager.getProviderConfigs(Process.WIFI_UID /* ignored */, true),
+                () -> mPasspointManager.getProviderConfigs(WIFI_UID /* ignored */, true),
                 Collections.emptyList());
         for (PasspointConfiguration config : configs) {
             removePasspointConfigurationInternal(null, config.getUniqueId());
@@ -7358,6 +7361,11 @@ public class WifiServiceImpl extends BaseWifiService {
                     int i = 0;
                     for (Pair<Integer, WorkSource> detail: details) {
                         interfaces[i] = hdmIfaceToWifiIfaceMap.get(detail.first);
+                        if (detail.second.size() == 1
+                                && detail.second.getUid(0) == WIFI_UID) {
+                            i++;
+                            continue;
+                        }
                         StringBuilder packages = new StringBuilder();
                         for (int j = 0; j < detail.second.size(); ++j) {
                             if (j != 0) packages.append(",");
@@ -7407,6 +7415,19 @@ public class WifiServiceImpl extends BaseWifiService {
         return policyIdSet.size() == policyIds.length;
     }
 
+    private void rejectAllQosPolicies(
+            List<QosPolicyParams> policyParamsList, IListListener listener) {
+        try {
+            List<Integer> statusList = new ArrayList<>();
+            for (QosPolicyParams policy : policyParamsList) {
+                statusList.add(WifiManager.QOS_REQUEST_STATUS_FAILURE_UNKNOWN);
+            }
+            listener.onResult(statusList);
+        } catch (RemoteException e) {
+            Log.e(TAG, e.getMessage());
+        }
+    }
+
     /**
      * See {@link WifiManager#addQosPolicies(List, Executor, Consumer)}.
      */
@@ -7417,8 +7438,6 @@ public class WifiServiceImpl extends BaseWifiService {
             @NonNull IListListener listener) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!isApplicationQosPolicyFeatureEnabled()) {
-            throw new UnsupportedOperationException("addQosPolicy is disabled on this device");
         }
 
         int uid = Binder.getCallingUid();
@@ -7432,6 +7451,12 @@ public class WifiServiceImpl extends BaseWifiService {
         Objects.requireNonNull(binder, "binder cannot be null");
         Objects.requireNonNull(listener, "listener cannot be null");
 
+        if (!isApplicationQosPolicyFeatureEnabled()) {
+            Log.i(TAG, "addQosPolicies is disabled on this device");
+            rejectAllQosPolicies(policyParamsList, listener);
+            return;
+        }
+
         if (policyParamsList.size() == 0
                 || policyParamsList.size() > WifiManager.getMaxNumberOfPoliciesPerQosRequest()
                 || !policyIdsAreUnique(policyParamsList)) {
@@ -7439,16 +7464,8 @@ public class WifiServiceImpl extends BaseWifiService {
         }
 
         mWifiThreadRunner.post(() -> {
-            try {
-                // TODO: Add an implementation for this API.
-                List<Integer> statusList = new ArrayList<>();
-                for (QosPolicyParams policy : policyParamsList) {
-                    statusList.add(WifiManager.QOS_REQUEST_STATUS_FAILURE_UNKNOWN);
-                }
-                listener.onResult(statusList);
-            } catch (RemoteException e) {
-                Log.e(TAG, e.getMessage());
-            }
+            // TODO: Add an implementation for this API.
+            rejectAllQosPolicies(policyParamsList, listener);
         });
     }
 
@@ -7461,7 +7478,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
         } else if (!isApplicationQosPolicyFeatureEnabled()) {
-            Log.i(TAG, "removeQosPolicy is disabled on this device");
+            Log.i(TAG, "removeQosPolicies is disabled on this device");
             return;
         }
         int uid = Binder.getCallingUid();
@@ -7498,5 +7515,99 @@ public class WifiServiceImpl extends BaseWifiService {
             throw new SecurityException("Uid=" + uid + " is not allowed to remove QoS policies");
         }
         // TODO: Add an implementation for this API.
+    }
+
+    /**
+     * See {@link WifiManager#setLinkLayerStatsPollingInterval(int)}.
+     */
+    @Override
+    public void setLinkLayerStatsPollingInterval(int intervalMs) {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException("SDK level too old");
+        }
+        enforceAnyPermissionOf(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION);
+        if (intervalMs < 0) {
+            throw new IllegalArgumentException("intervalMs should not be smaller than 0");
+        }
+        mWifiThreadRunner.post(() -> mActiveModeWarden.getPrimaryClientModeManager()
+                    .setLinkLayerStatsPollingInterval(intervalMs));
+    }
+
+    /**
+     * See {@link WifiManager#getLinkLayerStatsPollingInterval(Executor, Consumer)}.
+     */
+    @Override
+    public void getLinkLayerStatsPollingInterval(@NonNull IIntegerListener listener) {
+        if (!SdkLevel.isAtLeastT()) {
+            throw new UnsupportedOperationException("SDK level too old");
+        }
+        if (listener == null) {
+            throw new NullPointerException("listener should not be null");
+        }
+        enforceAnyPermissionOf(android.Manifest.permission.MANAGE_WIFI_NETWORK_SELECTION);
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(mWifiGlobals.getPollRssiIntervalMillis());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * See {@link WifiManager#setMloMode(int, Executor, Consumer)}
+     */
+    @Override
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void setMloMode(@WifiManager.MloMode int mode, @NonNull IBooleanListener listener) {
+        // SDK check.
+        if (!SdkLevel.isAtLeastU()) {
+            throw new UnsupportedOperationException("SDK level too old");
+        }
+        // Permission check.
+        int uid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid)) {
+            throw new SecurityException("Uid=" + uid + " is not allowed to set MLO mode");
+        }
+        // Argument check
+        Objects.requireNonNull(listener, "listener cannot be null");
+        if (mode < WifiManager.MLO_MODE_DEFAULT || mode > WifiManager.MLO_MODE_LOW_POWER) {
+            throw new IllegalArgumentException("invalid mode: " + mode);
+        }
+        // Set MLO mode and process error status.
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(mWifiNative.setMloMode(mode) == WifiStatusCode.SUCCESS);
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * See {@link WifiManager#getMloMode(Executor, Consumer)}
+     */
+    @Override
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    public void getMloMode(IIntegerListener listener) {
+        // SDK check.
+        if (!SdkLevel.isAtLeastU()) {
+            throw new UnsupportedOperationException("SDK level too old");
+        }
+        // Permission check.
+        int uid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(uid)) {
+            throw new SecurityException("Uid=" + uid + " is not allowed to get MLO mode");
+        }
+        // Argument check
+        Objects.requireNonNull(listener, "listener cannot be null");
+        // Get MLO mode.
+        mWifiThreadRunner.post(() -> {
+            try {
+                listener.onResult(mWifiNative.getMloMode());
+            } catch (RemoteException e) {
+                Log.e(TAG, e.getMessage());
+            }
+        });
     }
 }
