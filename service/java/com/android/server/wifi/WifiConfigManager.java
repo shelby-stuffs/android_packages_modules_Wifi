@@ -2169,6 +2169,7 @@ public class WifiConfigManager {
                 networkId, WifiConfiguration.NetworkSelectionStatus.DISABLED_NONE)) {
             return false;
         }
+        mWifiBlocklistMonitor.clearBssidBlocklistForSsid(config.SSID);
         saveToStore(true);
         return true;
     }
@@ -2276,14 +2277,16 @@ public class WifiConfigManager {
      * 4. Set the hasEverConnected| flag in the associated |NetworkSelectionStatus|.
      * 5. Set the status of network to |CURRENT|.
      * 6. Set the |isCurrentlyConnected| flag to true.
+     * 7. Set the |isUserSelected| flag.
      *
      * @param networkId network ID corresponding to the network.
+     * @param isUserSelected network is user selected.
      * @param shouldSetUserConnectChoice setup user connect choice on this network.
      * @param rssi signal strength of the connected network.
      * @return true if the network was found, false otherwise.
      */
-    public boolean updateNetworkAfterConnect(int networkId, boolean shouldSetUserConnectChoice,
-            int rssi) {
+    public boolean updateNetworkAfterConnect(int networkId, boolean isUserSelected,
+            boolean shouldSetUserConnectChoice, int rssi) {
         if (mVerboseLoggingEnabled) {
             Log.v(TAG, "Update network after connect for " + networkId);
         }
@@ -2306,6 +2309,7 @@ public class WifiConfigManager {
         config.getNetworkSelectionStatus().setHasEverConnected(true);
         setNetworkStatus(config, WifiConfiguration.Status.CURRENT);
         config.isCurrentlyConnected = true;
+        config.setIsUserSelected(isUserSelected);
         saveToStore(false);
         return true;
     }
@@ -2349,6 +2353,7 @@ public class WifiConfigManager {
             setNetworkStatus(config, WifiConfiguration.Status.ENABLED);
         }
         config.isCurrentlyConnected = false;
+        config.setIsUserSelected(false);
         saveToStore(false);
         return true;
     }
