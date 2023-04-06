@@ -187,6 +187,7 @@ import com.android.modules.utils.ParceledListSlice;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.net.module.util.Inet4AddressUtils;
 import com.android.server.wifi.coex.CoexManager;
+import com.android.server.wifi.entitlement.PseudonymInfo;
 import com.android.server.wifi.hotspot2.PasspointManager;
 import com.android.server.wifi.hotspot2.PasspointProvider;
 import com.android.server.wifi.proto.nano.WifiMetricsProto.UserActionEvent;
@@ -221,6 +222,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -277,6 +279,7 @@ public class WifiServiceImpl extends BaseWifiService {
     private final ConnectHelper mConnectHelper;
     private final WifiGlobals mWifiGlobals;
     private final WifiCarrierInfoManager mWifiCarrierInfoManager;
+    private final WifiPseudonymManager mWifiPseudonymManager;
     private final WifiNetworkFactory mWifiNetworkFactory;
     private @WifiManager.VerboseLoggingLevel int mVerboseLoggingLevel =
             WifiManager.VERBOSE_LOGGING_LEVEL_DISABLED;
@@ -527,6 +530,7 @@ public class WifiServiceImpl extends BaseWifiService {
         mWifiGlobals = wifiInjector.getWifiGlobals();
         mSimRequiredNotifier = wifiInjector.getSimRequiredNotifier();
         mWifiCarrierInfoManager = wifiInjector.getWifiCarrierInfoManager();
+        mWifiPseudonymManager = wifiInjector.getWifiPseudonymManager();
         mMakeBeforeBreakManager = mWifiInjector.getMakeBeforeBreakManager();
         mLastCallerInfoManager = mWifiInjector.getLastCallerInfoManager();
         mWifiDialogManager = mWifiInjector.getWifiDialogManager();
@@ -5681,9 +5685,9 @@ public class WifiServiceImpl extends BaseWifiService {
         SoftApConfiguration softApConfig =
                 mSoftApBackupRestore.retrieveSoftApConfigurationFromBackupData(data);
         if (softApConfig != null) {
-            mWifiThreadRunner.post(() -> mWifiApConfigStore.setApConfiguration(
+            mWifiApConfigStore.setApConfiguration(
                     mWifiApConfigStore.resetToDefaultForUnsupportedConfig(
-                    mWifiApConfigStore.upgradeSoftApConfiguration(softApConfig))));
+                            mWifiApConfigStore.upgradeSoftApConfiguration(softApConfig)));
             Log.d(TAG, "Restored soft ap backup data");
         }
         return softApConfig;
@@ -6353,6 +6357,22 @@ public class WifiServiceImpl extends BaseWifiService {
                             + configuration);
                     wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                     return;
+                }
+                if (mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(configuration.carrierId)) {
+                    Optional<PseudonymInfo> pseudonymInfo =
+                            mWifiPseudonymManager.getValidPseudonymInfo(configuration.carrierId);
+                    if (pseudonymInfo.isEmpty()) {
+                        Log.e(TAG, "There isn't any valid pseudonym to update the Network="
+                                + configuration);
+                        mWifiPseudonymManager.retrievePseudonymOnFailureTimeoutExpired(
+                                configuration);
+                        // TODO(b/274148786): new error code and UX for this failure.
+                        wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
+                        return;
+                    } else {
+                        mWifiPseudonymManager.updateWifiConfiguration(
+                                configuration);
+                    }
                 }
             }
 
