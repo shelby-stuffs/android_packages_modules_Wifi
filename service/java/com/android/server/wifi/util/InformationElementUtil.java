@@ -1574,6 +1574,10 @@ public class InformationElementUtil {
                 // see section 9.4.2.25 - RSNE - In IEEE Std 802.11-2016
                 if (buf.remaining() < 2) return;
                 int rsnCaps = buf.getShort();
+                isManagementFrameProtectionRequired =
+                        0 != (RSN_CAP_MANAGEMENT_FRAME_PROTECTION_REQUIRED & rsnCaps);
+                isManagementFrameProtectionCapable =
+                        0 != (RSN_CAP_MANAGEMENT_FRAME_PROTECTION_CAPABLE & rsnCaps);
 
                 if (buf.remaining() < 2) return;
                 // PMKID, it's not used, drop it if exists (optional).
@@ -1587,10 +1591,6 @@ public class InformationElementUtil {
                 // Group management cipher suite (optional).
                 if (buf.remaining() < 4) return;
                 groupManagementCipher.add(parseRsnCipher(buf.getInt()));
-                isManagementFrameProtectionRequired = !groupManagementCipher.isEmpty()
-                        && 0 != (RSN_CAP_MANAGEMENT_FRAME_PROTECTION_REQUIRED & rsnCaps);
-                isManagementFrameProtectionCapable = !groupManagementCipher.isEmpty()
-                        && 0 != (RSN_CAP_MANAGEMENT_FRAME_PROTECTION_CAPABLE & rsnCaps);
             } catch (BufferUnderflowException e) {
                 Log.e("IE_Capabilities", "Couldn't parse RSNE, buffer underflow");
             }
@@ -1946,13 +1946,11 @@ public class InformationElementUtil {
             if (isWPS) {
                 capabilities.append("[WPS]");
             }
-            if (!groupManagementCipher.isEmpty()) {
-                if (isManagementFrameProtectionRequired) {
-                    capabilities.append("[MFPR]");
-                }
-                if (isManagementFrameProtectionCapable) {
-                    capabilities.append("[MFPC]");
-                }
+            if (isManagementFrameProtectionRequired) {
+                capabilities.append("[MFPR]");
+            }
+            if (isManagementFrameProtectionCapable) {
+                capabilities.append("[MFPC]");
             }
 
             return capabilities.toString();
