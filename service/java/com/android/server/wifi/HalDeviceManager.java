@@ -95,7 +95,8 @@ public class HalDeviceManager {
     private WifiDeathRecipient mIWifiDeathRecipient;
     private boolean mIsConcurrencyComboLoadedFromDriver;
     private boolean mWaitForDestroyedListeners;
-    private ArrayMap<WifiHal.WifiInterface, SoftApManager> mSoftApManagers = new ArrayMap<>();
+    // Map of Interface name to their associated SoftApManager
+    private final ArrayMap<String, SoftApManager> mSoftApManagers = new ArrayMap<>();
 
     /**
      * Public API for querying interfaces from the HalDeviceManager.
@@ -329,7 +330,7 @@ public class HalDeviceManager {
                 : HDM_CREATE_IFACE_AP, requiredChipCapabilities, destroyedListener,
                 handler, requestorWs);
         if (apIface != null) {
-            mSoftApManagers.put(apIface, softApManager);
+            mSoftApManagers.put(getName(apIface), softApManager);
         }
         return apIface;
     }
@@ -2166,7 +2167,11 @@ public class HalDeviceManager {
             WifiIfaceInfo[] bridgedApIfaces) {
         List<WifiIfaceInfo> ifacesToDowngrade = new ArrayList<>();
         for (WifiIfaceInfo ifaceInfo : bridgedApIfaces) {
-            SoftApManager softApManager = mSoftApManagers.get(ifaceInfo.iface);
+            String name = getName(ifaceInfo.iface);
+            if (name == null) {
+                continue;
+            }
+            SoftApManager softApManager = mSoftApManagers.get(name);
             if (softApManager == null) {
                 Log.e(TAG, "selectBridgedApInterfacesToDowngrade: Could not find SoftApManager for"
                         + " iface: " + ifaceInfo.iface);
@@ -2441,14 +2446,13 @@ public class HalDeviceManager {
     }
 
     private boolean downgradeBridgedApIface(WifiIfaceInfo bridgedApIfaceInfo) {
-        SoftApManager bridgedSoftApManager = mSoftApManagers.get(bridgedApIfaceInfo.iface);
-        if (bridgedSoftApManager == null) {
-            Log.e(TAG, "Could not find SoftApManager for bridged AP iface "
-                    + bridgedApIfaceInfo.iface);
-            return false;
-        }
         String name = getName(bridgedApIfaceInfo.iface);
         if (name == null) {
+            return false;
+        }
+        SoftApManager bridgedSoftApManager = mSoftApManagers.get(name);
+        if (bridgedSoftApManager == null) {
+            Log.e(TAG, "Could not find SoftApManager for bridged AP iface " + name);
             return false;
         }
         WifiChip chip = getChip(bridgedApIfaceInfo.iface);

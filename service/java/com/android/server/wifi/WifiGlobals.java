@@ -65,6 +65,7 @@ public class WifiGlobals {
     // This is set by WifiManager#setVerboseLoggingEnabled(int).
     private boolean mIsShowKeyVerboseLoggingModeEnabled = false;
     private boolean mIsUsingExternalScorer = false;
+    private boolean mDisableUnwantedNetworkOnLowRssi = false;
 
     public WifiGlobals(Context context) {
         mContext = context;
@@ -109,8 +110,10 @@ public class WifiGlobals {
                 R.bool.config_wifiAdjustPollRssiIntervalEnabled);
         mWifiInterfaceAddedSelfRecoveryEnabled = mContext.getResources().getBoolean(
                 R.bool.config_wifiInterfaceAddedSelfRecoveryEnabled);
-        mIsDisconnectOnlyOnInitialIpReachability = mContext.getResources()
+	mIsDisconnectOnlyOnInitialIpReachability = mContext.getResources()
                 .getBoolean(R.bool.config_disconnectOnlyOnInitialIpReachability);
+        mDisableUnwantedNetworkOnLowRssi = mContext.getResources().getBoolean(
+                R.bool.config_wifiDisableUnwantedNetworkOnLowRssi);
     }
 
     /** Get the interval between RSSI polls, in milliseconds. */
@@ -317,6 +320,13 @@ public class WifiGlobals {
         return mWifiInterfaceAddedSelfRecoveryEnabled;
     }
 
+    /**
+     * Get whether to temporarily disable a unwanted network that has low RSSI.
+     */
+    public boolean disableUnwantedNetworkOnLowRssi() {
+        return mDisableUnwantedNetworkOnLowRssi;
+    }
+
     /** Check if IP Reachability lost need to be monitor for first 10 sec of connection/roam. */
     public boolean getDisconnectOnlyOnInitialIpReachability() {
         return mIsDisconnectOnlyOnInitialIpReachability;
@@ -348,6 +358,7 @@ public class WifiGlobals {
         pw.println("mIsP2pMacRandomizationSupported" + mIsP2pMacRandomizationSupported);
         pw.println("mWifiInterfaceAddedSelfRecoveryEnabled="
                 + mWifiInterfaceAddedSelfRecoveryEnabled);
+        pw.println("mDisableUnwantedNetworkOnLowRssi=" + mDisableUnwantedNetworkOnLowRssi);
         pw.println("mIsDisconnectOnlyOnInitialIpReachability=" + mIsDisconnectOnlyOnInitialIpReachability);
     }
 }
