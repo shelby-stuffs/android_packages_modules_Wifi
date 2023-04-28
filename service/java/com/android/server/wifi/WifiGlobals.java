@@ -59,6 +59,7 @@ public class WifiGlobals {
     private final int mClientRssiMonitorHysteresisDb;
     private final boolean mAdjustPollRssiIntervalEnabled;
     private final boolean mWifiInterfaceAddedSelfRecoveryEnabled;
+    private final int mNetworkNotFoundEventThreshold;
     // This is read from the overlay, cache it after boot up.
     private final boolean mIsDisconnectOnlyOnInitialIpReachability;
 
@@ -114,6 +115,8 @@ public class WifiGlobals {
                 .getBoolean(R.bool.config_disconnectOnlyOnInitialIpReachability);
         mDisableUnwantedNetworkOnLowRssi = mContext.getResources().getBoolean(
                 R.bool.config_wifiDisableUnwantedNetworkOnLowRssi);
+        mNetworkNotFoundEventThreshold = mContext.getResources().getInteger(
+                R.integer.config_wifiNetworkNotFoundEventThreshold);
     }
 
     /** Get the interval between RSSI polls, in milliseconds. */
@@ -327,6 +330,13 @@ public class WifiGlobals {
         return mDisableUnwantedNetworkOnLowRssi;
     }
 
+    /**
+     * Get the threshold to use for blocking a network due to NETWORK_NOT_FOUND_EVENT failure.
+     */
+    public int getNetworkNotFoundEventThreshold() {
+        return mNetworkNotFoundEventThreshold;
+    }
+
     /** Check if IP Reachability lost need to be monitor for first 10 sec of connection/roam. */
     public boolean getDisconnectOnlyOnInitialIpReachability() {
         return mIsDisconnectOnlyOnInitialIpReachability;
@@ -359,6 +369,7 @@ public class WifiGlobals {
         pw.println("mWifiInterfaceAddedSelfRecoveryEnabled="
                 + mWifiInterfaceAddedSelfRecoveryEnabled);
         pw.println("mDisableUnwantedNetworkOnLowRssi=" + mDisableUnwantedNetworkOnLowRssi);
+        pw.println("mNetworkNotFoundEventThreshold=" + mNetworkNotFoundEventThreshold);
         pw.println("mIsDisconnectOnlyOnInitialIpReachability=" + mIsDisconnectOnlyOnInitialIpReachability);
     }
 }

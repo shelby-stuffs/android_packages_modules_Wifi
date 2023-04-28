@@ -24,6 +24,7 @@ import android.net.wifi.QosPolicyParams;
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Log;
 
@@ -51,14 +52,22 @@ public class ApplicationQosPolicyRequestHandler {
     private static final int MAX_POLICIES_PER_TRANSACTION =
             WifiManager.getMaxNumberOfPoliciesPerQosRequest();
 
+    // HAL should automatically time out at 1000 ms. Perform a local check at 1500 ms to verify
+    // that either the expected callback, or the timeout callback, was received.
+    @VisibleForTesting
+    protected static final int CALLBACK_TIMEOUT_MILLIS = 1500;
+
     private final ActiveModeWarden mActiveModeWarden;
     private final WifiNative mWifiNative;
     private final Handler mHandler;
     private final ApCallback mApCallback;
     private final ApplicationQosPolicyTrackingTable mPolicyTrackingTable;
+    private final ApplicationDeathRecipient mApplicationDeathRecipient;
 
     private Map<String, List<QueuedRequest>> mPerIfaceRequestQueue;
     private Map<String, CallbackParams> mPendingCallbacks;
+    private Map<IBinder, Integer> mApplicationBinderToUidMap;
+    private Map<Integer, IBinder> mApplicationUidToBinderMap;
 
     private static final int REQUEST_TYPE_ADD = 0;
     private static final int REQUEST_TYPE_REMOVE = 1;
@@ -76,6 +85,7 @@ public class ApplicationQosPolicyRequestHandler {
         public final @Nullable List<QosPolicyParams> policiesToAdd;
         public final @Nullable List<Integer> policyIdsToRemove;
         public final @NonNull ApplicationCallback callback;
+        public final @Nullable IBinder binder;
         public final int requesterUid;
 
         // Set during processing.
@@ -86,11 +96,13 @@ public class ApplicationQosPolicyRequestHandler {
         QueuedRequest(@RequestType int inRequestType,
                 @Nullable List<QosPolicyParams> inPoliciesToAdd,
                 @Nullable List<Integer> inPolicyIdsToRemove,
-                @Nullable IListListener inListener, int inRequesterUid) {
+                @Nullable IListListener inListener, @Nullable IBinder inBinder,
+                int inRequesterUid) {
             requestType = inRequestType;
             policiesToAdd = inPoliciesToAdd;
             policyIdsToRemove = inPolicyIdsToRemove;
             callback = new ApplicationCallback(inListener);
+            binder = inBinder;
             requesterUid = inRequesterUid;
             processedOnAnyIface = false;
         }
@@ -101,6 +113,7 @@ public class ApplicationQosPolicyRequestHandler {
                     + "policiesToAdd: " + policiesToAdd + ", "
                     + "policyIdsToRemove: " + policyIdsToRemove + ", "
                     + "callback: " + callback + ", "
+                    + "binder: " + binder + ", "
                     + "requesterUid: " + requesterUid + ", "
                     + "processedOnAnyIface: " + processedOnAnyIface + ", "
                     + "initialStatusList: " + initialStatusList + ", "
@@ -187,13 +200,36 @@ public class ApplicationQosPolicyRequestHandler {
 
                 if (!expectedParams.matchesResults(halStatusList)) {
                     // Silently ignore this callback if it does not match the expected parameters.
-                    // TODO: Add a timeout to clear the pending callback if it is never received.
                     Log.i(TAG, "Callback was unsolicited. statusList: " + halStatusList);
                     return;
                 }
 
                 mPendingCallbacks.remove(ifaceName);
                 processNextRequestIfPossible(ifaceName);
+            });
+        }
+    }
+
+    private class ApplicationDeathRecipient implements IBinder.DeathRecipient {
+        @Override
+        public void binderDied() {
+        }
+
+        @Override
+        public void binderDied(@NonNull IBinder who) {
+            mHandler.post(() -> {
+                Integer uid = mApplicationBinderToUidMap.get(who);
+                Log.i(TAG, "Application binder died. who=" + who + ", uid=" + uid);
+                if (uid == null) {
+                    // Application is not registered with us.
+                    return;
+                }
+
+                // Remove this application from the tracking maps
+                // and clear out any policies that they own.
+                mApplicationBinderToUidMap.remove(who);
+                mApplicationUidToBinderMap.remove(uid);
+                queueRemoveAllRequest(uid);
             });
         }
     }
@@ -205,7 +241,10 @@ public class ApplicationQosPolicyRequestHandler {
         mHandler = new Handler(handlerThread.getLooper());
         mPerIfaceRequestQueue = new HashMap<>();
         mPendingCallbacks = new HashMap<>();
+        mApplicationBinderToUidMap = new HashMap<>();
+        mApplicationUidToBinderMap = new HashMap<>();
         mApCallback = new ApCallback();
+        mApplicationDeathRecipient = new ApplicationDeathRecipient();
         mPolicyTrackingTable = createPolicyTrackingTableMockable();
         mWifiNative.registerQosScsResponseCallback(mApCallback);
     }
@@ -228,8 +267,9 @@ public class ApplicationQosPolicyRequestHandler {
      * @param uid UID of the requesting application.
      */
     public void queueAddRequest(@NonNull List<QosPolicyParams> policies,
-            @NonNull IListListener listener, int uid) {
-        QueuedRequest request = new QueuedRequest(REQUEST_TYPE_ADD, policies, null, listener, uid);
+            @NonNull IListListener listener, @NonNull IBinder binder, int uid) {
+        QueuedRequest request = new QueuedRequest(
+                REQUEST_TYPE_ADD, policies, null, listener, binder, uid);
         queueRequestOnAllIfaces(request);
         processNextRequestOnAllIfacesIfPossible();
     }
@@ -241,7 +281,8 @@ public class ApplicationQosPolicyRequestHandler {
      * @param uid UID of the requesting application.
      */
     public void queueRemoveRequest(@NonNull List<Integer> policyIds, int uid) {
-        QueuedRequest request = new QueuedRequest(REQUEST_TYPE_REMOVE, null, policyIds, null, uid);
+        QueuedRequest request = new QueuedRequest(
+                REQUEST_TYPE_REMOVE, null, policyIds, null, null, uid);
         queueRequestOnAllIfaces(request);
         processNextRequestOnAllIfacesIfPossible();
     }
@@ -261,7 +302,7 @@ public class ApplicationQosPolicyRequestHandler {
         while (startIndex < endIndex) {
             QueuedRequest request = new QueuedRequest(
                     REQUEST_TYPE_REMOVE, null, ownedPolicies.subList(startIndex, endIndex),
-                    null, uid);
+                    null, null, uid);
             queueRequestOnAllIfaces(request);
 
             startIndex += MAX_POLICIES_PER_TRANSACTION;
@@ -307,6 +348,9 @@ public class ApplicationQosPolicyRequestHandler {
                 virtualPolicyIdBytes.add((byte) policyId);
             }
             request.virtualPolicyIdsToRemove = virtualPolicyIdBytes;
+
+            // Unregister death handler if this application no longer owns any policies.
+            unregisterDeathHandlerIfNeeded(request.requesterUid);
         }
 
         for (ClientModeManager cmm : clientModeManagers) {
@@ -342,6 +386,15 @@ public class ApplicationQosPolicyRequestHandler {
         }
     }
 
+    private void checkForStalledCallback(String ifaceName, CallbackParams processedParams) {
+        CallbackParams pendingParams = mPendingCallbacks.get(ifaceName);
+        if (pendingParams == processedParams) {
+            Log.e(TAG, "Callback timed out. Expected params " + pendingParams);
+            mPendingCallbacks.remove(ifaceName);
+            processNextRequestIfPossible(ifaceName);
+        }
+    }
+
     /**
      * Filter out policies that do not have status code
      * {@link WifiManager#QOS_REQUEST_STATUS_TRACKING}.
@@ -360,6 +413,13 @@ public class ApplicationQosPolicyRequestHandler {
     private void processAddRequest(String ifaceName, QueuedRequest request) {
         boolean previouslyProcessed = request.processedOnAnyIface;
         request.processedOnAnyIface = true;
+
+        // Verify that the requesting application is still alive.
+        if (!request.binder.pingBinder()) {
+            Log.e(TAG, "Requesting application died before processing. request=" + request);
+            processNextRequestIfPossible(ifaceName);
+            return;
+        }
 
         // Filter out policies that were already in the table during pre-processing.
         List<Integer> statusList = new ArrayList(request.initialStatusList);
@@ -389,12 +449,18 @@ public class ApplicationQosPolicyRequestHandler {
             request.callback.sendResult(statusList);
         }
 
+        // Register death handler if this application owns any policies in the table.
+        registerDeathHandlerIfNeeded(request.requesterUid, request.binder);
+
         // Policies that were sent to the AP expect a response from the callback.
         List<Byte> policiesAwaitingCallback = getPoliciesAwaitingCallback(halStatusList);
         if (policiesAwaitingCallback.isEmpty()) {
             processNextRequestIfPossible(ifaceName);
         } else {
-            mPendingCallbacks.put(ifaceName, new CallbackParams(policiesAwaitingCallback));
+            CallbackParams cbParams = new CallbackParams(policiesAwaitingCallback);
+            mPendingCallbacks.put(ifaceName, cbParams);
+            mHandler.postDelayed(() -> checkForStalledCallback(ifaceName, cbParams),
+                    CALLBACK_TIMEOUT_MILLIS);
         }
     }
 
@@ -411,7 +477,10 @@ public class ApplicationQosPolicyRequestHandler {
         if (policiesAwaitingCallback.isEmpty()) {
             processNextRequestIfPossible(ifaceName);
         } else {
-            mPendingCallbacks.put(ifaceName, new CallbackParams(policiesAwaitingCallback));
+            CallbackParams cbParams = new CallbackParams(policiesAwaitingCallback);
+            mPendingCallbacks.put(ifaceName, cbParams);
+            mHandler.postDelayed(() -> checkForStalledCallback(ifaceName, cbParams),
+                    CALLBACK_TIMEOUT_MILLIS);
         }
     }
 
@@ -500,6 +569,47 @@ public class ApplicationQosPolicyRequestHandler {
             mPolicyTrackingTable.removePolicies(rejectedPolicies, uid);
         }
         return statusList;
+    }
+
+    /**
+     * Register death handler for this application if it owns policies in the tracking table,
+     * and no death handlers have been registered before.
+     */
+    private void registerDeathHandlerIfNeeded(int uid, @NonNull IBinder binder) {
+        if (mApplicationUidToBinderMap.containsKey(uid)) {
+            // Application has already been linked to the death recipient.
+            return;
+        } else if (!mPolicyTrackingTable.tableContainsUid(uid)) {
+            // Application does not own any policies in the tracking table.
+            return;
+        }
+
+        try {
+            binder.linkToDeath(mApplicationDeathRecipient, /* flags */ 0);
+            mApplicationBinderToUidMap.put(binder, uid);
+            mApplicationUidToBinderMap.put(uid, binder);
+        } catch (RemoteException e) {
+            Log.wtf(TAG, "Exception occurred while linking to death: " + e);
+        }
+    }
+
+    /**
+     * Unregister the death handler for this application if it
+     * no longer owns any policies in the tracking table.
+     */
+    private void unregisterDeathHandlerIfNeeded(int uid) {
+        if (!mApplicationUidToBinderMap.containsKey(uid)) {
+            // Application has already been unlinked from the death recipient.
+            return;
+        } else if (mPolicyTrackingTable.tableContainsUid(uid)) {
+            // Application still owns policies in the tracking table.
+            return;
+        }
+
+        IBinder binder = mApplicationUidToBinderMap.get(uid);
+        binder.unlinkToDeath(mApplicationDeathRecipient, /* flags */ 0);
+        mApplicationBinderToUidMap.remove(binder);
+        mApplicationUidToBinderMap.remove(uid);
     }
 
     /**
