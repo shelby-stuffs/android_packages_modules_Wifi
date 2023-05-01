@@ -163,6 +163,7 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
                             Log.e(TAG, "Registering ISupplicant death recipient failed.");
                             return;
                         }
+                        linkToSupplicantVendorDeath();
                         Log.i(TAG, "Completed service registration of ISupplicant.");
                     }
                 }
@@ -720,6 +721,8 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
                 return false;
             }
         }
+        if (!initSupplicantVendorService())
+            Log.e(TAG, "Failed to init SupplicantVendor service");
         return true;
     }
 
@@ -4079,7 +4082,10 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
 
     private boolean linkToSupplicantVendorDeath() {
         synchronized (mLock) {
-            if (mISupplicantVendor == null) return false;
+            if (mISupplicantVendor == null) {
+                Log.e(TAG, "ISupplicantVendor interface is null!");
+                return false;
+            }
             try {
                 if (!mISupplicantVendor.linkToDeath(mSupplicantVendorDeathRecipient, 0)) {
                     Log.wtf(TAG, "Error on linkToDeath on ISupplicantVendor");
@@ -4108,10 +4114,6 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
             }
             if (mISupplicantVendor == null) {
                 Log.e(TAG, "Got null ISupplicantVendor service. Stopping supplicantVendor HIDL startup");
-                return false;
-            }
-            // check mISupplicantVendor service and trigger death service
-            if (!linkToSupplicantVendorDeath()) {
                 return false;
             }
         }
