@@ -172,7 +172,6 @@ import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URL;
-import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -471,6 +470,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     /* SIM is removed; reset any cached data for it */
     static final int CMD_RESET_SIM_NETWORKS                             = BASE + 101;
 
+    /**
+     * Update the OOB Pseudonym which is retrieved from the carrier's entitlement server for
+     * EAP-SIM/AKA/AKA' into supplicant.
+     */
+    static final int CMD_UPDATE_OOB_PSEUDONYM                               = BASE + 102;
+
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = {"RESET_SIM_REASON_"},
             value = {
@@ -626,6 +631,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     private final WifiCarrierInfoManager mWifiCarrierInfoManager;
 
+    private final WifiPseudonymManager mWifiPseudonymManager;
+
     private final OnNetworkUpdateListener mOnNetworkUpdateListener;
 
     private final OnCarrierOffloadDisabledListener mOnCarrierOffloadDisabledListener;
@@ -658,6 +665,9 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     /** NETWORK_NOT_FOUND_EVENT event counter */
     private int mNetworkNotFoundEventCount = 0;
+
+    private final WifiPseudonymManager.PseudonymUpdatingListener mPseudonymUpdatingListener;
+
 
     /** Note that this constructor will also start() the StateMachine. */
     public ClientModeImpl(
@@ -703,6 +713,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             @NonNull SupplicantStateTracker supplicantStateTracker,
             @NonNull MboOceController mboOceController,
             @NonNull WifiCarrierInfoManager wifiCarrierInfoManager,
+            @NonNull WifiPseudonymManager wifiPseudonymManager,
             @NonNull EapFailureNotifier eapFailureNotifier,
             @NonNull SimRequiredNotifier simRequiredNotifier,
             @NonNull WifiScoreReport wifiScoreReport,
@@ -733,6 +744,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mLinkProbeManager = linkProbeManager;
         mMboOceController = mboOceController;
         mWifiCarrierInfoManager = wifiCarrierInfoManager;
+        mWifiPseudonymManager = wifiPseudonymManager;
         mBroadcastQueue = broadcastQueue;
         mNetworkAgentState = DetailedState.DISCONNECTED;
 
@@ -861,6 +873,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mInterfaceName,
                 getHandler());
 
+        mPseudonymUpdatingListener = this::updatePseudonymFromOob;
+
         final int threshold =  mContext.getResources().getInteger(
                 R.integer.config_wifiConfigurationWifiRunnerThresholdInMs);
         mConnectableState = new ConnectableState(threshold);
@@ -919,7 +933,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
             WifiMonitor.MBO_OCE_BSS_TM_HANDLING_DONE,
             WifiMonitor.TRANSITION_DISABLE_INDICATION,
             WifiMonitor.NETWORK_NOT_FOUND_EVENT,
-            WifiMonitor.TOFU_ROOT_CA_CERTIFICATE,
+            WifiMonitor.TOFU_CERTIFICATE_EVENT,
             WifiMonitor.AUXILIARY_SUPPLICANT_EVENT,
             WifiMonitor.QOS_POLICY_RESET_EVENT,
             WifiMonitor.QOS_POLICY_REQUEST_EVENT,
@@ -966,19 +980,22 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      */
     private void logEventIfManagedNetwork(@Nullable WifiConfiguration config,
             @SupplicantEventCode int eventCode, MacAddress bssid, String reasonString) {
-        if (!SdkLevel.isAtLeastT() || config == null
-                || !mWifiPermissionsUtil.isAdmin(config.creatorUid, config.creatorName)) {
+        if (config == null || !mWifiPermissionsUtil
+                .isAdmin(config.creatorUid, config.creatorName)) {
             return;
         }
 
-        int numRedactedOctets = mContext.getResources()
-                .getInteger(R.integer.config_wifiNumMaskedBssidOctetsInSecurityLog);
-        String redactedBssid = ScanResultUtil.redactBssid(bssid, numRedactedOctets);
-        if (eventCode == SupplicantStaIfaceHal.SUPPLICANT_EVENT_DISCONNECTED) {
-            SecurityLog.writeEvent(SecurityLog.TAG_WIFI_DISCONNECTION, redactedBssid, reasonString);
-        } else {
-            SecurityLog.writeEvent(SecurityLog.TAG_WIFI_CONNECTION, redactedBssid,
-                    SupplicantStaIfaceHal.supplicantEventCodeToString(eventCode), reasonString);
+        if (SdkLevel.isAtLeastT()) {
+            int numRedactedOctets = mContext.getResources()
+                    .getInteger(R.integer.config_wifiNumMaskedBssidOctetsInSecurityLog);
+            String redactedBssid = ScanResultUtil.redactBssid(bssid, numRedactedOctets);
+            if (eventCode == SupplicantStaIfaceHal.SUPPLICANT_EVENT_DISCONNECTED) {
+                SecurityLog.writeEvent(SecurityLog.TAG_WIFI_DISCONNECTION, redactedBssid,
+                        reasonString);
+            } else {
+                SecurityLog.writeEvent(SecurityLog.TAG_WIFI_CONNECTION, redactedBssid,
+                        SupplicantStaIfaceHal.supplicantEventCodeToString(eventCode), reasonString);
+            }
         }
     }
 
@@ -1194,10 +1211,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         @Override
         public void onNetworkUpdated(WifiConfiguration newConfig, WifiConfiguration oldConfig) {
-            // Clear invalid cached data.
-            mWifiNative.removeNetworkCachedData(oldConfig.networkId);
 
             if (WifiConfigurationUtil.hasCredentialChanged(oldConfig, newConfig)) {
+                // Clear invalid cached data.
+                mWifiNative.removeNetworkCachedData(oldConfig.networkId);
                 mWifiBlocklistMonitor.handleNetworkRemoved(newConfig.SSID);
             }
 
@@ -1762,7 +1779,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         mWifiConfigManager.removeOnNetworkUpdateListener(mOnNetworkUpdateListener);
         mWifiCarrierInfoManager
                 .removeOnCarrierOffloadDisabledListener(mOnCarrierOffloadDisabledListener);
-        if (mVcnPolicyChangeListener != null) {
+        if (mVcnPolicyChangeListener != null && SdkLevel.isAtLeastS()) {
             mVcnManager.removeVcnNetworkPolicyChangeListener(mVcnPolicyChangeListener);
             mVcnPolicyChangeListener = null;
         }
@@ -2484,8 +2501,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 return "BLOCK_DISCOVERY";
             case WifiMonitor.NETWORK_NOT_FOUND_EVENT:
                 return "NETWORK_NOT_FOUND_EVENT";
-            case WifiMonitor.TOFU_ROOT_CA_CERTIFICATE:
-                return "TOFU_ROOT_CA_CERTIFICATE";
+            case WifiMonitor.TOFU_CERTIFICATE_EVENT:
+                return "TOFU_CERTIFICATE_EVENT";
             case WifiMonitor.BSS_FREQUENCY_CHANGED_EVENT:
                 return "BSS_FREQUENCY_CHANGED_EVENT";
             case RunnerState.STATE_ENTER_CMD:
@@ -3521,8 +3538,14 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      */
     private void reportConnectionAttemptStart(
             WifiConfiguration config, String targetBSSID, int roamType) {
+        boolean isOobPseudonymEnabled = false;
+        if (config.enterpriseConfig != null && config.enterpriseConfig.isAuthenticationSimBased()
+                && mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(config.carrierId)) {
+            isOobPseudonymEnabled = true;
+        }
         int overlapWithLastConnectionMs =
-                mWifiMetrics.startConnectionEvent(mInterfaceName, config, targetBSSID, roamType);
+                mWifiMetrics.startConnectionEvent(
+                        mInterfaceName, config, targetBSSID, roamType, isOobPseudonymEnabled);
         if (mDeviceConfigFacade.isOverlappingConnectionBugreportEnabled()
                 && overlapWithLastConnectionMs
                 > mDeviceConfigFacade.getOverlappingConnectionDurationThresholdMs()) {
@@ -3935,7 +3958,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         if (mVcnManager == null && SdkLevel.isAtLeastS()) {
             mVcnManager = mContext.getSystemService(VcnManager.class);
         }
-        if (mVcnManager != null && mVcnPolicyChangeListener == null) {
+        if (mVcnManager != null && mVcnPolicyChangeListener == null && SdkLevel.isAtLeastS()) {
             mVcnPolicyChangeListener = new WifiVcnNetworkPolicyChangeListener();
             mVcnManager.addVcnNetworkPolicyChangeListener(new HandlerExecutor(getHandler()),
                     mVcnPolicyChangeListener);
@@ -4176,7 +4199,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     || config.isEphemeral())
                     && mWifiPermissionsUtil.checkNetworkSettingsPermission(config.lastConnectUid);
             mWifiConfigManager.updateNetworkAfterConnect(mLastNetworkId,
-                    shouldSetUserConnectChoice, mWifiInfo.getRssi());
+                    mIsUserSelected, shouldSetUserConnectChoice, mWifiInfo.getRssi());
             // Notify PasspointManager of Passpoint network connected event.
             WifiConfiguration currentNetwork = getConnectedWifiConfigurationInternal();
             if (currentNetwork != null && currentNetwork.isPasspoint()) {
@@ -4516,7 +4539,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         Log.i(getTag(), "Connecting with " + currentMacAddress
                                 + " as the mac address");
                     }
-
+                    mWifiPseudonymManager.enableStrictConservativePeerModeIfSupported(config);
                     mTargetWifiConfiguration = config;
                     mNetworkNotFoundEventCount = 0;
                     /* Check for FILS configuration again after updating the config */
@@ -4927,10 +4950,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
         List<Integer> uids = new ArrayList<>(mNetworkFactory
                 .getSpecificNetworkRequestUids(
                         currentWifiConfiguration, currentBssid));
-        // There is an active specific request.
-        // TODO: Check if the specific Request is for dual band Wifi or local only.
-        if (!uids.isEmpty()
-                && !mWifiConnectivityManager.hasMultiInternetConnection()) {
+        // There is an active local only specific request.
+        if (!uids.isEmpty()) {
             // Remove internet capability.
             if (!mNetworkFactory.shouldHaveInternetCapabilities()) {
                 builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
@@ -4960,7 +4981,8 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
         updateLinkBandwidth(builder);
         final NetworkCapabilities networkCapabilities = builder.build();
-        if (mVcnManager == null || !currentWifiConfiguration.carrierMerged) {
+        if (mVcnManager == null || !currentWifiConfiguration.carrierMerged
+                || !SdkLevel.isAtLeastS()) {
             return networkCapabilities;
         }
         final VcnNetworkPolicyResult vcnNetworkPolicy =
@@ -5076,6 +5098,11 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 case WifiEnterpriseConfig.Eap.AKA_PRIME:
                     if (errorCode == WifiNative.EAP_SIM_VENDOR_SPECIFIC_CERT_EXPIRED) {
                         mWifiCarrierInfoManager.resetCarrierKeysForImsiEncryption(targetedNetwork);
+                    } else {
+                        int carrierId = targetedNetwork.carrierId;
+                        if (mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(carrierId)) {
+                            mWifiPseudonymManager.retrieveOobPseudonymWithRateLimit(carrierId);
+                        }
                     }
                     break;
 
@@ -5239,6 +5266,10 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
 
     private void doNetworkStatus(int status) {
         sendMessage(CMD_NETWORK_STATUS, status);
+    }
+
+    private void updatePseudonymFromOob(int carrierId, String pseudonym) {
+        sendMessage(CMD_UPDATE_OOB_PSEUDONYM, carrierId, 0, pseudonym);
     }
 
     class ConnectingOrConnectedState extends RunnerState {
@@ -5415,6 +5446,14 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     // We need to get the updated pseudonym from supplicant for EAP-SIM/AKA/AKA'
                     if (config.enterpriseConfig != null
                             && config.enterpriseConfig.isAuthenticationSimBased()) {
+                        if (mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(
+                                config.carrierId)) {
+                            if (mVerboseLoggingEnabled) {
+                                logd("add PseudonymUpdatingListener");
+                            }
+                            mWifiPseudonymManager.registerPseudonymUpdatingListener(
+                                    mPseudonymUpdatingListener);
+                        }
                         mLastSubId = mWifiCarrierInfoManager.getBestMatchSubscriptionId(config);
                         mLastSimBasedConnectionCarrierName =
                                 mWifiCarrierInfoManager.getCarrierNameForSubId(mLastSubId);
@@ -5451,6 +5490,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                             }
                             // Save the pseudonym only if it is a real one
                             config.enterpriseConfig.setAnonymousIdentity(anonymousIdentity);
+                            int carrierId = config.carrierId;
+                            if (mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(
+                                    carrierId)) {
+                                mWifiPseudonymManager.setInBandPseudonym(carrierId,
+                                        anonymousIdentity);
+                            }
                         } else {
                             // Clear any stored pseudonyms
                             config.enterpriseConfig.setAnonymousIdentity(null);
@@ -5481,6 +5526,31 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     updateLayer2Information();
                     updateCurrentConnectionInfo();
                     transitionTo(mL3ProvisioningState);
+                    break;
+                }
+                case CMD_UPDATE_OOB_PSEUDONYM: {
+                    WifiConfiguration config = getConnectedWifiConfigurationInternal();
+                    if (config == null) {
+                        log("OOB pseudonym is updated, but no valid connected network.");
+                        break;
+                    }
+                    int updatingCarrierId = message.arg1;
+                    if (config.enterpriseConfig == null
+                            || !config.enterpriseConfig.isAuthenticationSimBased()
+                            || !mWifiCarrierInfoManager.isOobPseudonymFeatureEnabled(
+                                    config.carrierId)
+                            || updatingCarrierId != config.carrierId) {
+                        log("OOB pseudonym is not applied.");
+                        break;
+                    }
+                    if (SdkLevel.isAtLeastT()) {
+                        log("send OOB pseudonym to supplicant");
+                        String pseudonym = (String) message.obj;
+                        mWifiNative.setEapAnonymousIdentity(mInterfaceName,
+                                mWifiCarrierInfoManager.decoratePseudonymWith3GppRealm(
+                                        config, pseudonym),
+                                /*updateToNativeService=*/ true);
+                    }
                     break;
                 }
                 case WifiMonitor.SUP_REQUEST_SIM_AUTH: {
@@ -5985,12 +6055,12 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     handleStatus = NOT_HANDLED;
                     break;
                 }
-                case WifiMonitor.TOFU_ROOT_CA_CERTIFICATE:
+                case WifiMonitor.TOFU_CERTIFICATE_EVENT: {
                     if (null == mTargetWifiConfiguration) break;
-                    int certificateDepth = message.arg2;
+                    final int certificateDepth = message.arg2;
+                    final CertificateEventInfo eventInfo = (CertificateEventInfo) message.obj;
                     if (!mInsecureEapNetworkHandler.addPendingCertificate(
-                            mTargetWifiConfiguration.SSID, message.arg2,
-                            (X509Certificate) message.obj)) {
+                            mTargetWifiConfiguration.SSID, certificateDepth, eventInfo)) {
                         Log.d(TAG, "Cannot set pending cert.");
                     }
                     // Launch user approval upon receiving the server certificate and disconnect
@@ -6001,6 +6071,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                         sendMessage(CMD_DISCONNECT, StaEvent.DISCONNECT_NETWORK_UNTRUSTED);
                     }
                     break;
+                }
                 default: {
                     handleStatus = NOT_HANDLED;
                     break;
@@ -6445,8 +6516,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
          */
         private WifiLinkLayerStats updateLinkLayerStatsRssiDataStallScoreReport() {
             // Get Info and continue polling
-            long txBytes = mFacade.getTxBytes(mInterfaceName);
-            long rxBytes = mFacade.getRxBytes(mInterfaceName);
+            long txBytes;
+            long rxBytes;
+            if (SdkLevel.isAtLeastS()) {
+                txBytes = mFacade.getTxBytes(mInterfaceName);
+                rxBytes = mFacade.getRxBytes(mInterfaceName);
+            } else {
+                txBytes = mFacade.getTotalTxBytes() - mFacade.getMobileTxBytes();
+                rxBytes = mFacade.getTotalRxBytes() - mFacade.getMobileRxBytes();
+            }
             WifiLinkLayerStats stats = updateLinkLayerStatsRssiSpeedFrequencyCapabilities(txBytes,
                     rxBytes);
             mWifiMetrics.updateWifiUsabilityStatsEntries(mInterfaceName, mWifiInfo, stats);
@@ -7083,7 +7161,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                     mWifiScoreCard.noteConnectionAttempt(mWifiInfo, mLastScanRssi, config.SSID);
                     setTargetBssid(config, bssid);
                     mTargetNetworkId = netId;
-
+                    mWifiPseudonymManager.enableStrictConservativePeerModeIfSupported(config);
                     logd("CMD_START_ROAM sup state "
                             + " my state " + getCurrentState().getName()
                             + " nid=" + Integer.toString(netId)
@@ -7175,6 +7253,15 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
                 mWifiConnectivityManager.handleConnectionStateChanged(
                         mClientModeManager,
                         WifiConnectivityManager.WIFI_STATE_DISCONNECTED);
+            }
+
+            if (mDeviceConfigFacade.isOobPseudonymEnabled()) {
+                if (mVerboseLoggingEnabled) {
+                    logd("unregister PseudonymUpdatingListener");
+                }
+                // unregister it any way, if it was not registered, it's no OP.
+                mWifiPseudonymManager
+                        .unregisterPseudonymUpdatingListener(mPseudonymUpdatingListener);
             }
         }
 
@@ -7884,6 +7971,16 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
     }
 
     @Override
+    public void onNetworkSwitchAccepted(int targetNetworkId, String targetBssid) {
+        mWifiScoreReport.onNetworkSwitchAccepted(targetNetworkId, targetBssid);
+    }
+
+    @Override
+    public void onNetworkSwitchRejected(int targetNetworkId, String targetBssid) {
+        mWifiScoreReport.onNetworkSwitchRejected(targetNetworkId, targetBssid);
+    }
+
+    @Override
     public void sendMessageToClientModeImpl(Message msg) {
         sendMessage(msg);
     }
@@ -8050,6 +8147,7 @@ public class ClientModeImpl extends StateMachine implements ClientMode {
      * WifiNetworkAgent. These policies are used to restart Networks or update their
      * NetworkCapabilities.
      */
+    @SuppressLint("NewApi")
     private class WifiVcnNetworkPolicyChangeListener
             implements VcnManager.VcnNetworkPolicyChangeListener {
         @Override

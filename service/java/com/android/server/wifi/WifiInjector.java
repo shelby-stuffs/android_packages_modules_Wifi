@@ -214,6 +214,7 @@ public class WifiInjector {
     private final WifiBlocklistMonitor mWifiBlocklistMonitor;
     private final MacAddressUtil mMacAddressUtil = new MacAddressUtil(new KeystoreWrapper());
     private final MboOceController mMboOceController;
+    private final WifiPseudonymManager mWifiPseudonymManager;
     private final WifiCarrierInfoManager mWifiCarrierInfoManager;
     private final WifiChannelUtilization mWifiChannelUtilizationScan;
     private final KeyStore mKeyStore;
@@ -356,9 +357,11 @@ public class WifiInjector {
         // New config store
         mWifiConfigStore = new WifiConfigStore(mContext, wifiHandler, mClock, mWifiMetrics,
                 WifiConfigStore.createSharedFiles(mFrameworkFacade.isNiapModeOn(mContext)));
+        mWifiPseudonymManager = new WifiPseudonymManager(
+                mContext, this, mClock, wifiLooper);
         mWifiCarrierInfoManager = new WifiCarrierInfoManager(makeTelephonyManager(),
                 subscriptionManager, this, mFrameworkFacade, mContext,
-                mWifiConfigStore, wifiHandler, mWifiMetrics, mClock);
+                mWifiConfigStore, wifiHandler, mWifiMetrics, mClock, mWifiPseudonymManager);
         String l2KeySeed = Secure.getString(mContext.getContentResolver(), Secure.ANDROID_ID);
         mWifiScoreCard = new WifiScoreCard(mClock, l2KeySeed, mDeviceConfigFacade,
                 mContext, mWifiGlobals);
@@ -414,14 +417,14 @@ public class WifiInjector {
         mWifiNetworkSelector = new WifiNetworkSelector(mContext, mWifiScoreCard, mScoringParams,
                 mWifiConfigManager, mClock, mConnectivityLocalLog, mWifiMetrics, this,
                 mThroughputPredictor, mWifiChannelUtilizationScan, mWifiGlobals,
-                mScanRequestProxy);
+                mScanRequestProxy, mWifiNative);
         CompatibilityScorer compatibilityScorer = new CompatibilityScorer(mScoringParams);
         mWifiNetworkSelector.registerCandidateScorer(compatibilityScorer);
         ScoreCardBasedScorer scoreCardBasedScorer = new ScoreCardBasedScorer(mScoringParams);
         mWifiNetworkSelector.registerCandidateScorer(scoreCardBasedScorer);
         BubbleFunScorer bubbleFunScorer = new BubbleFunScorer(mScoringParams);
         mWifiNetworkSelector.registerCandidateScorer(bubbleFunScorer);
-        mThroughputScorer = new ThroughputScorer(mScoringParams);
+        mThroughputScorer = new ThroughputScorer(mContext, mScoringParams);
         mWifiNetworkSelector.registerCandidateScorer(mThroughputScorer);
         mWifiMetrics.setWifiNetworkSelector(mWifiNetworkSelector);
         mWifiNetworkSuggestionsManager = new WifiNetworkSuggestionsManager(mContext, wifiHandler,
@@ -439,10 +442,10 @@ public class WifiInjector {
         mPasspointManager.setPasspointNetworkNominateHelper(nominateHelper);
         mSavedNetworkNominator = new SavedNetworkNominator(
                 mWifiConfigManager, nominateHelper, mConnectivityLocalLog, mWifiCarrierInfoManager,
-                mWifiPermissionsUtil, mWifiNetworkSuggestionsManager);
+                mWifiPseudonymManager, mWifiPermissionsUtil, mWifiNetworkSuggestionsManager);
         mNetworkSuggestionNominator = new NetworkSuggestionNominator(mWifiNetworkSuggestionsManager,
                 mWifiConfigManager, nominateHelper, mConnectivityLocalLog, mWifiCarrierInfoManager,
-                mWifiMetrics);
+                mWifiPseudonymManager, mWifiMetrics);
 
         mWifiMetrics.setPasspointManager(mPasspointManager);
         WifiChannelUtilization wifiChannelUtilizationConnected =
@@ -492,7 +495,7 @@ public class WifiInjector {
                 mWifiChannelUtilizationScan, mPasspointManager, mMultiInternetManager,
                 mDeviceConfigFacade, mActiveModeWarden, mFrameworkFacade, mWifiGlobals,
                 mExternalPnoScanRequestManager, mSsidTranslator, mWifiPermissionsUtil,
-                mWifiCarrierInfoManager, mCountryCode);
+                mWifiCarrierInfoManager, mCountryCode, mWifiDialogManager);
         mMboOceController = new MboOceController(makeTelephonyManager(), mActiveModeWarden);
         mConnectionFailureNotifier = new ConnectionFailureNotifier(
                 mContext, mFrameworkFacade, mWifiConfigManager,
@@ -588,6 +591,7 @@ public class WifiInjector {
         LogcatLog.enableVerboseLogging(verboseEnabled);
         mDppManager.enableVerboseLogging(verboseEnabled);
         mWifiCarrierInfoManager.enableVerboseLogging(verboseEnabled);
+        mWifiPseudonymManager.enableVerboseLogging(verboseEnabled);
         mCountryCode.enableVerboseLogging(verboseEnabled);
         mWifiDiagnostics.enableVerboseLogging(verboseEnabled, halVerboseEnabled);
         mWifiMonitor.enableVerboseLogging(verboseEnabled);
@@ -741,6 +745,10 @@ public class WifiInjector {
         return mWifiCarrierInfoManager;
     }
 
+    public WifiPseudonymManager getWifiPseudonymManager() {
+        return mWifiPseudonymManager;
+    }
+
     public DppManager getDppManager() {
         return mDppManager;
     }
@@ -807,6 +815,7 @@ public class WifiInjector {
                 mWifiNotificationManager),
                 mWifiTrafficPoller, mLinkProbeManager, mClock.getElapsedSinceBootMillis(),
                 mBatteryStats, supplicantStateTracker, mMboOceController, mWifiCarrierInfoManager,
+                mWifiPseudonymManager,
                 new EapFailureNotifier(mContext, mFrameworkFacade, mWifiCarrierInfoManager,
                         mWifiNotificationManager),
                 mSimRequiredNotifier,

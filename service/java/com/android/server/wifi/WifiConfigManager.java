@@ -1529,6 +1529,7 @@ public class WifiConfigManager {
         if (hasCredentialChanged) {
             newInternalConfig.getNetworkSelectionStatus().setHasEverConnected(false);
             newInternalConfig.setHasPreSharedKeyChanged(true);
+            Log.i(TAG, "Credential changed for netId=" + newInternalConfig.networkId);
         }
 
         // Add it to our internal map. This will replace any existing network configuration for
@@ -2169,6 +2170,7 @@ public class WifiConfigManager {
                 networkId, WifiConfiguration.NetworkSelectionStatus.DISABLED_NONE)) {
             return false;
         }
+        mWifiBlocklistMonitor.clearBssidBlocklistForSsid(config.SSID);
         saveToStore(true);
         return true;
     }
@@ -2276,14 +2278,16 @@ public class WifiConfigManager {
      * 4. Set the hasEverConnected| flag in the associated |NetworkSelectionStatus|.
      * 5. Set the status of network to |CURRENT|.
      * 6. Set the |isCurrentlyConnected| flag to true.
+     * 7. Set the |isUserSelected| flag.
      *
      * @param networkId network ID corresponding to the network.
+     * @param isUserSelected network is user selected.
      * @param shouldSetUserConnectChoice setup user connect choice on this network.
      * @param rssi signal strength of the connected network.
      * @return true if the network was found, false otherwise.
      */
-    public boolean updateNetworkAfterConnect(int networkId, boolean shouldSetUserConnectChoice,
-            int rssi) {
+    public boolean updateNetworkAfterConnect(int networkId, boolean isUserSelected,
+            boolean shouldSetUserConnectChoice, int rssi) {
         if (mVerboseLoggingEnabled) {
             Log.v(TAG, "Update network after connect for " + networkId);
         }
@@ -2306,6 +2310,7 @@ public class WifiConfigManager {
         config.getNetworkSelectionStatus().setHasEverConnected(true);
         setNetworkStatus(config, WifiConfiguration.Status.CURRENT);
         config.isCurrentlyConnected = true;
+        config.setIsUserSelected(isUserSelected);
         saveToStore(false);
         return true;
     }
@@ -2349,6 +2354,7 @@ public class WifiConfigManager {
             setNetworkStatus(config, WifiConfiguration.Status.ENABLED);
         }
         config.isCurrentlyConnected = false;
+        config.setIsUserSelected(false);
         saveToStore(false);
         return true;
     }
@@ -4180,16 +4186,17 @@ public class WifiConfigManager {
     }
 
     /**
-     * This method updates the Root CA certifiate and the domain name of the
+     * This method updates the Root CA certificate and the domain name of the
      * server in the internal network.
      *
      * @param networkId networkId corresponding to the network to be updated.
      * @param caCert Root CA certificate to be updated.
      * @param serverCert Server certificate to be updated.
+     * @param certHash Server certificate hash (for TOFU case with no Root CA)
      * @return true if updating Root CA certificate successfully; otherwise, false.
      */
     public boolean updateCaCertificate(int networkId, @NonNull X509Certificate caCert,
-            @NonNull X509Certificate serverCert) {
+            @NonNull X509Certificate serverCert, String certHash) {
         WifiConfiguration internalConfig = getInternalConfiguredNetwork(networkId);
         if (internalConfig == null) {
             Log.e(TAG, "No network for network ID " + networkId);
@@ -4212,7 +4219,7 @@ public class WifiConfigManager {
             return false;
         }
         CertificateSubjectInfo serverCertInfo = CertificateSubjectInfo.parse(
-                serverCert.getSubjectDN().getName());
+                serverCert.getSubjectX500Principal().getName());
         if (null == serverCertInfo) {
             Log.e(TAG, "Invalid Server CA cert subject");
             return false;
@@ -4221,11 +4228,15 @@ public class WifiConfigManager {
         WifiConfiguration newConfig = new WifiConfiguration(internalConfig);
         try {
             if (newConfig.enterpriseConfig.isTrustOnFirstUseEnabled()) {
-                newConfig.enterpriseConfig.setCaCertificateForTrustOnFirstUse(caCert);
-                // setCaCertificate will mark that this CA certificate should be removed on
-                // removing this configuration.
+                if (TextUtils.isEmpty(certHash)) {
+                    newConfig.enterpriseConfig.setCaCertificateForTrustOnFirstUse(caCert);
+                } else {
+                    newConfig.enterpriseConfig.setServerCertificateHash(certHash);
+                }
                 newConfig.enterpriseConfig.enableTrustOnFirstUse(false);
             } else {
+                // setCaCertificate will mark that this CA certificate should be removed on
+                // removing this configuration.
                 newConfig.enterpriseConfig.setCaCertificate(caCert);
             }
         } catch (IllegalArgumentException ex) {
@@ -4247,7 +4258,7 @@ public class WifiConfigManager {
             newConfig.enterpriseConfig.setDomainSuffixMatch(serverCertInfo.commonName);
         }
         newConfig.enterpriseConfig.setUserApproveNoCaCert(false);
-        // Trigger an update to install CA certifiate and the corresponding configuration.
+        // Trigger an update to install CA certificate and the corresponding configuration.
         NetworkUpdateResult result = addOrUpdateNetwork(newConfig, internalConfig.creatorUid);
         if (!result.isSuccess()) {
             Log.e(TAG, "Failed to install CA cert for network " + internalConfig.SSID);

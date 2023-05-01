@@ -500,6 +500,7 @@ public class WifiVendorHal {
                 mWifiChip = null;
                 return false;
             }
+            cacheWifiChipInfo(mWifiChip);
             return true;
         }
     }
@@ -816,7 +817,7 @@ public class WifiVendorHal {
     }
 
     /**
-     * Get Chip specific cached info. If cache is empty, query the chip and create the cache.
+     * Get Chip specific cached info.
      *
      * @param ifaceName Name of the interface
      * @return the cached information.
@@ -828,17 +829,20 @@ public class WifiVendorHal {
         WifiChip chip = mHalDeviceManager.getChip(iface);
         if (chip == null) return null;
 
-        if (!mCachedWifiChipInfos.contains(chip.getId())) {
-            mCachedWifiChipInfos.put(chip.getId(), new WifiChipInfo());
-        }
-        WifiChipInfo wifiChipInfo = mCachedWifiChipInfos.get(chip.getId());
-        if (wifiChipInfo.capabilities == null) {
-            wifiChipInfo.capabilities = chip.getWifiChipCapabilities();
-        }
-
-        return wifiChipInfo;
+        return mCachedWifiChipInfos.get(chip.getId());
     }
 
+    /**
+     * Cache chip specific info.
+     *
+     * @param chip Wi-Fi chip
+     */
+    private void cacheWifiChipInfo(@NonNull WifiChip chip) {
+        if (mCachedWifiChipInfos.contains(chip.getId())) return;
+        WifiChipInfo wifiChipInfo = new WifiChipInfo();
+        wifiChipInfo.capabilities = chip.getWifiChipCapabilities();
+        mCachedWifiChipInfos.put(chip.getId(), wifiChipInfo);
+    }
 
     /**
      * Get the supported features
@@ -1960,6 +1964,29 @@ public class WifiVendorHal {
         synchronized (sLock) {
             if (mWifiChip == null) return false;
             return mWifiChip.enableStaChannelForPeerNetwork(enableIndoorChannel, enableDfsChannel);
+        }
+    }
+
+    /**
+     * See {@link WifiNative#isBandCombinationSupported(String, List)}.
+     */
+    public boolean isBandCombinationSupported(@NonNull String ifaceName,
+            @NonNull List<Integer> bands) {
+        synchronized (sLock) {
+            WifiStaIface iface = getStaIface(ifaceName);
+            if (iface == null) return false;
+            return mHalDeviceManager.isBandCombinationSupported(iface, bands);
+        }
+    }
+
+    /**
+     * See {@link WifiNative#getSupportedBandCombinations(String)}.
+     */
+    public Set<List<Integer>> getSupportedBandCombinations(String ifaceName) {
+        synchronized (sLock) {
+            WifiStaIface iface = getStaIface(ifaceName);
+            if (iface == null) return null;
+            return mHalDeviceManager.getSupportedBandCombinations(iface);
         }
     }
 }
