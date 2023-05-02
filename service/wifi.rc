@@ -22,8 +22,10 @@ on property:sys.user.0.ce_available=true
    restorecon_recursive /data/misc_ce/0/apexdata/com.android.wifi
 
 # Below are for kernel tracing related stuff.
+# By default tracing is disabled. To re-enable wifi tracing set
+# sys.wifitracing.started property to 0.
 on fs
-   setprop sys.wifitracing.started 0
+   setprop sys.wifitracing.started -1
 
 on property:sys.boot_completed=1 && property:sys.wifitracing.started=0
    # Create trace buffer, and set basic configuration.
