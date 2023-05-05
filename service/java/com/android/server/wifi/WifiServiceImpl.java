@@ -116,6 +116,7 @@ import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ISuggestionUserApprovalStatusListener;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
+import android.net.wifi.IWifiLowLatencyLockListener;
 import android.net.wifi.IWifiNetworkSelectionConfigListener;
 import android.net.wifi.IWifiNetworkStateChangedListener;
 import android.net.wifi.IWifiVerboseLoggingStatusChangedListener;
@@ -199,6 +200,9 @@ import com.android.server.wifi.util.RssiUtil;
 import com.android.server.wifi.util.WifiPermissionsUtil;
 import com.android.wifi.resources.R;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+
 import java.io.BufferedReader;
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -229,7 +233,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
  * WifiService handles remote WiFi operation requests by implementing
@@ -1223,6 +1226,13 @@ public class WifiServiceImpl extends BaseWifiService {
             mLog.info("setWifiEnabled not allowed for uid=%").c(callingUid).flush();
             return false;
         }
+
+        // If Satellite mode is enabled, Wifi can not be turned on/off
+        if (mSettingsStore.isSatelliteModeOn()) {
+            mLog.info("setWifiEnabled not allowed as satellite mode is on.").flush();
+            return false;
+        }
+
         // If Airplane mode is enabled, only privileged apps are allowed to toggle Wifi
         if (mSettingsStore.isAirplaneModeOn() && !isPrivileged) {
             mLog.err("setWifiEnabled in Airplane mode: only Settings can toggle wifi").flush();
@@ -1866,6 +1876,20 @@ public class WifiServiceImpl extends BaseWifiService {
                     mActiveModeWarden.updateSoftApCapability(
                             mLohsSoftApTracker.getSoftApCapability(),
                             WifiManager.IFACE_IP_MODE_LOCAL_ONLY);
+                    // Store Soft AP channels for reference after a reboot before the driver is up.
+                    WifiSettingsConfigStore configStore = mWifiInjector.getSettingsConfigStore();
+                    Resources res = mContext.getResources();
+                    configStore.put(WifiSettingsConfigStore.WIFI_SOFT_AP_COUNTRY_CODE, countryCode);
+                    List<Integer> freqs = new ArrayList<>();
+                    for (int band : SoftApConfiguration.BAND_TYPES) {
+                        List<Integer> freqsForBand = ApConfigUtil.getAvailableChannelFreqsForBand(
+                                band, mWifiNative, res, true);
+                        if (freqsForBand != null) {
+                            freqs.addAll(freqsForBand);
+                        }
+                    }
+                    configStore.put(WifiSettingsConfigStore.WIFI_AVAILABLE_SOFT_AP_FREQS_MHZ,
+                            new JSONArray(freqs).toString());
                 }
                 if (SdkLevel.isAtLeastT()) {
                     int itemCount = mRegisteredDriverCountryCodeListeners.beginBroadcast();
@@ -3913,6 +3937,11 @@ public class WifiServiceImpl extends BaseWifiService {
         WifiConfiguration configuration = mWifiConfigManager.getConfiguredNetwork(netId);
         if (mWifiPermissionsUtil.isAdminRestrictedNetwork(configuration)) {
             mLog.info("enableNetwork not allowed for admin restricted network Id=%")
+                    .c(netId).flush();
+            return false;
+        }
+        if (mWifiGlobals.isDeprecatedSecurityTypeNetwork(configuration)) {
+            mLog.info("enableNetwork not allowed for deprecated security type network Id=%")
                     .c(netId).flush();
             return false;
         }
@@ -6344,6 +6373,11 @@ public class WifiServiceImpl extends BaseWifiService {
                 wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
                 return;
             }
+            if (mWifiGlobals.isDeprecatedSecurityTypeNetwork(configuration)) {
+                Log.e(TAG, "connect to network Id=" + netId + " security type deprecated.");
+                wrapper.sendFailure(WifiManager.ActionListener.FAILURE_INTERNAL_ERROR);
+                return;
+            }
             if (configuration.enterpriseConfig != null
                     && configuration.enterpriseConfig.isAuthenticationSimBased()) {
                 int subId = mWifiCarrierInfoManager.getBestMatchSubscriptionId(configuration);
@@ -6979,6 +7013,28 @@ public class WifiServiceImpl extends BaseWifiService {
         }
     }
 
+    private List<WifiAvailableChannel> getStoredSoftApAvailableChannels(
+            @WifiScanner.WifiBand int band) {
+        List<Integer> freqs = new ArrayList<>();
+        try {
+            JSONArray json = new JSONArray(mWifiInjector.getSettingsConfigStore().get(
+                    WifiSettingsConfigStore.WIFI_AVAILABLE_SOFT_AP_FREQS_MHZ));
+            for (int i = 0; i < json.length(); i++) {
+                freqs.add(json.getInt(i));
+            }
+        } catch (JSONException e) {
+            Log.i(TAG, "Failed to read stored JSON for available Soft AP channels: " + e);
+        }
+        List<WifiAvailableChannel> channels = new ArrayList<>();
+        for (int freq : freqs) {
+            if ((band & ScanResult.toBand(freq)) == 0) {
+                continue;
+            }
+            channels.add(new WifiAvailableChannel(freq, WifiAvailableChannel.OP_MODE_SAP));
+        }
+        return channels;
+    }
+
     /**
      * See {@link android.net.wifi.WifiManager#getUsableChannels(int, int) and
      * See {@link android.net.wifi.WifiManager#getAllowedChannels(int, int).
@@ -7016,42 +7072,17 @@ public class WifiServiceImpl extends BaseWifiService {
         if (!isValidBandForGetUsableChannels(band)) {
             throw new IllegalArgumentException("Unsupported band: " + band);
         }
-        // If querying the usable channels for SoftAp mode and regulatory filtered, return from
-        // cached softAp capabilities directly.
-        if (mode == WifiAvailableChannel.OP_MODE_SAP
-                && filter == WifiAvailableChannel.FILTER_REGULATORY) {
-            int[] chans;
-            switch (band) {
-                case WifiScanner.WIFI_BAND_24_GHZ:
-                    chans =
-                            mTetheredSoftApTracker.getSoftApCapability().getSupportedChannelList(
-                                    SoftApConfiguration.BAND_2GHZ);
-                    break;
-                case WifiScanner.WIFI_BAND_5_GHZ:
-                    chans =
-                            mTetheredSoftApTracker.getSoftApCapability().getSupportedChannelList(
-                                    SoftApConfiguration.BAND_5GHZ);
-                    break;
-                case WifiScanner.WIFI_BAND_6_GHZ:
-                    chans =
-                            mTetheredSoftApTracker.getSoftApCapability().getSupportedChannelList(
-                                    SoftApConfiguration.BAND_6GHZ);
-                    break;
-                case WifiScanner.WIFI_BAND_60_GHZ:
-                    chans =
-                            mTetheredSoftApTracker.getSoftApCapability().getSupportedChannelList(
-                                    SoftApConfiguration.BAND_60GHZ);
-                    break;
-                default:
-                    chans = null;
-                    break;
-            }
-            if (chans != null) {
-                return Arrays.stream(chans).mapToObj(
-                        v -> new WifiAvailableChannel(
-                                ScanResult.convertChannelToFrequencyMhzIfSupported(v, band),
-                                WifiAvailableChannel.OP_MODE_SAP)).collect(
-                        Collectors.toList());
+        // Use stored values if the HAL isn't started and the stored country code matches.
+        // This is to show the band availability based on the regulatory domain.
+        if (mWifiNative.isHalSupported() && !mWifiNative.isHalStarted()
+                && mode == WifiAvailableChannel.OP_MODE_SAP
+                && filter == WifiAvailableChannel.FILTER_REGULATORY
+                && TextUtils.equals(mWifiInjector.getSettingsConfigStore().get(
+                        WifiSettingsConfigStore.WIFI_SOFT_AP_COUNTRY_CODE),
+                mCountryCode.getCountryCode())) {
+            List<WifiAvailableChannel> storedChannels = getStoredSoftApAvailableChannels(band);
+            if (!storedChannels.isEmpty()) {
+                return storedChannels;
             }
         }
         List<WifiAvailableChannel> channels = mWifiThreadRunner.call(
@@ -7412,15 +7443,6 @@ public class WifiServiceImpl extends BaseWifiService {
                 .getInteger(R.integer.config_wifiNetworkSpecifierMaxPreferredChannels);
     }
 
-    private boolean isApplicationQosPolicyFeatureEnabled() {
-        // Both the experiment flag and overlay value must be enabled,
-        // and the HAL must support this feature.
-        return mDeviceConfigFacade.isApplicationQosPolicyApiEnabled()
-                && mContext.getResources().getBoolean(
-                        R.bool.config_wifiApplicationCentricQosPolicyFeatureEnabled)
-                && mWifiNative.isSupplicantAidlServiceVersionAtLeast(2);
-    }
-
     private boolean policyIdsAreUnique(List<QosPolicyParams> policies) {
         Set<Integer> policyIdSet = new HashSet<>();
         for (QosPolicyParams policy : policies) {
@@ -7483,7 +7505,7 @@ public class WifiServiceImpl extends BaseWifiService {
         Objects.requireNonNull(binder, "binder cannot be null");
         Objects.requireNonNull(listener, "listener cannot be null");
 
-        if (!isApplicationQosPolicyFeatureEnabled()) {
+        if (!mApplicationQosPolicyRequestHandler.isFeatureEnabled()) {
             Log.i(TAG, "addQosPolicies is disabled on this device");
             rejectAllQosPolicies(policyParamsList, listener);
             return;
@@ -7511,7 +7533,7 @@ public class WifiServiceImpl extends BaseWifiService {
     public void removeQosPolicies(@NonNull int[] policyIds, @NonNull String packageName) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!isApplicationQosPolicyFeatureEnabled()) {
+        } else if (!mApplicationQosPolicyRequestHandler.isFeatureEnabled()) {
             Log.i(TAG, "removeQosPolicies is disabled on this device");
             return;
         }
@@ -7542,7 +7564,7 @@ public class WifiServiceImpl extends BaseWifiService {
     public void removeAllQosPolicies(@NonNull String packageName) {
         if (!SdkLevel.isAtLeastU()) {
             throw new UnsupportedOperationException("SDK level too old");
-        } else if (!isApplicationQosPolicyFeatureEnabled()) {
+        } else if (!mApplicationQosPolicyRequestHandler.isFeatureEnabled()) {
             Log.i(TAG, "removeAllQosPolicies is disabled on this device");
             return;
         }
@@ -7649,6 +7671,44 @@ public class WifiServiceImpl extends BaseWifiService {
             } catch (RemoteException e) {
                 Log.e(TAG, e.getMessage());
             }
+        });
+    }
+
+    /**
+     * See {@link WifiManager#addWifiLowLatencyLockListener(Executor,
+     * WifiManager.WifiLowLatencyLockListener)}
+     */
+    public void addWifiLowLatencyLockListener(IWifiLowLatencyLockListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException();
+        }
+        int callingUid = Binder.getCallingUid();
+        if (!mWifiPermissionsUtil.checkManageWifiNetworkSelectionPermission(callingUid)
+                && !mWifiPermissionsUtil.checkNetworkSettingsPermission(callingUid)) {
+            throw new SecurityException(TAG + " Uid " + callingUid
+                    + " Missing MANAGE_WIFI_NETWORK_SELECTION permission");
+        }
+        if (mVerboseLoggingEnabled) {
+            mLog.info("addWifiLowLatencyLockListener uid=%").c(Binder.getCallingUid()).flush();
+        }
+        mWifiThreadRunner.post(() -> {
+            mWifiLockManager.addWifiLowLatencyLockListener(listener);
+        });
+    }
+
+    /**
+     * See {@link WifiManager#removeWifiLowLatencyLockListener(
+     * WifiManager.WifiLowLatencyLockListener)}
+     */
+    public void removeWifiLowLatencyLockListener(IWifiLowLatencyLockListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException();
+        }
+        if (mVerboseLoggingEnabled) {
+            mLog.info("removeWifiLowLatencyLockListener uid=%").c(Binder.getCallingUid()).flush();
+        }
+        mWifiThreadRunner.post(() -> {
+            mWifiLockManager.removeWifiLowLatencyLockListener(listener);
         });
     }
 }

@@ -48,6 +48,7 @@ import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ISuggestionUserApprovalStatusListener;
 import android.net.wifi.ITrafficStateCallback;
 import android.net.wifi.IWifiConnectedNetworkScorer;
+import android.net.wifi.IWifiLowLatencyLockListener;
 import android.net.wifi.IWifiNetworkSelectionConfigListener;
 import android.net.wifi.IWifiVerboseLoggingStatusChangedListener;
 import android.net.wifi.QosPolicyParams;
@@ -456,4 +457,8 @@ interface IWifiManager
     void setMloMode(int mode, in IBooleanListener listener);
 
     void getMloMode(in IIntegerListener listener);
+
+    void addWifiLowLatencyLockListener(in IWifiLowLatencyLockListener listener);
+
+    void removeWifiLowLatencyLockListener(in IWifiLowLatencyLockListener listener);
 }
