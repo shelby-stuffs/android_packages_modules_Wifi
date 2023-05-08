@@ -988,7 +988,7 @@ public class WifiConfigManager {
         intentForSystem.putExtra(WifiManager.EXTRA_MULTIPLE_NETWORKS_CHANGED, config == null);
         intentForSystem.putExtra(WifiManager.EXTRA_CHANGE_REASON, reason);
         intentForSystem.putExtra(WifiManager.EXTRA_WIFI_CONFIGURATION,
-                createExternalWifiConfiguration(config, true, -1));
+                config == null ? null : createExternalWifiConfiguration(config, true, -1));
         mContext.sendBroadcastAsUser(intentForSystem, UserHandle.SYSTEM,
                 Manifest.permission.NETWORK_STACK);
     }
@@ -4206,11 +4206,15 @@ public class WifiConfigManager {
      * @param networkId networkId corresponding to the network to be updated.
      * @param caCert Root CA certificate to be updated.
      * @param serverCert Server certificate to be updated.
-     * @param certHash Server certificate hash (for TOFU case with no Root CA)
+     * @param certHash Server certificate hash (for TOFU case with no Root CA). Replaces the use of
+     *                 a Root CA certificate for authentication.
+     * @param useSystemTrustStore Indicate if to use the system trust store for authentication. If
+     *                            this flag is set, then any Root CA or certificate hash specified
+     *                            is not used.
      * @return true if updating Root CA certificate successfully; otherwise, false.
      */
     public boolean updateCaCertificate(int networkId, @NonNull X509Certificate caCert,
-            @NonNull X509Certificate serverCert, String certHash) {
+            @NonNull X509Certificate serverCert, String certHash, boolean useSystemTrustStore) {
         WifiConfiguration internalConfig = getInternalConfiguredNetwork(networkId);
         if (internalConfig == null) {
             Log.e(TAG, "No network for network ID " + networkId);
@@ -4242,7 +4246,10 @@ public class WifiConfigManager {
         WifiConfiguration newConfig = new WifiConfiguration(internalConfig);
         try {
             if (newConfig.enterpriseConfig.isTrustOnFirstUseEnabled()) {
-                if (TextUtils.isEmpty(certHash)) {
+                if (useSystemTrustStore) {
+                    newConfig.enterpriseConfig
+                            .setCaPath(WifiConfigurationUtil.getSystemTrustStorePath());
+                } else if (TextUtils.isEmpty(certHash)) {
                     newConfig.enterpriseConfig.setCaCertificateForTrustOnFirstUse(caCert);
                 } else {
                     newConfig.enterpriseConfig.setServerCertificateHash(certHash);

@@ -1045,4 +1045,13 @@ public class BaseWifiService extends IWifiManager.Stub {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public void addWifiLowLatencyLockListener(IWifiLowLatencyLockListener listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void removeWifiLowLatencyLockListener(IWifiLowLatencyLockListener listener) {
+        throw new UnsupportedOperationException();
+    }
 }
