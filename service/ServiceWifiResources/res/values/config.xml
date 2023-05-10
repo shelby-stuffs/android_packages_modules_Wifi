@@ -973,9 +973,6 @@
     <!-- Wifi driver supports WPA3 Simultaneous Authentication of Equals (WPA3-OWE) for softap -->
     <bool translatable="false" name="config_vendor_wifi_softap_owe_supported">false</bool>
 
-    <!-- Indicate ssid coding from unquoted hexadecimal to gbk character is supported on this device. -->
-    <bool translatable="false" name="config_vendor_wifi_gbk_ssid_supported">true</bool>
-
     <!-- Indicates whether or not the WLAN driver supports the NL80211_CMD_REG_CHANGE or
          NL80211_CMD_WIPHY_REG_CHANGE events which indicate the current country code which is
          being used by the WLAN driver. If the driver doesn't support these events
