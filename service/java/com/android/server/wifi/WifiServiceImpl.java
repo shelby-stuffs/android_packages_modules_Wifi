@@ -4385,9 +4385,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mContext.getResources().getBoolean(R.bool.config_wifi24ghzSupport)) {
             return true;
         }
-        return mWifiThreadRunner.call(
-                () -> mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_24_GHZ).length > 0,
-                false);
+        return mActiveModeWarden.isBandSupportedForSta(WifiScanner.WIFI_BAND_24_GHZ);
     }
 
 
@@ -4404,9 +4402,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mContext.getResources().getBoolean(R.bool.config_wifi5ghzSupport)) {
             return true;
         }
-        return mWifiThreadRunner.call(
-                () -> mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_5_GHZ).length > 0,
-                false);
+        return mActiveModeWarden.isBandSupportedForSta(WifiScanner.WIFI_BAND_5_GHZ);
     }
 
     @Override
@@ -4422,9 +4418,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mContext.getResources().getBoolean(R.bool.config_wifi6ghzSupport)) {
             return true;
         }
-        return mWifiThreadRunner.call(
-                () -> mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).length > 0,
-                false);
+        return mActiveModeWarden.isBandSupportedForSta(WifiScanner.WIFI_BAND_6_GHZ);
     }
 
     @Override
@@ -4444,9 +4438,7 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mContext.getResources().getBoolean(R.bool.config_wifi60ghzSupport)) {
             return true;
         }
-        return mWifiThreadRunner.call(
-                () -> mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_60_GHZ).length > 0,
-                false);
+        return mActiveModeWarden.isBandSupportedForSta(WifiScanner.WIFI_BAND_60_GHZ);
     }
 
     @Override
