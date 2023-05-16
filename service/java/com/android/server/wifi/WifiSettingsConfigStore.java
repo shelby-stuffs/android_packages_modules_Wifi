@@ -131,6 +131,19 @@ public class WifiSettingsConfigStore {
      */
     public static final Key<String> WIFI_STATIC_CHIP_INFO = new Key<>("wifi_static_chip_info", "");
 
+    /**
+     * Store the last country code used by Soft AP.
+     */
+    public static final Key<String> WIFI_SOFT_AP_COUNTRY_CODE =
+            new Key<>("wifi_last_country_code", "");
+
+    /**
+     * Store the available channel frequencies in a JSON array for Soft AP for the last country
+     * code used.
+     */
+    public static final Key<String> WIFI_AVAILABLE_SOFT_AP_FREQS_MHZ =
+            new Key<>("wifi_available_soft_ap_freqs_mhz", "[]");
+
     /******** Wifi shared pref keys ***************/
 
     private final Context mContext;
