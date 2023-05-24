@@ -1704,7 +1704,8 @@ public class WifiConfigManager {
     private boolean isDeviceOwnerProfileOwnerOrSystem(int uid, String packageName) {
         return mWifiPermissionsUtil.isDeviceOwner(uid, packageName)
                 || mWifiPermissionsUtil.isProfileOwner(uid, packageName)
-                || mWifiPermissionsUtil.isSystem(packageName, uid);
+                || mWifiPermissionsUtil.isSystem(packageName, uid)
+                || mWifiPermissionsUtil.isSignedWithPlatformKey(uid);
     }
 
     /**

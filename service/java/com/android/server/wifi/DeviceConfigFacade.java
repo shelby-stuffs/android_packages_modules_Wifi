@@ -396,7 +396,7 @@ public class DeviceConfigFacade {
         mApmEnhancementEnabled = DeviceConfig.getBoolean(NAMESPACE,
                 "apm_enhancement_enabled", false);
         mAwareSuspensionEnabled = DeviceConfig.getBoolean(NAMESPACE,
-                "aware_suspension_enabled", false);
+                "aware_suspension_enabled", true);
         mHighPerfLockDeprecated = DeviceConfig.getBoolean(NAMESPACE,
                 "high_perf_lock_deprecated", true);
         boolean oobPseudonymEnabled = DeviceConfig.getBoolean(NAMESPACE,
@@ -417,7 +417,7 @@ public class DeviceConfigFacade {
         mIncludePasspointSsidsInPnoScans = DeviceConfig.getBoolean(NAMESPACE,
                 "include_passpoint_ssids_in_pno_scans", false);
         mHandleRssiOrganicKernelFailuresEnabled = DeviceConfig.getBoolean(NAMESPACE,
-                "handle_rssi_organic_kernel_failures_enabled", false);
+                "handle_rssi_organic_kernel_failures_enabled", true);
     }
 
     private Set<String> getUnmodifiableSetQuoted(String key) {
