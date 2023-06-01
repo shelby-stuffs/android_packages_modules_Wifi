@@ -5457,6 +5457,7 @@ public class WifiServiceImpl extends BaseWifiService {
             wifiScanner.enableVerboseLogging(mVerboseLoggingEnabled);
         }
         ApConfigUtil.enableVerboseLogging(mVerboseLoggingEnabled);
+        mApplicationQosPolicyRequestHandler.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     @Override
