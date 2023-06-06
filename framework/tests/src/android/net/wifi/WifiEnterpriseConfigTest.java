@@ -22,6 +22,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
@@ -44,6 +45,7 @@ import org.junit.Test;
 
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -102,6 +104,17 @@ public class WifiEnterpriseConfigTest {
     }
 
     @Test
+    public void testSetGetInvalidNumberOfCaCertificates() {
+        // Maximum number of CA certificates is 100.
+        X509Certificate[] invalidCaCertList = new X509Certificate[105];
+        Arrays.fill(invalidCaCertList, FakeKeys.CA_CERT0);
+        assertThrows(IllegalArgumentException.class, () -> {
+            mEnterpriseConfig.setCaCertificates(invalidCaCertList);
+        });
+        assertEquals(null, mEnterpriseConfig.getCaCertificates());
+    }
+
+    @Test
     public void testSetClientKeyEntryWithNull() {
         mEnterpriseConfig.setClientKeyEntry(null, null);
         assertNull(mEnterpriseConfig.getClientCertificateChain());
@@ -150,6 +163,12 @@ public class WifiEnterpriseConfigTest {
         mEnterpriseConfig.setClientKeyPairAlias(alias);
         assertEquals(alias, mEnterpriseConfig.getClientKeyPairAlias());
         assertEquals(alias, mEnterpriseConfig.getClientKeyPairAliasInternal());
+
+        // Alias should have a maximum length of 256.
+        final String invalidAlias = "*".repeat(1000);
+        assertThrows(IllegalArgumentException.class, () -> {
+            mEnterpriseConfig.setClientKeyPairAlias(invalidAlias);
+        });
     }
 
     private boolean isClientCertificateChainInvalid(X509Certificate[] clientChain) {
@@ -173,6 +192,9 @@ public class WifiEnterpriseConfigTest {
                 isClientCertificateChainInvalid(new X509Certificate[] {clientCert, clientCert}));
         assertTrue("Both certificates invalid",
                 isClientCertificateChainInvalid(new X509Certificate[] {caCert, clientCert}));
+        assertTrue("Certificate chain contains too many elements",
+                isClientCertificateChainInvalid(new X509Certificate[] {
+                        clientCert, clientCert, clientCert, clientCert, caCert, caCert}));
     }
 
     @Test

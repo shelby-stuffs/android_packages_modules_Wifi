@@ -248,15 +248,35 @@ public class WifiEnterpriseConfig implements Parcelable {
     };
 
     /**
+     * Maximum length of a certificate.
+     */
+    private static final int CERTIFICATE_MAX_LENGTH = 8192;
+
+    /**
+     * Maximum length of the {@link #mKeyChainAlias} field.
+     */
+    private static final int KEYCHAIN_ALIAS_MAX_LENGTH = 256;
+
+    /**
+     * Maximum number of elements in a client certificate chain.
+     */
+    private static final int CLIENT_CERTIFICATE_CHAIN_MAX_ELEMENTS = 5;
+
+    /**
+     * Maximum number of elements in a list of CA certificates.
+     */
+    private static final int CA_CERTIFICATES_MAX_ELEMENTS = 100;
+
+    /**
      * Fields that are supported in {@link #mFields}.
      * Each entry includes the supported field's key and its maximum allowed length.
      */
     private static final Map<String, Integer> SUPPORTED_FIELDS = new HashMap<>() {{
             put(ALTSUBJECT_MATCH_KEY, 256);
             put(ANON_IDENTITY_KEY, 1024);
-            put(CA_CERT_KEY, 8192);
+            put(CA_CERT_KEY, CERTIFICATE_MAX_LENGTH);
             put(CA_PATH_KEY, 4096);
-            put(CLIENT_CERT_KEY, 8192);
+            put(CLIENT_CERT_KEY, CERTIFICATE_MAX_LENGTH);
             put(DECORATED_IDENTITY_PREFIX_KEY, 256);
             put(DOM_SUFFIX_MATCH_KEY, 256);
             put(EAP_ERP, 1);
@@ -269,7 +289,7 @@ public class WifiEnterpriseConfig implements Parcelable {
             put(PRIVATE_KEY_ID_KEY, 256);
             put(REALM_KEY, 256);
             put(SUBJECT_MATCH_KEY, 256);
-            put(WAPI_CERT_SUITE_KEY, 8192);
+            put(WAPI_CERT_SUITE_KEY, CERTIFICATE_MAX_LENGTH);
         }};
 
     /**
@@ -356,8 +376,12 @@ public class WifiEnterpriseConfig implements Parcelable {
      * @return true if the length is valid, false otherwise.
      */
     private static boolean isFieldLengthValid(String key, String value) {
-        if (value == null) return true;
         int maxLength = SUPPORTED_FIELDS.getOrDefault(key, 0);
+        return isFieldLengthValid(value, maxLength);
+    }
+
+    private static boolean isFieldLengthValid(String value, int maxLength) {
+        if (value == null) return true;
         return value.length() <= maxLength;
     }
 
@@ -497,10 +521,41 @@ public class WifiEnterpriseConfig implements Parcelable {
                     enterpriseConfig.mFields = bundleToFieldMap(in.readBundle());
                     enterpriseConfig.mEapMethod = in.readInt();
                     enterpriseConfig.mPhase2Method = in.readInt();
-                    enterpriseConfig.mCaCerts = ParcelUtil.readCertificates(in);
-                    enterpriseConfig.mClientPrivateKey = ParcelUtil.readPrivateKey(in);
-                    enterpriseConfig.mClientCertificateChain = ParcelUtil.readCertificates(in);
-                    enterpriseConfig.mKeyChainAlias = in.readString();
+
+                    X509Certificate[] caCerts = ParcelUtil.readCertificates(in);
+                    if (caCerts != null && caCerts.length > CA_CERTIFICATES_MAX_ELEMENTS) {
+                        Log.e(TAG, "List of CA certificates with size "
+                                + caCerts.length + " received during unparceling");
+                        enterpriseConfig.mCaCerts = null;
+                    } else {
+                        enterpriseConfig.mCaCerts = caCerts;
+                    }
+
+                    PrivateKey privateKey = ParcelUtil.readPrivateKey(in);
+                    if (privateKey != null && privateKey.getEncoded() != null
+                            && privateKey.getEncoded().length > CERTIFICATE_MAX_LENGTH) {
+                        Log.e(TAG, "Invalid private key with size "
+                                + privateKey.getEncoded().length + " received during unparceling");
+                        enterpriseConfig.mClientPrivateKey = null;
+                    } else {
+                        enterpriseConfig.mClientPrivateKey = privateKey;
+                    }
+
+                    X509Certificate[] clientCertificateChain = ParcelUtil.readCertificates(in);
+                    if (clientCertificateChain != null
+                            && clientCertificateChain.length
+                                    > CLIENT_CERTIFICATE_CHAIN_MAX_ELEMENTS) {
+                        Log.e(TAG, "Client certificate chain with size "
+                                + clientCertificateChain.length + " received during unparceling");
+                        enterpriseConfig.mClientCertificateChain = null;
+                    } else {
+                        enterpriseConfig.mClientCertificateChain = clientCertificateChain;
+                    }
+
+                    String keyChainAlias = in.readString();
+                    enterpriseConfig.mKeyChainAlias =
+                            isFieldLengthValid(keyChainAlias, KEYCHAIN_ALIAS_MAX_LENGTH)
+                                    ? keyChainAlias : "";
                     enterpriseConfig.mIsAppInstalledDeviceKeyAndCert = in.readBoolean();
                     enterpriseConfig.mIsAppInstalledCaCert = in.readBoolean();
                     enterpriseConfig.mOcsp = in.readInt();
@@ -1016,10 +1071,15 @@ public class WifiEnterpriseConfig implements Parcelable {
      *
      * @param certs X.509 CA certificates
      * @throws IllegalArgumentException if any of the provided certificates is
-     *     not a CA certificate
+     *     not a CA certificate, or if too many CA certificates are provided
      */
     public void setCaCertificates(@Nullable X509Certificate[] certs) {
         if (certs != null) {
+            if (certs.length > CA_CERTIFICATES_MAX_ELEMENTS) {
+                mCaCerts = null;
+                throw new IllegalArgumentException("List of CA certificates contains more "
+                        + "than the allowed number of elements");
+            }
             X509Certificate[] newCerts = new X509Certificate[certs.length];
             for (int i = 0; i < certs.length; i++) {
                 if (certs[i].getBasicConstraints() >= 0) {
@@ -1174,6 +1234,10 @@ public class WifiEnterpriseConfig implements Parcelable {
             // We use this to judge whether the certificate is an end
             // certificate or a CA certificate.
             // https://cryptography.io/en/latest/x509/reference/
+            if (clientCertificateChain.length > CLIENT_CERTIFICATE_CHAIN_MAX_ELEMENTS) {
+                throw new IllegalArgumentException(
+                        "Certificate chain contains more than the allowed number of elements");
+            }
             if (clientCertificateChain[0].getBasicConstraints() != -1) {
                 throw new IllegalArgumentException(
                         "First certificate in the chain must be a client end certificate");
@@ -1191,8 +1255,13 @@ public class WifiEnterpriseConfig implements Parcelable {
             if (privateKey == null) {
                 throw new IllegalArgumentException("Client cert without a private key");
             }
-            if (privateKey.getEncoded() == null) {
+            byte[] encodedKey = privateKey.getEncoded();
+            if (encodedKey == null) {
                 throw new IllegalArgumentException("Private key cannot be encoded");
+            }
+            if (encodedKey.length > CERTIFICATE_MAX_LENGTH) {
+                throw new IllegalArgumentException(
+                        "Private key exceeds the maximum allowed length");
             }
         }
 
@@ -1213,6 +1282,9 @@ public class WifiEnterpriseConfig implements Parcelable {
     public void setClientKeyPairAlias(@NonNull String alias) {
         if (!SdkLevel.isAtLeastS()) {
             throw new UnsupportedOperationException();
+        }
+        if (!isFieldLengthValid(alias, KEYCHAIN_ALIAS_MAX_LENGTH)) {
+            throw new IllegalArgumentException();
         }
         mKeyChainAlias = alias;
     }
