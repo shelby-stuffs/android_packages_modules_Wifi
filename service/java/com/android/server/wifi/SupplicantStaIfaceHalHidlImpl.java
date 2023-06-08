@@ -617,6 +617,10 @@ public class SupplicantStaIfaceHalHidlImpl implements ISupplicantStaIfaceHal {
                 Log.e(TAG, "ISupplicant.removeInterface exception: " + e);
                 handleNoSuchElementException(e, "removeInterface");
                 return false;
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "ISupplicant.removeInterface exception: " + e);
+                handleIllegalArgumentException(e, "removeInterface");
+                return false;
             }
             return true;
         }

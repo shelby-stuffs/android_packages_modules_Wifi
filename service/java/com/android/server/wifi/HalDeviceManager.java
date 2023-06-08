@@ -23,10 +23,16 @@ import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_STATIC_CHIP_I
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.hardware.wifi.V1_0.IfaceType;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.hardware.wifi.V1_0.IfaceType;
+import android.net.NetworkInfo;
 import android.net.wifi.WifiContext;
 import android.net.wifi.WifiScanner;
+import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Handler;
 import android.os.WorkSource;
 import android.text.TextUtils;
@@ -96,8 +102,11 @@ public class HalDeviceManager {
     private WifiDeathRecipient mIWifiDeathRecipient;
     private boolean mIsConcurrencyComboLoadedFromDriver;
     private boolean mWaitForDestroyedListeners;
+    // Map of Interface name to their associated ConcreteClientModeManager
+    private final Map<String, ConcreteClientModeManager> mClientModeManagers = new ArrayMap<>();
     // Map of Interface name to their associated SoftApManager
-    private final ArrayMap<String, SoftApManager> mSoftApManagers = new ArrayMap<>();
+    private final Map<String, SoftApManager> mSoftApManagers = new ArrayMap<>();
+    private boolean mIsP2pConnected = false;
 
     /**
      * Public API for querying interfaces from the HalDeviceManager.
@@ -146,6 +155,21 @@ public class HalDeviceManager {
         mEventHandler = handler;
         mIWifiDeathRecipient = new WifiDeathRecipient();
         mWifiHal = getWifiHalMockable(context, wifiInjector);
+        // Monitor P2P connection to treat disconnected P2P as low priority.
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
+        mContext.registerReceiver(new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (!intent.getAction().equals(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)) {
+                    return;
+                }
+                NetworkInfo networkInfo =
+                        intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+                mIsP2pConnected = networkInfo != null
+                        && networkInfo.getDetailedState() == NetworkInfo.DetailedState.CONNECTED;
+            }
+        }, intentFilter, null, mEventHandler);
     }
 
     @VisibleForTesting
@@ -284,14 +308,24 @@ public class HalDeviceManager {
      *                from that context of the client.
      * @param requestorWs Requestor worksource. This will be used to determine priority of this
      *                    interface using rules based on the requestor app's context.
+     * @param concreteClientModeManager ConcreteClientModeManager requesting the interface.
      * @return A newly created interface - or null if the interface could not be created.
      */
     public WifiStaIface createStaIface(
             long requiredChipCapabilities,
             @Nullable InterfaceDestroyedListener destroyedListener, @Nullable Handler handler,
-            @NonNull WorkSource requestorWs) {
-        return (WifiStaIface) createIface(HDM_CREATE_IFACE_STA, requiredChipCapabilities,
-                destroyedListener, handler, requestorWs);
+            @NonNull WorkSource requestorWs,
+            @NonNull ConcreteClientModeManager concreteClientModeManager) {
+        if (concreteClientModeManager == null) {
+            Log.wtf(TAG, "Cannot create STA Iface with null ConcreteClientModeManager");
+            return null;
+        }
+        WifiStaIface staIface = (WifiStaIface) createIface(HDM_CREATE_IFACE_STA,
+                requiredChipCapabilities, destroyedListener, handler, requestorWs);
+        if (staIface != null) {
+            mClientModeManagers.put(getName(staIface), concreteClientModeManager);
+        }
+        return staIface;
     }
 
     /**
@@ -307,12 +341,15 @@ public class HalDeviceManager {
      *                from that context of the client.
      * @param requestorWs Requestor worksource. This will be used to determine priority of this
      *                    interface using rules based on the requestor app's context.
+     * @param concreteClientModeManager ConcreteClientModeManager requesting the interface.
      * @return A newly created interface - or null if the interface could not be created.
      */
     public WifiStaIface createStaIface(
             @Nullable InterfaceDestroyedListener destroyedListener, @Nullable Handler handler,
-            @NonNull WorkSource requestorWs) {
-        return createStaIface(CHIP_CAPABILITY_ANY, destroyedListener, handler, requestorWs);
+            @NonNull WorkSource requestorWs,
+            @NonNull ConcreteClientModeManager concreteClientModeManager) {
+        return createStaIface(CHIP_CAPABILITY_ANY, destroyedListener, handler, requestorWs,
+                concreteClientModeManager);
     }
 
     /**
@@ -532,7 +569,7 @@ public class HalDeviceManager {
      * Replace the requestorWs info for the associated info.
      *
      * When a new iface is requested via
-     * {@link #createIface(int, long, InterfaceDestroyedListener, Handler, WorkSource)}, the clients
+     * {@link #createIface(int, long, InterfaceDestroyedListener, Handler, WorkSource, ConcreteClientModeManager)}, the clients
      * pass in a worksource which includes all the apps that triggered the iface creation. However,
      * this list of apps can change during the lifetime of the iface (as new apps request the same
      * iface or existing apps release their request for the iface). This API can be invoked multiple
@@ -906,6 +943,26 @@ public class HalDeviceManager {
             WorkSource requestorWs) {
         return reportImpactToCreateIface(ifaceType, queryForNewInterface, CHIP_CAPABILITY_ANY,
                 requestorWs);
+    }
+
+    /**
+     * Helper method to return true if the given iface request will result in deleting an iface
+     * requested by a privileged worksource.
+     */
+    public boolean creatingIfaceWillDeletePrivilegedIface(
+            @HdmIfaceTypeForCreation int ifaceType, WorkSource requestorWs) {
+        List<Pair<Integer, WorkSource>> impact =
+                reportImpactToCreateIface(ifaceType, true, requestorWs);
+        if (impact == null) {
+            return false;
+        }
+        for (Pair<Integer, WorkSource> pair : impact) {
+            if (mWifiInjector.makeWsHelper(pair.second).getRequestorWsPriority()
+                    == WorkSourceHelper.PRIORITY_PRIVILEGED) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // internal state
@@ -1318,7 +1375,9 @@ public class HalDeviceManager {
         return staticChipInfos;
     }
 
-    private StaticChipInfo[] convertWifiChipInfoToStaticChipInfos(WifiChipInfo[] chipInfos) {
+    @NonNull
+    private StaticChipInfo[] convertWifiChipInfoToStaticChipInfos(
+            @NonNull WifiChipInfo[] chipInfos) {
         StaticChipInfo[] staticChipInfos = new StaticChipInfo[chipInfos.length];
         for (int i = 0; i < chipInfos.length; i++) {
             WifiChipInfo chipInfo = chipInfos[i];
@@ -1694,7 +1753,7 @@ public class HalDeviceManager {
                                 new InterfaceDestroyedListenerProxy(
                                         cacheEntry.name, destroyedListener, handler));
                     }
-                    cacheEntry.creationTime = mClock.getUptimeSinceBootMillis();
+                    cacheEntry.creationTime = mClock.getElapsedSinceBootMillis();
 
                     if (mDbg) Log.d(TAG, "createIfaceIfPossible: added cacheEntry=" + cacheEntry);
                     mInterfaceInfoCache.put(
@@ -1965,11 +2024,48 @@ public class HalDeviceManager {
      */
     private boolean allowedToDelete(
             @HdmIfaceTypeForCreation int requestedCreateType,
-            @NonNull WorkSourceHelper newRequestorWs,
-            @HdmIfaceTypeForCreation int existingCreateType,
-            @NonNull WorkSourceHelper existingRequestorWs) {
+            @NonNull WorkSourceHelper newRequestorWs, @NonNull WifiIfaceInfo existingIfaceInfo) {
+        int existingCreateType = existingIfaceInfo.createType;
+        WorkSourceHelper existingRequestorWs = existingIfaceInfo.requestorWsHelper;
+        @WorkSourceHelper.RequestorWsPriority int newRequestorWsPriority =
+                newRequestorWs.getRequestorWsPriority();
+        @WorkSourceHelper.RequestorWsPriority int existingRequestorWsPriority =
+                existingRequestorWs.getRequestorWsPriority();
         if (!SdkLevel.isAtLeastS()) {
             return allowedToDeleteForR(requestedCreateType, existingCreateType);
+        }
+
+        // Special case to let other requesters delete secondary internet STAs
+        if (existingCreateType == HDM_CREATE_IFACE_STA
+                && newRequestorWsPriority > WorkSourceHelper.PRIORITY_BG) {
+            ConcreteClientModeManager cmm = mClientModeManagers.get(existingIfaceInfo.name);
+            if (cmm != null && cmm.isSecondaryInternet()) {
+                if (mDbg) {
+                    Log.i(TAG, "Requested create type " + requestedCreateType + " from "
+                            + newRequestorWs + " can delete secondary internet STA from "
+                            + existingRequestorWs);
+                }
+                return true;
+            }
+        }
+
+        // Allow FG apps to delete any disconnected P2P iface if they are older than
+        // config_disconnectedP2pIfaceLowPriorityTimeoutMs.
+        int unusedP2pTimeoutMs = mContext.getResources().getInteger(
+                R.integer.config_disconnectedP2pIfaceLowPriorityTimeoutMs);
+        if (newRequestorWsPriority > WorkSourceHelper.PRIORITY_BG
+                && existingCreateType == HDM_CREATE_IFACE_P2P
+                && !mIsP2pConnected
+                && unusedP2pTimeoutMs >= 0) {
+            InterfaceCacheEntry ifaceCacheEntry = mInterfaceInfoCache.get(
+                    Pair.create(existingIfaceInfo.name, getType(existingIfaceInfo.iface)));
+            if (ifaceCacheEntry != null && mClock.getElapsedSinceBootMillis()
+                    >= ifaceCacheEntry.creationTime + unusedP2pTimeoutMs) {
+                if (mDbg) {
+                    Log.i(TAG, "Allowed to delete disconnected P2P iface: " + ifaceCacheEntry);
+                }
+                return true;
+            }
         }
 
         // Defer deletion decision to the InterfaceConflictManager dialog.
@@ -1979,10 +2075,6 @@ public class HalDeviceManager {
             return true;
         }
 
-        @HdmIfaceTypeForCreation int newRequestorWsPriority =
-                newRequestorWs.getRequestorWsPriority();
-        @HdmIfaceTypeForCreation int existingRequestorWsPriority =
-                existingRequestorWs.getRequestorWsPriority();
         // If the new request is higher priority than existing priority, then the new requestor
         // wins. This is because at all other priority levels (except privileged), existing caller
         // wins if both the requests are at the same priority level.
@@ -2142,7 +2234,7 @@ public class HalDeviceManager {
             int newRequestorWsPriority = newRequestorWsHelper.getRequestorWsPriority();
             int existingRequestorWsPriority = cacheEntry.requestorWsHelper.getRequestorWsPriority();
             boolean isAllowedToDelete = allowedToDelete(requestedCreateType, newRequestorWsHelper,
-                    existingCreateType, cacheEntry.requestorWsHelper);
+                    info);
             if (VDBG) {
                 Log.d(TAG, "info=" + info + ":  allowedToDelete=" + isAllowedToDelete
                         + " (requestedCreateType=" + requestedCreateType
@@ -2292,7 +2384,7 @@ public class HalDeviceManager {
                     WifiChipInfo[] wifiChipInfos = getAllChipInfo();
                     if (wifiChipInfos != null) {
                         mCachedStaticChipInfos =
-                                convertWifiChipInfoToStaticChipInfos(getAllChipInfo());
+                                convertWifiChipInfoToStaticChipInfos(wifiChipInfos);
                         saveStaticChipInfoToStore(mCachedStaticChipInfos);
                         mIsConcurrencyComboLoadedFromDriver = true;
                     } else {
@@ -2388,6 +2480,7 @@ public class HalDeviceManager {
             boolean success = false;
             switch (type) {
                 case WifiChip.IFACE_TYPE_STA:
+                    mClientModeManagers.remove(name);
                     success = chip.removeStaIface(name);
                     break;
                 case WifiChip.IFACE_TYPE_AP:
@@ -2850,10 +2943,12 @@ public class HalDeviceManager {
 
             Log.d(TAG, "needToDeleteIfacesDueToBridgeMode: newRequestorWsPriority["+ifaceTypeToCreate+"]: " + newRequestorWsPriority
                         + " ifaceEntryRequestorWsPriority["+ifaceTypeToDelete+"]: " + ifaceEntryRequestorWsPriority);
-            if (!allowedToDelete(ifaceTypeToCreate, newRequestorWsHelper,
-                                 ifaceTypeToDelete, ifaceEntry.requestorWsHelper)) {
-                return false;
-            }
+
+            // TODO(b/281555577): allowedToDelete in HalDeviceManager.java now requires WifiIfaceInfo
+            // if (!allowedToDelete(ifaceTypeToCreate, newRequestorWsHelper,
+            //                      ifaceTypeToDelete, ifaceEntry.requestorWsHelper)) {
+            //     return false;
+            // }
 
             return true;
         }

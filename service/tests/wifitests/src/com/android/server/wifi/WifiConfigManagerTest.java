@@ -6688,8 +6688,8 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         WifiConfiguration mergedNetwork = retrievedNetworks.get(0);
         assertTrue(mergedNetwork.isSecurityType(baseSecurityType));
         assertTrue(mergedNetwork.isSecurityType(upgradableSecurityType));
-        assertFalse(mergedNetwork.getSecurityParams(upgradableSecurityType)
-                .isAddedByAutoUpgrade());
+        assertEquals(upgradableConfig.getDefaultSecurityParams().isAddedByAutoUpgrade(),
+                mergedNetwork.getSecurityParams(upgradableSecurityType).isAddedByAutoUpgrade());
     }
 
     /**
@@ -6708,6 +6708,26 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         upgradableConfig.preSharedKey = "\"Passw0rd\"";
 
         verifyAddUpgradableNetwork(baseConfig, upgradableConfig);
+    }
+
+    /**
+     * Verifies that updating an existing upgradable network that was added by auto upgrade will
+     * retain the isAddedByAutoUpgrade() value.
+     * {@link WifiConfigManager#addOrUpdateNetwork(WifiConfiguration, int)}
+     */
+    @Test
+    public void testUpdateUpgradedNetworkKeepsIsAddedByAutoUpgradeValue() {
+        WifiConfiguration baseConfig = new WifiConfiguration();
+        baseConfig.SSID = "\"upgradableNetwork\"";
+        baseConfig.setSecurityParams(WifiConfiguration.SECURITY_TYPE_PSK);
+        baseConfig.preSharedKey = "\"Passw0rd\"";
+        WifiConfiguration upgradedConfig = new WifiConfiguration();
+        upgradedConfig.SSID = "\"upgradableNetwork\"";
+        upgradedConfig.setSecurityParams(WifiConfiguration.SECURITY_TYPE_SAE);
+        upgradedConfig.preSharedKey = "\"Passw0rd\"";
+        upgradedConfig.getDefaultSecurityParams().setIsAddedByAutoUpgrade(true);
+
+        verifyAddUpgradableNetwork(baseConfig, upgradedConfig);
     }
 
     /**
@@ -7697,11 +7717,29 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         int eapPeapNetId = verifyAddNetwork(prepareTofuEapConfig(
                 WifiEnterpriseConfig.Eap.PEAP, WifiEnterpriseConfig.Phase2.NONE), true);
         assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT0,
-                FakeKeys.CA_CERT1, null));
+                FakeKeys.CA_CERT1, null, false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
         assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
         assertEquals(FakeKeys.CA_CERT0, config.enterpriseConfig.getCaCertificate());
+    }
+
+    @Test
+    public void testUpdateCaCertificatePathSuccess() throws Exception {
+        when(mPrimaryClientModeManager.getSupportedFeatures()).thenReturn(
+                WifiManager.WIFI_FEATURE_TRUST_ON_FIRST_USE);
+
+        int eapPeapNetId = verifyAddNetwork(prepareTofuEapConfig(
+                WifiEnterpriseConfig.Eap.PEAP, WifiEnterpriseConfig.Phase2.NONE), true);
+        assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT0,
+                FakeKeys.CA_CERT1, null, true));
+        WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
+        assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
+        assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
+        assertEquals(WifiConfigurationUtil.getSystemTrustStorePath(),
+                config.enterpriseConfig.getCaPath());
+        assertEquals(null, config.enterpriseConfig.getCaCertificate());
+        assertEquals("", config.enterpriseConfig.getCaCertificateAlias());
     }
 
     @Test
@@ -7722,7 +7760,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
                 "C=TW,ST=Taiwan,L=Taipei,O=Google,CN=mockServerCert");
 
         assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT0,
-                mockServerCert, "1234"));
+                mockServerCert, "1234", false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
         assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
@@ -7760,7 +7798,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         when(mockServerCert.getSubjectAlternativeNames()).thenReturn(altNames);
 
         assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT0,
-                mockServerCert, "1234"));
+                mockServerCert, "1234", false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
         assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
@@ -7783,18 +7821,19 @@ public class WifiConfigManagerTest extends WifiBaseTest {
 
         // Invalid network id
         assertFalse(mWifiConfigManager.updateCaCertificate(-1, FakeKeys.CA_CERT0,
-                FakeKeys.CA_CERT1, "1234"));
+                FakeKeys.CA_CERT1, "1234", false));
 
         // Not an enterprise network
         assertFalse(mWifiConfigManager.updateCaCertificate(openNetId, FakeKeys.CA_CERT0,
-                FakeKeys.CA_CERT1, "1234"));
+                FakeKeys.CA_CERT1, "1234", false));
 
         // Not a certificate baseed enterprise network
         assertFalse(mWifiConfigManager.updateCaCertificate(eapSimNetId, FakeKeys.CA_CERT0,
-                FakeKeys.CA_CERT1, "1234"));
+                FakeKeys.CA_CERT1, "1234", false));
 
         // No cert
-        assertFalse(mWifiConfigManager.updateCaCertificate(eapPeapNetId, null, null, null));
+        assertFalse(mWifiConfigManager.updateCaCertificate(eapPeapNetId, null, null, null,
+                false));
 
         // No valid subject
         X509Certificate mockServerCert = mock(X509Certificate.class);
@@ -7802,7 +7841,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         when(mockServerCert.getSubjectX500Principal()).thenReturn(mockSubjectPrincipal);
         when(mockSubjectPrincipal.getName()).thenReturn("");
         assertFalse(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT0,
-                mockServerCert, "1234"));
+                mockServerCert, "1234", false));
     }
 
     @Test
@@ -7814,7 +7853,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         X509Certificate mockCaCert = mock(X509Certificate.class);
         when(mockCaCert.getBasicConstraints()).thenReturn(-1);
         assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, mockCaCert,
-                FakeKeys.CA_CERT1, null));
+                FakeKeys.CA_CERT1, null, false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
         assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
@@ -7828,7 +7867,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         int eapPeapNetId = verifyAddNetwork(prepareTofuEapConfig(
                 WifiEnterpriseConfig.Eap.PEAP, WifiEnterpriseConfig.Phase2.NONE), true);
         assertTrue(mWifiConfigManager.updateCaCertificate(eapPeapNetId, FakeKeys.CA_CERT1,
-                FakeKeys.CA_CERT1, "1234"));
+                FakeKeys.CA_CERT1, "1234", false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertFalse(config.enterpriseConfig.isTrustOnFirstUseEnabled());
         assertFalse(config.enterpriseConfig.isUserApproveNoCaCert());
@@ -7845,7 +7884,7 @@ public class WifiConfigManagerTest extends WifiBaseTest {
         X509Certificate mockCaCert = mock(X509Certificate.class);
         when(mockCaCert.getBasicConstraints()).thenReturn(-1);
         assertFalse(mWifiConfigManager.updateCaCertificate(eapPeapNetId, mockCaCert,
-                FakeKeys.CA_CERT1, null));
+                FakeKeys.CA_CERT1, null, false));
         WifiConfiguration config = mWifiConfigManager.getConfiguredNetwork(eapPeapNetId);
         assertEquals(null, config.enterpriseConfig.getCaCertificate());
     }
