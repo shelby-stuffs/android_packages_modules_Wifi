@@ -3711,7 +3711,9 @@ public class WifiConfigManager {
         mConnectedFreqStoreData.setFreqList(mConnectedFreqMap);
 
         try {
+            long start = mClock.getElapsedSinceBootMillis();
             mWifiConfigStore.write(forceWrite);
+            mWifiMetrics.wifiConfigStored((int) (mClock.getElapsedSinceBootMillis() - start));
         } catch (IOException | IllegalStateException e) {
             Log.wtf(TAG, "Writing to store failed. Saved networks maybe lost!", e);
             return false;
