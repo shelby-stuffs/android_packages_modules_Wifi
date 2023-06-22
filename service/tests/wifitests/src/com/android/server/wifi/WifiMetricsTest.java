@@ -217,6 +217,7 @@ public class WifiMetricsTest extends WifiBaseTest {
         mWifiMetrics = new WifiMetrics(mContext, mFacade, mClock, mTestLooper.getLooper(),
                 new WifiAwareMetrics(mClock), new RttMetrics(mClock), mWifiPowerMetrics,
                 mWifiP2pMetrics, mDppMetrics, mWifiMonitor);
+        mWifiMetrics.start();
         mWifiMetrics.setWifiConfigManager(mWcm);
         mWifiMetrics.setWifiBlocklistMonitor(mWifiBlocklistMonitor);
         mWifiMetrics.setPasspointManager(mPpm);
@@ -6810,6 +6811,13 @@ public class WifiMetricsTest extends WifiBaseTest {
         testConnectionNetworkTypeByCandidateSecurityParams(
                 WifiConfiguration.SECURITY_TYPE_EAP_WPA3_ENTERPRISE,
                 WifiMetricsProto.ConnectionEvent.TYPE_EAP);
+    }
+
+    @Test
+    public void testWifiStateChanged() throws Exception {
+        mWifiMetrics.reportWifiStateChanged(true, true, false);
+        ExtendedMockito.verify(() -> WifiStatsLog.write(
+                WifiStatsLog.WIFI_STATE_CHANGED, true, true, false));
     }
 
     @Test

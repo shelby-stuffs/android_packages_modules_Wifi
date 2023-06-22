@@ -193,6 +193,7 @@ import com.android.server.wifi.coex.CoexManager;
 import com.android.server.wifi.entitlement.PseudonymInfo;
 import com.android.server.wifi.hotspot2.PasspointManager;
 import com.android.server.wifi.hotspot2.PasspointProvider;
+import com.android.server.wifi.proto.WifiStatsLog;
 import com.android.server.wifi.proto.nano.WifiMetricsProto.UserActionEvent;
 import com.android.server.wifi.util.ActionListenerWrapper;
 import com.android.server.wifi.util.ApConfigUtil;
@@ -363,6 +364,8 @@ public class WifiServiceImpl extends BaseWifiService {
     private final MakeBeforeBreakManager mMakeBeforeBreakManager;
     private final LastCallerInfoManager mLastCallerInfoManager;
     private final @NonNull WifiDialogManager mWifiDialogManager;
+    private final WifiPulledAtomLogger mWifiPulledAtomLogger;
+
     private final SparseArray<WifiDialogManager.DialogHandle> mWifiEnableRequestDialogHandles =
             new SparseArray<>();
 
@@ -548,6 +551,7 @@ public class WifiServiceImpl extends BaseWifiService {
         mMultiInternetManager = mWifiInjector.getMultiInternetManager();
         mDeviceConfigFacade = mWifiInjector.getDeviceConfigFacade();
         mApplicationQosPolicyRequestHandler = mWifiInjector.getApplicationQosPolicyRequestHandler();
+        mWifiPulledAtomLogger = mWifiInjector.getWifiPulledAtomLogger();
     }
 
     /**
@@ -576,6 +580,7 @@ public class WifiServiceImpl extends BaseWifiService {
 
             mWifiInjector.getWifiScanAlwaysAvailableSettingsCompatibility().initialize();
             mWifiInjector.getWifiNotificationManager().createNotificationChannels();
+            mWifiMetrics.start();
             mContext.registerReceiver(
                     new BroadcastReceiver() {
                         @Override
@@ -683,6 +688,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 mWifiTetheringDisallowed = mUserManager.getUserRestrictions()
                         .getBoolean(UserManager.DISALLOW_WIFI_TETHERING);
             }
+            setPulledAtomCallbacks();
 
             // Adding optimizations of only receiving broadcasts when wifi is enabled
             // can result in race conditions when apps toggle wifi in the background
@@ -695,6 +701,10 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiInjector.getAdaptiveConnectivityEnabledSettingObserver().initialize();
             mIsWifiServiceStarted = true;
         });
+    }
+
+    private void setPulledAtomCallbacks() {
+        mWifiPulledAtomLogger.setPullAtomCallback(WifiStatsLog.WIFI_MODULE_INFO);
     }
 
     private void updateLocationMode() {
@@ -1308,6 +1318,8 @@ public class WifiServiceImpl extends BaseWifiService {
             mWifiInjector.getInterfaceConflictManager().reset();
         }
         mWifiMetrics.incrementNumWifiToggles(isPrivileged, enable);
+        mWifiMetrics.reportWifiStateChanged(enable, mWifiInjector.getWakeupController().isUsable(),
+                false);
         mActiveModeWarden.wifiToggled(new WorkSource(callingUid, packageName));
         mLastCallerInfoManager.put(WifiManager.API_WIFI_ENABLED, Process.myTid(),
                 callingUid, callingPid, packageName, enable);
