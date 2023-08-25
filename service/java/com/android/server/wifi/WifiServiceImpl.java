@@ -6536,6 +6536,10 @@ public class WifiServiceImpl extends BaseWifiService {
                 return storedChannels;
             }
         }
+        if (!mWifiNative.isHalStarted()) {
+            Log.e(TAG, "No country code in config store");
+            return List.of();
+        }
         List<WifiAvailableChannel> channels = mWifiThreadRunner.call(
                 () -> mWifiNative.getUsableChannels(band, mode, filter), null);
         if (channels == null) {
