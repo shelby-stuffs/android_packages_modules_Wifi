@@ -1548,6 +1548,12 @@ public class WifiChipHidlImpl implements IWifiChip {
         return mIsBridgedSoftApSupported;
     }
 
+    private boolean isVendorDualSapSoftApSupported() {
+       Resources SysRes = Resources.getSystem();
+       int dual_sap = Resources.getSystem().getIdentifier("config_wifi_dual_sap_mode_enabled", "bool", "android");
+       return SysRes.getBoolean(dual_sap);
+    }
+
     protected boolean isStaWithBridgedSoftApConcurrencySupportedMockable() {
         return mIsStaWithBridgedSoftApConcurrencySupported;
     }
@@ -1622,7 +1628,7 @@ public class WifiChipHidlImpl implements IWifiChip {
                     }
                 }
                 newChipMode.availableCombinations.add(newCombo);
-                if (isBridgedSoftApSupportedMockable() && apInCombo) {
+                if ((isBridgedSoftApSupportedMockable() || isVendorDualSapSoftApSupported()) && apInCombo) {
                     newChipMode.availableCombinations.add(newComboWithBridgedAp);
                 }
             }
