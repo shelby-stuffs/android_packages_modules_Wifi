@@ -164,7 +164,7 @@ public class WifiGlobals {
      * @return boolean true if auto-upgrade offload is enabled, false otherwise.
      */
     public boolean isWpa3SaeUpgradeOffloadEnabled() {
-        return mIsWpa3SaeUpgradeOffloadEnabled;
+        return false;
     }
 
     /**
