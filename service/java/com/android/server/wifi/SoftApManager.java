@@ -31,6 +31,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.MacAddress;
+import android.net.wifi.nl80211.DeviceWiphyCapabilities;
 import android.net.wifi.ScanResult;
 import android.net.wifi.SoftApCapability;
 import android.net.wifi.SoftApConfiguration;
@@ -1186,6 +1187,25 @@ public class SoftApManager implements ActiveModeManager {
                             mModeListener.onStartFailure(SoftApManager.this);
                             break;
                         }
+                        String apWifiCondIfaceName = mApInterfaceName;
+                        if (isBridgeRequired()) {
+                            List<String> instances = mWifiNative.getBridgedApInstances(
+                                    mApInterfaceName);
+                            if (instances != null && instances.size() != 0) {
+                                 apWifiCondIfaceName = instances.get(0);
+                            }
+                        }
+                        DeviceWiphyCapabilities capa =
+                                mWifiNative.getDeviceWiphyCapabilities(apWifiCondIfaceName);
+                        if (mCurrentSoftApConfiguration.isIeee80211beEnabled() && (capa == null ||
+                               !capa.isWifiStandardSupported(ScanResult.WIFI_STANDARD_11BE))) {
+                            Log.d(getTag(), "11BE is not supported, Downgrading.");
+                            SoftApConfiguration.Builder newConfigurBuilder =
+                                    new SoftApConfiguration.Builder(mCurrentSoftApConfiguration)
+                                    .setIeee80211beEnabled(false);
+                            mCurrentSoftApConfiguration = newConfigurBuilder.build();
+                        }
+
                         mSoftApNotifier.dismissSoftApShutdownTimeoutExpiredNotification();
                         updateApState(WifiManager.WIFI_AP_STATE_ENABLING,
                                 WifiManager.WIFI_AP_STATE_DISABLED, 0);
