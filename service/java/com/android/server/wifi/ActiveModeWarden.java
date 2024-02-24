@@ -2468,8 +2468,7 @@ public class ActiveModeWarden {
 
                 // fallback decision
                 if (requestInfo.clientRole == ROLE_CLIENT_LOCAL_ONLY
-                        && mContext.getResources().getBoolean(
-                        R.bool.config_wifiMultiStaLocalOnlyConcurrencyEnabled)
+                        && isStaStaConcurrencySupportedForLocalOnlyConnections()
                         && !mWifiPermissionsUtil.isTargetSdkLessThan(
                         requestInfo.requestorWs.getPackageName(0), Build.VERSION_CODES.S,
                         requestInfo.requestorWs.getUid(0))) {
@@ -2708,12 +2707,12 @@ public class ActiveModeWarden {
             additionalFeatureSet |= WifiManager.WIFI_FEATURE_AP_RAND_MAC;
         }
 
-        if (ApConfigUtil.isBridgedModeSupported(mContext)) {
+        if (ApConfigUtil.isBridgedModeSupported(mContext, mWifiNative)) {
             // The bridged mode requires the kernel network modules support.
             // It doesn't relate the vendor HAL, set if overlay enables it.
             additionalFeatureSet |= WifiManager.WIFI_FEATURE_BRIDGED_AP;
         }
-        if (ApConfigUtil.isStaWithBridgedModeSupported(mContext)) {
+        if (ApConfigUtil.isStaWithBridgedModeSupported(mContext, mWifiNative)) {
             // The bridged mode requires the kernel network modules support.
             // It doesn't relate the vendor HAL, set if overlay enables it.
             additionalFeatureSet |= WifiManager.WIFI_FEATURE_STA_BRIDGED_AP;
